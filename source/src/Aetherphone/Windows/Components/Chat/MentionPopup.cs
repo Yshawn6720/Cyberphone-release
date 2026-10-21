@@ -1,0 +1,127 @@
+using Aetherphone.Core;
+using Aetherphone.Core.Animation;
+using Aetherphone.Core.Localization;
+using Aetherphone.Core.Lodestone;
+using Aetherphone.Core.Media;
+using Aetherphone.Core.Social;
+using Aetherphone.Core.Theme;
+using Dalamud.Bindings.ImGui;
+
+namespace Aetherphone.Windows.Components;
+
+internal sealed class MentionPopup
+{
+    private const float RowHeight = 44f;
+    private const float MinWidth = 200f;
+    private Spring revealSpring;
+
+    public void Gate(MentionAutocomplete autocomplete)
+    {
+        if (autocomplete.IsOpen)
+        {
+            UiInteract.BlockThisFrame();
+        }
+    }
+
+    public int Draw(MentionAutocomplete autocomplete, Rect screen, PhoneTheme theme, RemoteImageCache images,
+        LodestoneService lodestone)
+    {
+        if (!autocomplete.IsOpen)
+        {
+            revealSpring.SnapTo(0f);
+            autocomplete.PopupArea = default;
+            return -1;
+        }
+
+        var rows = autocomplete.Rows;
+        var scale = UiScale.Current;
+        var drawList = ImGui.GetForegroundDrawList();
+        var revealDelta = MathF.Min(ImGui.GetIO().DeltaTime, TransitionTiming.MaxFrameSeconds);
+        var reveal = Math.Clamp(revealSpring.Step(1f, Motion.Appear, revealDelta), 0f, 1f);
+        var alpha = Math.Clamp(reveal / 0.7f, 0f, 1f);
+        var anchor = autocomplete.Anchor;
+        var padY = 6f * scale;
+        var rowHeight = RowHeight * scale;
+        var visible = rows.Length == 0 ? 1 : rows.Length;
+        var width = MathF.Max(MinWidth * scale, anchor.Width);
+        var height = visible * rowHeight + padY * 2f;
+
+        var left = Math.Clamp(anchor.Min.X, screen.Min.X + 8f * scale,
+            MathF.Max(screen.Min.X + 8f * scale, screen.Max.X - 8f * scale - width));
+        var topLimit = screen.Min.Y + 8f * scale;
+        var bottomLimit = screen.Max.Y - Metrics.Size.HomeIndicatorInset * scale;
+        var above = anchor.Min.Y - 6f * scale - height;
+        var below = anchor.Max.Y + 6f * scale;
+        var insideTop = anchor.Min.Y + ImGui.GetTextLineHeightWithSpacing() + 6f * scale;
+        var top = above >= topLimit ? above : (below + height <= bottomLimit ? below : insideTop);
+        top = Math.Clamp(top, topLimit, MathF.Max(topLimit, bottomLimit - height));
+
+        top = MathF.Min(top, screen.Max.Y - 8f * scale - height);
+
+        var min = new Vector2(left, top);
+        var max = new Vector2(left + width, top + height);
+        UiInteract.HoverOverlay(new Rect(min, max));
+        autocomplete.PopupArea = new Rect(min, max);
+        Elevation.Floating(drawList, min, max, 14f * scale, scale);
+        Squircle.Fill(drawList, min, max, 14f * scale,
+            ImGui.GetColorU32(Palette.WithAlpha(theme.GroupedCard, MathF.Min(0.98f, theme.GroupedCard.W + 0.4f) * alpha)));
+        Material.EdgeSquircle(drawList, min, max, 14f * scale, scale);
+
+        if (rows.Length == 0)
+        {
+            var message = Loc.T(L.Social.MentionSearching);
+            Typography.DrawCentered(drawList,
+                new Vector2((min.X + max.X) * 0.5f, min.Y + padY + rowHeight * 0.5f - 7f * scale),
+                message, Palette.WithAlpha(theme.TextMuted, alpha), 0.9f);
+            return -1;
+        }
+
+        var clicked = -1;
+        for (var index = 0; index < visible; index++)
+        {
+            var row = rows[index];
+            var rowMin = new Vector2(min.X + padY, min.Y + padY + index * rowHeight);
+            var rowMax = new Vector2(max.X - padY, rowMin.Y + rowHeight);
+            var hovered = !UiInteract.InputBlocked && UiInteract.HoverWindowOnly(rowMin, rowMax);
+            if (hovered || index == autocomplete.SelectedIndex)
+            {
+                Squircle.Fill(drawList, rowMin, rowMax, 9f * scale,
+                    ImGui.GetColorU32(Palette.WithAlpha(theme.TextStrong, (hovered ? 0.09f : 0.06f) * alpha)));
+            }
+
+            if (hovered)
+            {
+                ImGui.SetMouseCursor(ImGuiMouseCursor.Hand);
+                if (ImGui.IsMouseClicked(ImGuiMouseButton.Left))
+                {
+                    clicked = index;
+                }
+            }
+
+            var avatarRadius = 14f * scale;
+            var avatarCenter = new Vector2(rowMin.X + 6f * scale + avatarRadius, (rowMin.Y + rowMax.Y) * 0.5f);
+            AvatarView.DrawRemote(drawList, avatarCenter, avatarRadius, theme, row.DisplayName, string.Empty,
+                row.AvatarUrl, images, lodestone, 0.8f, 28);
+
+            var textLeft = avatarCenter.X + avatarRadius + 9f * scale;
+            var textMaxWidth = rowMax.X - textLeft;
+            var name = SocialIdentity.Name(row.DisplayName, row.Handle);
+            var nameY = rowMin.Y + 6f * scale;
+            var nameSize = Typography.Measure(name, 0.92f, FontWeight.SemiBold);
+            var nameHovering = UiInteract.HoverWindowOnly(new Vector2(textLeft, nameY),
+                new Vector2(textLeft + textMaxWidth, nameY + nameSize.Y));
+            Marquee.DrawLeft(drawList, new MarqueeId("mentionpopup.name.", row.Handle), name, textLeft, nameY, textMaxWidth,
+                new TextStyle(0.92f, FontWeight.SemiBold), Palette.WithAlpha(theme.TextStrong, alpha), nameHovering);
+            var handleText = "@" + row.Handle;
+            var handleY = nameY + nameSize.Y;
+            var handleSize = Typography.Measure(handleText, 0.82f, FontWeight.Regular);
+            var handleHovering = UiInteract.HoverWindowOnly(new Vector2(textLeft, handleY),
+                new Vector2(textLeft + textMaxWidth, handleY + handleSize.Y));
+            Marquee.DrawLeft(drawList, new MarqueeId("mentionpopup.handle.", row.Handle), handleText,
+                textLeft, handleY, textMaxWidth, new TextStyle(0.82f, FontWeight.Regular),
+                Palette.WithAlpha(theme.TextMuted, alpha), handleHovering);
+        }
+
+        return clicked;
+    }
+}

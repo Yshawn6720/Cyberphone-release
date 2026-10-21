@@ -1,0 +1,730 @@
+using Aetherphone.Apps.Velvet.Kit;
+using Aetherphone.Core;
+using Aetherphone.Core.Aethernet.Contracts;
+using Aetherphone.Core.Apps;
+using Aetherphone.Core.Localization;
+using Aetherphone.Core.Lodestone;
+using Aetherphone.Core.Media;
+using Aetherphone.Core.Photos;
+using Aetherphone.Core.Platform;
+using Aetherphone.Core.Social;
+using Aetherphone.Core.Wallpapers;
+using Aetherphone.Windows.Components;
+using Dalamud.Bindings.ImGui;
+using Dalamud.Interface.Utility.Raii;
+
+namespace Aetherphone.Apps.Velvet;
+
+internal enum VelvetComposeResult
+{
+    Open,
+    Closed,
+    Posted,
+    Edited,
+}
+
+internal sealed class VelvetPostComposer
+{
+    public const int MaxPostTags = 8;
+
+    private const int CaptionLimit = 500;
+    private const int HeaderActionSlots = 2;
+    private const float BodySide = 16f;
+    private const float BodyBottom = 16f;
+    private const float PreviewGap = 12f;
+    private const float PreviewWidthFraction = 0.62f;
+    private const float CardPad = 14f;
+    private const float CardGap = 12f;
+    private const float CaptionFieldHeight = 62f;
+    private const float CaptionMetaGap = 6f;
+    private const float CaptionMetaHeight = 34f;
+    private const float EmojiRadius = 17f;
+    private const float TagRowHeight = 44f;
+    private const float AudienceGap = 10f;
+    private const float AudienceTileHeight = 54f;
+    private const float StripGap = 10f;
+    private const float RowTile = 26f;
+    private const float RowGlyph = 15f;
+    private const float ShareHeight = Button.LargeHeight;
+    private const float PaneFraction = 0.5f;
+    private const float GridGap = 6f;
+    private const float NoticeHeight = 22f;
+    private const float StatusGap = 8f;
+    private const float EditDotsHeight = 18f;
+    private const int CounterWarning = 50;
+    private const int CircleSegments = 24;
+
+    private readonly VelvetStore store;
+    private readonly StoryPresenter stories;
+    private readonly RemoteImageCache images;
+    private readonly LodestoneService lodestone;
+    private readonly MentionPopup mentionPopup = new();
+    private readonly MentionAutocomplete captionMentions;
+    private readonly EmojiComposer captionEmoji = new();
+    private readonly PhotoComposeSession session;
+    private readonly PhotoLibrary library;
+    private readonly ImageIntake intake = new();
+    private readonly PhotoCarousel carousel = new();
+    private readonly Action<ImDrawListPtr, Vector2, Vector2, float, string?> editPreviewPage;
+    private readonly Action openTags;
+    private readonly List<string> tags = new();
+    private VelvetPostDto? editing;
+    private string[] editingPhotos = Array.Empty<string>();
+    private volatile bool editBusy;
+    private string tagsLabel = string.Empty;
+    private bool storyMode;
+    private bool captionFocus;
+    private bool captionTyping;
+    private volatile int outcome;
+    private bool closeRequested;
+    private string caption = string.Empty;
+    private string counterText = string.Empty;
+    private int counterLength = -1;
+    private string status = string.Empty;
+    private int audience = VelvetPostAudience.Connections;
+
+    public VelvetPostComposer(VelvetStore store, StoryPresenter stories, PhotoLibrary library,
+        RemoteImageCache images, LodestoneService lodestone, WallpaperImageCache wallpaperImages, Action openTags)
+    {
+        this.store = store;
+        this.stories = stories;
+        this.images = images;
+        this.lodestone = lodestone;
+        this.openTags = openTags;
+        this.library = library;
+        captionMentions = new MentionAutocomplete(store.NewMentionSuggestions());
+        session = new PhotoComposeSession(library, wallpaperImages);
+        editPreviewPage = DrawEditPreviewPage;
+    }
+
+    public int TagCount => tags.Count;
+
+    public bool HasTag(string token) => tags.Contains(token);
+
+    public void ToggleTag(string token)
+    {
+        if (!tags.Remove(token) && tags.Count < MaxPostTags)
+        {
+            tags.Add(token);
+        }
+
+        tagsLabel = BuildTagsLabel();
+    }
+
+    private string BuildTagsLabel()
+    {
+        if (tags.Count == 0)
+        {
+            return string.Empty;
+        }
+
+        var builder = new System.Text.StringBuilder();
+        for (var index = 0; index < tags.Count; index++)
+        {
+            if (index > 0)
+            {
+                builder.Append(", ");
+            }
+
+            builder.Append(VelvetTokenLabels.Of(tags[index]));
+        }
+
+        return builder.ToString();
+    }
+
+    public void ClearTags()
+    {
+        tags.Clear();
+        tagsLabel = string.Empty;
+    }
+
+    private static PhotoComposeStyle Style => new(VelvetTheme.Rose, VelvetTheme.MutedInk, VelvetTheme.PlumWell,
+        VelvetTheme.MutedInk, false);
+
+    private static PhotoEditPanelStyle EditStyle =>
+        PhotoEditPanelStyle.ForComposer(Style, VelvetTheme.TitleInk, VelvetTheme.PlumWell);
+
+    private static float StoryAspect => (float)StoryStore.StoryWidth / StoryStore.StoryHeight;
+
+    private float Aspect => editing is { } post
+        ? PostAspects.DisplayRatio(post.MediaWidth, post.MediaHeight)
+        : storyMode ? StoryAspect : PostAspects.Ratio(session.Aspect);
+
+    private bool AllowsReveal => !storyMode && PostAspects.RevealsWholeImage(session.Aspect);
+
+    private string Title => editing is not null ? Loc.T(L.Velvet.EditPost)
+        : storyMode ? Loc.T(L.Story.NewStory) : Loc.T(L.Velvet.NewPost);
+
+    private bool Posting => editing is not null ? editBusy : storyMode ? stories.Posting : store.Posting;
+
+    public void OpenWith(string photoPath)
+    {
+        Open();
+        session.TakePicked(photoPath);
+        session.BeginEdit();
+    }
+
+    public void Open(bool story = false)
+    {
+        editing = null;
+        editingPhotos = Array.Empty<string>();
+        storyMode = story;
+        outcome = 0;
+        closeRequested = false;
+        caption = string.Empty;
+        counterLength = -1;
+        status = string.Empty;
+        audience = VelvetPostAudience.Connections;
+        ClearTags();
+        captionEmoji.Close();
+        session.Open(story);
+        intake.Discard();
+    }
+
+    public void OpenEdit(VelvetPostDto post)
+    {
+        editing = post;
+        editingPhotos = PostMedia.Photos(post.MediaUrls, post.MediaUrl);
+        storyMode = false;
+        outcome = 0;
+        closeRequested = false;
+        caption = post.Caption;
+        counterLength = -1;
+        status = string.Empty;
+        audience = post.Audience;
+        ClearTags();
+        for (var index = 0; index < post.Tags.Length; index++)
+        {
+            ToggleTag(post.Tags[index]);
+        }
+
+        captionEmoji.Close();
+    }
+
+    public VelvetComposeResult Draw(Rect area, AppSkin ui, in PhoneContext context)
+    {
+        if (outcome == 1)
+        {
+            outcome = 0;
+            return editing is not null ? VelvetComposeResult.Edited
+                : storyMode ? VelvetComposeResult.Closed : VelvetComposeResult.Posted;
+        }
+
+        if (outcome == 2)
+        {
+            outcome = 0;
+            status = editing is not null ? Loc.T(L.Velvet.EditPostFailed) : Loc.T(L.Account.CannotReach);
+        }
+
+        if (closeRequested)
+        {
+            closeRequested = false;
+            return VelvetComposeResult.Closed;
+        }
+
+        if (editing is not null)
+        {
+            DrawCaption(area, ui, context);
+            return VelvetComposeResult.Open;
+        }
+
+        session.ConsumePendingImport();
+        while (intake.TryTake(out var taken))
+        {
+            session.TakeImported(taken);
+        }
+
+        switch (session.Stage)
+        {
+            case PhotoComposeStage.Edit:
+                DrawEdit(area);
+                break;
+            case PhotoComposeStage.Caption:
+                DrawCaption(area, ui, context);
+                break;
+            default:
+                DrawPick(area, ui);
+                break;
+        }
+
+        return VelvetComposeResult.Open;
+    }
+
+    private static bool HeaderAction(Rect area, string label, bool enabled, float scale)
+    {
+        var height = Button.SmallHeight * scale;
+        var width = Button.WidthFor(label, ButtonSize.Small) + Metrics.Space.Xs * scale;
+        var max = new Vector2(area.Max.X - Metrics.Space.Md * scale,
+            area.Min.Y + VHeader.Height * scale * 0.5f + height * 0.5f);
+        var min = new Vector2(max.X - width, max.Y - height);
+        return Button.Draw(new Rect(min, max), label, VelvetTheme.Ink, enabled: enabled);
+    }
+
+    private void DrawPick(Rect area, AppSkin ui)
+    {
+        if (UiInteract.Hover(area.Min, area.Max) && GameFocus.Active && ImageIntake.PasteRequested())
+        {
+            intake.Paste(library);
+        }
+
+        intake.AcceptDrop(area, library, VelvetTheme.Rose);
+        var scale = UiScale.Current;
+        if (VHeader.Push(area, Title, HeaderActionSlots))
+        {
+            closeRequested = true;
+            return;
+        }
+
+        if (HeaderAction(area, Loc.T(L.Common.Next), session.HasSelection && !Posting, scale))
+        {
+            session.BeginEdit();
+        }
+
+        var top = area.Min.Y + VHeader.Height * scale;
+        var paneHeight = MathF.Min(area.Width, (area.Max.Y - top) * PaneFraction);
+        var pane = new Rect(new Vector2(area.Min.X, top), new Vector2(area.Max.X, top + paneHeight));
+        session.DrawPickPane(pane, scale, Style, Aspect, AllowsReveal, !Posting);
+        var gridTop = pane.Max.Y + GridGap * scale;
+        if (!storyMode && session.ShowsAspectRail)
+        {
+            gridTop = session.DrawAspectRail(area, pane.Max.Y, scale, ui, !Posting);
+        }
+
+        if (session.Notice.Length > 0)
+        {
+            var notice = Typography.FitText(session.Notice, area.Width - BodySide * 2f * scale, TextStyles.Footnote);
+            Typography.DrawCentered(ImGui.GetWindowDrawList(),
+                new Vector2(area.Center.X, gridTop + NoticeHeight * 0.5f * scale), notice, VelvetTheme.MutedInk,
+                TextStyles.Footnote);
+            gridTop += NoticeHeight * scale;
+        }
+
+        var gridRect = new Rect(new Vector2(area.Min.X, gridTop), area.Max);
+        using (AppSurface.BeginEdgeToEdge(gridRect))
+        {
+            if (session.DrawPickGrid(gridRect, scale, Style, true, Loc.T(L.Velvet.ImportFromPc), Title,
+                    intake.ClipboardHasImage() ? Loc.T(L.Common.PasteImage) : null))
+            {
+                intake.Paste(library);
+            }
+        }
+    }
+
+    private void DrawEdit(Rect area)
+    {
+        var scale = UiScale.Current;
+        if (VHeader.Push(area, Loc.T(L.Social.ComposeEditTitle), HeaderActionSlots))
+        {
+            session.EditBack();
+            return;
+        }
+
+        if (HeaderAction(area, Loc.T(L.Common.Next), !Posting, scale))
+        {
+            session.EditAdvance();
+        }
+
+        session.DrawEditCanvas(area, scale, Aspect, Style, AllowsReveal, !Posting);
+        session.DrawComposerFooter(area, scale, EditStyle, !Posting);
+    }
+
+    private void DrawCaption(Rect area, AppSkin ui, in PhoneContext context)
+    {
+        var scale = UiScale.Current;
+        var busy = Posting;
+        if (VHeader.Push(area, Title))
+        {
+            CaptionBack();
+            return;
+        }
+
+        var side = BodySide * scale;
+        var left = area.Min.X + side;
+        var right = area.Max.X - side;
+        var shareRect = new Rect(new Vector2(left, area.Max.Y - (BodyBottom + ShareHeight) * scale),
+            new Vector2(right, area.Max.Y - BodyBottom * scale));
+        var statusHeight = status.Length > 0
+            ? Typography.MeasureWrappedBlock(status, TextStyles.Footnote, right - left).Y + StatusGap * scale
+            : 0f;
+        var cardsBottom = shareRect.Min.Y - CardGap * scale - statusHeight;
+        var optionsHeight = storyMode ? 0f : (CardPad * 2f + TagRowHeight + AudienceGap + AudienceTileHeight) * scale;
+        var optionsCard = new Rect(new Vector2(left, cardsBottom - optionsHeight), new Vector2(right, cardsBottom));
+        var captionBottom = storyMode ? cardsBottom : optionsCard.Min.Y - CardGap * scale;
+        var captionHeight = (CardPad * 2f + CaptionFieldHeight + CaptionMetaGap + CaptionMetaHeight) * scale;
+        var captionCard = new Rect(new Vector2(left, captionBottom - captionHeight), new Vector2(right, captionBottom));
+        var stripHeight = editing is null && session.SelectedCount > 1 ? PhotoComposeSession.StripHeight * scale : 0f;
+        var dotsHeight = editingPhotos.Length > 1 ? EditDotsHeight * scale : 0f;
+        var stripBlock = stripHeight > 0f ? stripHeight + StripGap * scale : dotsHeight;
+        var previewTop = area.Min.Y + (VHeader.Height + PreviewGap) * scale;
+        var halfWidth = area.Width * PreviewWidthFraction * 0.5f;
+        var previewRegion = new Rect(new Vector2(area.Center.X - halfWidth, previewTop),
+            new Vector2(area.Center.X + halfWidth, captionCard.Min.Y - PreviewGap * scale - stripBlock));
+        var preview = ImageFit.CenteredRect(previewRegion, Aspect);
+        if (editing is not null)
+        {
+            DrawEditPreview(preview, scale, dotsHeight);
+        }
+        else if (DrawCaptionPreview(preview, scale))
+        {
+            session.OpenEdit(session.ClampedPreviewIndex);
+            return;
+        }
+
+        if (stripHeight > 0f)
+        {
+            var stripTop = preview.Max.Y + StripGap * scale;
+            var tapped = session.DrawPhotoStrip(new Rect(new Vector2(left, stripTop), new Vector2(right, stripTop + stripHeight)),
+                scale, Style, session.ClampedPreviewIndex);
+            if (tapped >= 0)
+            {
+                session.PreviewIndex = tapped;
+            }
+        }
+
+        DrawCaptionCard(captionCard, ui, scale);
+        if (captionEmoji.DrawSuggestions(captionCard, area, ui, ref caption, CaptionLimit, captionTyping))
+        {
+            captionFocus = true;
+        }
+
+        if (!storyMode)
+        {
+            DrawOptionsCard(optionsCard, scale);
+        }
+
+        if (statusHeight > 0f)
+        {
+            Typography.DrawWrappedCentered(new Vector2(area.Center.X, shareRect.Min.Y - statusHeight), status,
+                VelvetTheme.Danger, TextStyles.Footnote, right - left);
+        }
+
+        var panelHeight = captionEmoji.PanelHeight(scale);
+        if (panelHeight > 0f)
+        {
+            var panelBottom = shareRect.Min.Y - CardGap * scale;
+            captionEmoji.DrawPanel(new Rect(new Vector2(area.Min.X, panelBottom - panelHeight),
+                new Vector2(area.Max.X, panelBottom)), ui, ref caption, CaptionLimit);
+        }
+
+        var picked = mentionPopup.Draw(captionMentions, area, context.Theme, images, lodestone);
+        if (picked >= 0)
+        {
+            captionMentions.Pick(picked);
+        }
+
+        mentionPopup.Gate(captionMentions);
+        var actionLabel = busy ? Loc.T(L.Velvet.Saving)
+            : editing is not null ? Loc.T(L.Velvet.Save) : Loc.T(L.Velvet.Share);
+        if (Button.Draw(shareRect, actionLabel, VelvetTheme.Ink, enabled: !busy))
+        {
+            Commit();
+        }
+    }
+
+    private void DrawCaptionCard(Rect card, AppSkin ui, float scale)
+    {
+        VCard.Paint(ImGui.GetWindowDrawList(), card.Min, card.Max, scale);
+        var pad = CardPad * scale;
+        var field = new Rect(new Vector2(card.Min.X + pad, card.Min.Y + pad),
+            new Vector2(card.Max.X - pad, card.Min.Y + pad + CaptionFieldHeight * scale));
+        DrawCaptionField(field, scale);
+        var metaTop = field.Max.Y + CaptionMetaGap * scale;
+        DrawCaptionMeta(new Rect(new Vector2(field.Min.X, metaTop),
+            new Vector2(field.Max.X, metaTop + CaptionMetaHeight * scale)), ui, scale);
+    }
+
+    private void DrawCaptionField(Rect field, float scale)
+    {
+        Squircle.Fill(ImGui.GetWindowDrawList(), field.Min, field.Max, Metrics.Radius.Md * scale,
+            Surfaces.Fill(VelvetTheme.Ink, FillLevel.Tertiary).Packed());
+        var padding = ImGui.GetStyle().FramePadding;
+        ImGui.SetCursorScreenPos(field.Min);
+        if (captionFocus)
+        {
+            ImGui.SetKeyboardFocusHere();
+            SoftWrapField.CaretToEnd(storyMode ? "##velvetStoryCaption" : "##velvetCaption");
+            captionFocus = false;
+        }
+
+        using (ImRaii.PushColor(ImGuiCol.FrameBg, AppSkin.Transparent))
+        using (ImRaii.PushColor(ImGuiCol.Text, VelvetTheme.TitleInk))
+        {
+            var wrapWidth = field.Width - padding.X * 2f - 4f * scale;
+            if (storyMode)
+            {
+                SoftWrapField.Multiline("##velvetStoryCaption", ref caption, CaptionLimit, field.Size, wrapWidth,
+                    captionMentions);
+            }
+            else
+            {
+                SoftWrapField.Paragraphs("##velvetCaption", ref caption, CaptionLimit, field.Size, wrapWidth,
+                    captionMentions);
+            }
+        }
+
+        captionTyping = EmojiSuggestions.FieldTyping();
+
+        if (caption.Length > 0)
+        {
+            return;
+        }
+
+        Typography.Draw(ImGui.GetWindowDrawList(), field.Min + padding,
+            Typography.FitText(Loc.T(L.Velvet.CaptionHint), field.Width - padding.X * 2f, TextStyles.Body),
+            VelvetTheme.MutedInk, TextStyles.Body);
+    }
+
+    private void DrawCaptionMeta(Rect row, AppSkin ui, float scale)
+    {
+        var drawList = ImGui.GetWindowDrawList();
+        var radius = EmojiRadius * scale;
+        var center = new Vector2(row.Min.X + radius, row.Center.Y);
+        var extent = new Vector2(radius, radius);
+        var lit = captionEmoji.Open || UiInteract.Hover(center - extent, center + extent);
+        drawList.AddCircleFilled(center, radius,
+            Surfaces.Fill(VelvetTheme.Ink, lit ? FillLevel.Primary : FillLevel.Secondary).Packed(), CircleSegments);
+        captionEmoji.DrawToggle(ui, center, radius, VelvetTheme.Rose, VelvetTheme.TitleInk, Loc.T(L.Common.Emoji));
+        SyncCounter();
+        var size = Typography.Measure(counterText, TextStyles.Footnote);
+        Typography.Draw(drawList, new Vector2(row.Max.X - size.X, row.Center.Y - size.Y * 0.5f), counterText,
+            counterLength >= CaptionLimit - CounterWarning ? VelvetTheme.Danger : VelvetTheme.Faint,
+            TextStyles.Footnote);
+    }
+
+    private void SyncCounter()
+    {
+        if (counterLength == caption.Length)
+        {
+            return;
+        }
+
+        counterLength = caption.Length;
+        counterText = counterLength.ToString(Loc.Culture) + "/" + CaptionLimit.ToString(Loc.Culture);
+    }
+
+    private void DrawOptionsCard(Rect card, float scale)
+    {
+        VCard.Paint(ImGui.GetWindowDrawList(), card.Min, card.Max, scale);
+        var pad = CardPad * scale;
+        var contentLeft = card.Min.X + pad;
+        var contentRight = card.Max.X - pad;
+        var tagRow = new Rect(new Vector2(contentLeft, card.Min.Y + pad),
+            new Vector2(contentRight, card.Min.Y + pad + TagRowHeight * scale));
+        DrawTagRow(tagRow, scale);
+        var tilesTop = tagRow.Max.Y + AudienceGap * scale;
+        DrawAudienceTiles(new Rect(new Vector2(contentLeft, tilesTop),
+            new Vector2(contentRight, tilesTop + AudienceTileHeight * scale)), scale);
+    }
+
+    private void DrawTagRow(Rect row, float scale)
+    {
+        var drawList = ImGui.GetWindowDrawList();
+        var hovered = UiInteract.Hover(row.Min, row.Max);
+        if (hovered)
+        {
+            Squircle.Fill(drawList, row.Min, row.Max, Metrics.Radius.Sm * scale, VelvetTheme.HoverWash.Packed());
+            ImGui.SetMouseCursor(ImGuiMouseCursor.Hand);
+        }
+
+        var tile = RowTile * scale;
+        var tileMin = new Vector2(row.Min.X, row.Center.Y - tile * 0.5f);
+        VCard.Tile(drawList, tileMin, new Vector2(tileMin.X + tile, tileMin.Y + tile), PhoneIcons.Hash,
+            VelvetTheme.Rose, RowGlyph * scale, scale);
+        var chevronCenter = new Vector2(row.Max.X - 9f * scale, row.Center.Y);
+        PhoneIcon.Draw(drawList, chevronCenter, PhoneIcons.ChevronRight, VelvetTheme.MutedInk, VIcon.Row * scale);
+        var labelLeft = tileMin.X + tile + 12f * scale;
+        var labelRight = chevronCenter.X - 12f * scale;
+        var empty = tags.Count == 0;
+        var label = empty ? Loc.T(L.Velvet.PostTagsEmpty) : Loc.T(L.Velvet.PostTagsTitle);
+        var labelSize = Typography.Measure(label, TextStyles.Body);
+        Typography.Draw(drawList, new Vector2(labelLeft, row.Center.Y - labelSize.Y * 0.5f), label,
+            empty ? VelvetTheme.MutedInk : VelvetTheme.TitleInk, TextStyles.Body);
+        if (!empty)
+        {
+            var valueWidth = MathF.Max(1f, labelRight - labelLeft - labelSize.X - 10f * scale);
+            var value = Typography.FitText(tagsLabel, valueWidth, TextStyles.Subheadline);
+            var valueSize = Typography.Measure(value, TextStyles.Subheadline);
+            Typography.Draw(drawList, new Vector2(labelRight - valueSize.X, row.Center.Y - valueSize.Y * 0.5f), value,
+                VelvetTheme.RoseInk, TextStyles.Subheadline);
+        }
+
+        if (UiInteract.Click(row.Min, row.Max, hovered))
+        {
+            openTags();
+        }
+    }
+
+    private void DrawAudienceTiles(Rect row, float scale)
+    {
+        var gap = 10f * scale;
+        var half = (row.Width - gap) * 0.5f;
+        DrawAudienceTile(new Rect(row.Min, new Vector2(row.Min.X + half, row.Max.Y)), VelvetPostAudience.Connections,
+            PhoneIcons.Users, Loc.T(L.Velvet.AudienceConnections), scale);
+        DrawAudienceTile(new Rect(new Vector2(row.Max.X - half, row.Min.Y), row.Max), VelvetPostAudience.Public,
+            PhoneIcons.World, Loc.T(L.Velvet.AudiencePublic), scale);
+    }
+
+    private void DrawAudienceTile(Rect tile, int value, string glyph, string label, float scale)
+    {
+        var drawList = ImGui.GetWindowDrawList();
+        var active = audience == value;
+        var hovered = UiInteract.Hover(tile.Min, tile.Max);
+        var rounding = Metrics.Radius.Md * scale;
+        var fill = active
+            ? VelvetTheme.Ink.Accent
+            : Surfaces.Fill(VelvetTheme.Ink, hovered ? FillLevel.Secondary : FillLevel.Tertiary);
+        Squircle.Fill(drawList, tile.Min, tile.Max, rounding, fill.Packed());
+
+        var ink = active ? VelvetTheme.OnAccent : VelvetTheme.MutedInk;
+        PhoneIcon.Draw(drawList, new Vector2(tile.Center.X, tile.Min.Y + 18f * scale), glyph, ink, VIcon.Field * scale);
+        var labelHeight = Typography.LineHeight(TextStyles.FootnoteEmphasized);
+        Marquee.DrawCenteredAuto(drawList, new MarqueeId("velvet.compose.audience.", label), label, tile.Center.X,
+            tile.Max.Y - 10f * scale - labelHeight, tile.Width - 12f * scale, TextStyles.FootnoteEmphasized, ink);
+        if (hovered)
+        {
+            ImGui.SetMouseCursor(ImGuiMouseCursor.Hand);
+        }
+
+        if (UiInteract.Click(tile.Min, tile.Max, hovered))
+        {
+            audience = value;
+        }
+    }
+
+    private bool DrawCaptionPreview(Rect preview, float scale)
+    {
+        if (preview.Width <= 0f || preview.Height <= 0f)
+        {
+            return false;
+        }
+
+        var rounding = Metrics.Radius.Lg * scale;
+        var drawList = ImGui.GetWindowDrawList();
+        if (!session.TryGetPreviewUv(Aspect, AllowsReveal, out var texture, out var uv0, out var uv1))
+        {
+            Squircle.Fill(drawList, preview.Min, preview.Max, rounding, VelvetTheme.PlumWell.Packed());
+            Typography.DrawCentered(drawList, preview.Center, Loc.T(L.Common.Loading), VelvetTheme.MutedInk,
+                TextStyles.Body);
+            return false;
+        }
+
+        ImageFit.DrawLetterboxed(drawList, texture, preview, uv0, uv1, rounding);
+        Material.EdgeSquircle(drawList, preview.Min, preview.Max, rounding, scale);
+        var hovered = UiInteract.Hover(preview.Min, preview.Max);
+        HoverTooltip.Show(preview, Loc.T(L.Social.ComposeTapToEdit), HoverLabelSide.Below);
+        if (hovered)
+        {
+            ImGui.SetMouseCursor(ImGuiMouseCursor.Hand);
+        }
+
+        return UiInteract.Click(preview.Min, preview.Max, hovered);
+    }
+
+    private void Commit()
+    {
+        if (editing is { } post)
+        {
+            CommitEdit(post);
+            return;
+        }
+
+        if (!session.HasSelection || Posting)
+        {
+            return;
+        }
+
+        status = string.Empty;
+        if (storyMode)
+        {
+            stories.CreateStory(session.FirstSelected, session.CropAt(0), session.EditAt(0), caption,
+                ok => outcome = ok ? 1 : 2);
+            return;
+        }
+
+        store.CreatePost(session.SelectedArray(), session.CropsArray(), session.AspectsArray(), session.EditsArray(),
+            caption, tags.ToArray(), audience, ok => outcome = ok ? 1 : 2);
+    }
+
+    private void CommitEdit(VelvetPostDto post)
+    {
+        if (editBusy)
+        {
+            return;
+        }
+
+        var trimmed = caption.Trim();
+        if (string.Equals(trimmed, post.Caption, StringComparison.Ordinal) && audience == post.Audience
+            && SameTags(post.Tags))
+        {
+            closeRequested = true;
+            return;
+        }
+
+        status = string.Empty;
+        editBusy = true;
+        store.EditPost(post.Id, trimmed, tags.ToArray(), audience, ok =>
+        {
+            editBusy = false;
+            outcome = ok ? 1 : 2;
+        });
+    }
+
+    private bool SameTags(string[] existing)
+    {
+        if (existing.Length != tags.Count)
+        {
+            return false;
+        }
+
+        for (var index = 0; index < existing.Length; index++)
+        {
+            if (!string.Equals(existing[index], tags[index], StringComparison.Ordinal))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private void CaptionBack()
+    {
+        if (editing is not null)
+        {
+            closeRequested = true;
+            return;
+        }
+
+        session.CaptionBack();
+    }
+
+    private void DrawEditPreview(Rect preview, float scale, float dotsHeight)
+    {
+        if (editing is not { } post || preview.Width <= 0f || preview.Height <= 0f)
+        {
+            return;
+        }
+
+        var rounding = Metrics.Radius.Lg * scale;
+        var drawList = ImGui.GetWindowDrawList();
+        var result = carousel.Draw(drawList, preview, post.Id, editingPhotos, rounding, editPreviewPage);
+        Material.EdgeSquircle(drawList, preview.Min, preview.Max, rounding, scale);
+        if (dotsHeight <= 0f)
+        {
+            return;
+        }
+
+        PhotoCarousel.DrawDots(drawList, new Vector2(preview.Center.X, preview.Max.Y + dotsHeight * 0.5f),
+            editingPhotos.Length, result.Index, preview.Width, VelvetTheme.MutedInk);
+    }
+
+    private void DrawEditPreviewPage(ImDrawListPtr drawList, Vector2 min, Vector2 max, float rounding, string? url)
+    {
+        VMediaTile.DrawPhoto(drawList, min, max, url ?? string.Empty, rounding, images);
+    }
+
+    public void Dispose()
+    {
+        session.Dispose();
+    }
+}

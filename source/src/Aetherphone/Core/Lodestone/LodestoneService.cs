@@ -1,0 +1,377 @@
+using Aetherphone.Core.Game;
+using Aetherphone.Core.Media;
+using Aetherphone.Core.Net;
+using NetStone;
+using NetStone.Model.Parseables.Search.Character;
+using NetStone.Search.Character;
+
+namespace Aetherphone.Core.Lodestone;
+
+internal sealed class LodestoneService : IDisposable
+{
+    internal static readonly TimeSpan NetStoneTimeout = TimeSpan.FromSeconds(20);
+    private static readonly TimeSpan InitRetryFor = TimeSpan.FromMinutes(1);
+    private static readonly TimeSpan UnresolvedRetryAfter = TimeSpan.FromMinutes(10);
+    private const int IdIndexVersion = 2;
+    private const string ImageKeyVersion = "v2";
+    private readonly Configuration configuration;
+    private readonly GameData gameData;
+    private readonly HttpService http;
+    private readonly MediaCache media;
+    private readonly RequestThrottle throttle;
+    private readonly string idIndexPath;
+    private readonly object idSync = new();
+    private readonly Dictionary<string, string> resolvedIds = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, DateTime> unresolvedAt = new(StringComparer.OrdinalIgnoreCase);
+    private bool idsLoaded;
+    private readonly SemaphoreSlim clientGate = new(1, 1);
+    private LodestoneClient? client;
+    private DateTime lastInitFailureUtc = DateTime.MinValue;
+
+    public LodestoneService(Configuration configuration, GameData gameData, HttpService http, MediaCache media,
+        DirectoryInfo cacheRoot)
+    {
+        this.configuration = configuration;
+        this.gameData = gameData;
+        this.http = http;
+        this.media = media;
+        throttle = new RequestThrottle(1, TimeSpan.FromMilliseconds(1200));
+        idIndexPath = Path.Combine(cacheRoot.FullName, "lodestone-ids.tsv");
+        PurgeStaleIdIndex();
+    }
+
+    private void PurgeStaleIdIndex()
+    {
+        if (configuration.LodestoneIdIndexVersion >= IdIndexVersion)
+        {
+            return;
+        }
+
+        try
+        {
+            if (File.Exists(idIndexPath))
+            {
+                File.Delete(idIndexPath);
+            }
+        }
+        catch (Exception exception)
+        {
+            AepLog.Warning(exception, "Lodestone id index purge failed");
+        }
+
+        configuration.LodestoneIdIndexVersion = IdIndexVersion;
+        configuration.Save();
+    }
+
+    public string? TryGetCachedId(string? name, string? world)
+    {
+        if (string.IsNullOrEmpty(name) || string.IsNullOrEmpty(world))
+        {
+            return null;
+        }
+
+        EnsureIdsLoaded();
+        var key = $"{name}@{world}";
+        lock (idSync)
+        {
+            return resolvedIds.TryGetValue(key, out var cached) ? cached : null;
+        }
+    }
+
+    public AvatarHandle Avatar(string? name, string? world, float drawnPixels) =>
+        Image(name, world, false, drawnPixels);
+
+    public AvatarHandle Portrait(string? name, string? world, float drawnPixels) =>
+        Image(name, world, true, drawnPixels);
+
+    public bool TryGetCachedId(string? name, string? world, out string id)
+    {
+        id = string.Empty;
+        if (string.IsNullOrEmpty(name) || string.IsNullOrEmpty(world))
+        {
+            return false;
+        }
+
+        EnsureIdsLoaded();
+        var key = $"{name}@{world}";
+        lock (idSync)
+        {
+            if (resolvedIds.TryGetValue(key, out var cached))
+            {
+                id = cached;
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    public AvatarHandle Remote(string cacheKey, Uri? uri, float drawnPixels)
+    {
+        if (!configuration.ShowLodestonePortraits || uri is null || cacheKey.Length == 0)
+        {
+            return AvatarHandle.Disabled;
+        }
+
+        var result = media.GetOrRequest(cacheKey, token => http.GetBytesAsync(uri, token), drawnPixels);
+        var state = result.Texture is not null ? AvatarLoadState.Ready :
+            result.Loading ? AvatarLoadState.Loading : AvatarLoadState.Failed;
+        return new AvatarHandle(result.Texture, state, cacheKey);
+    }
+
+    public AvatarHandle AvatarById(string id, float drawnPixels)
+    {
+        if (!configuration.ShowLodestonePortraits || gameData.IsChineseGameClient() || id.Length == 0)
+        {
+            return AvatarHandle.Disabled;
+        }
+
+        var key = string.Concat("lodestone:", ImageKeyVersion, ":avatar:id:", id);
+        var result = media.GetOrRequest(key, token => FetchByIdAsync(id, token), drawnPixels);
+        var state = result.Texture is not null ? AvatarLoadState.Ready :
+            result.Loading ? AvatarLoadState.Loading : AvatarLoadState.Failed;
+        return new AvatarHandle(result.Texture, state, key);
+    }
+
+    public void RememberId(string name, string world, string id)
+    {
+        if (name.Length == 0 || world.Length == 0 || id.Length == 0)
+        {
+            return;
+        }
+
+        EnsureIdsLoaded();
+        var key = $"{name}@{world}";
+        lock (idSync)
+        {
+            if (resolvedIds.TryGetValue(key, out var known) && string.Equals(known, id, StringComparison.Ordinal))
+            {
+                return;
+            }
+
+            resolvedIds[key] = id;
+            unresolvedAt.Remove(key);
+        }
+
+        AppendIdIndex(key, id);
+    }
+
+    public Task<IDisposable> ThrottleAsync(CancellationToken token, bool priority) =>
+        throttle.EnterAsync(token, priority);
+
+    public Task<LodestoneClient?> ClientAsync(CancellationToken token) => EnsureClientAsync(token);
+
+    private AvatarHandle Image(string? name, string? world, bool fullBody, float drawnPixels)
+    {
+        if (!configuration.ShowLodestonePortraits || gameData.IsChineseGameClient() || string.IsNullOrEmpty(name) ||
+            string.IsNullOrEmpty(world))
+        {
+            return AvatarHandle.Disabled;
+        }
+
+        var key = $"lodestone:{ImageKeyVersion}:{(fullBody ? "portrait" : "avatar")}:{name}@{world}".ToLowerInvariant();
+        var result = media.GetOrRequest(key, token => FetchAsync(name, world, fullBody, token), drawnPixels);
+        var state = result.Texture is not null ? AvatarLoadState.Ready :
+            result.Loading ? AvatarLoadState.Loading : AvatarLoadState.Failed;
+        return new AvatarHandle(result.Texture, state, key);
+    }
+
+    private async Task<byte[]?> FetchAsync(string name, string world, bool fullBody, CancellationToken token)
+    {
+        using (await throttle.EnterAsync(token).ConfigureAwait(false))
+        {
+            var id = await ResolveIdAsync(name, world, token).ConfigureAwait(false);
+            if (id is null)
+            {
+                return null;
+            }
+
+            return await DownloadImageAsync(id, fullBody, token).ConfigureAwait(false);
+        }
+    }
+
+    private async Task<byte[]?> FetchByIdAsync(string id, CancellationToken token)
+    {
+        using (await throttle.EnterAsync(token).ConfigureAwait(false))
+        {
+            return await DownloadImageAsync(id, false, token).ConfigureAwait(false);
+        }
+    }
+
+    private async Task<byte[]?> DownloadImageAsync(string id, bool fullBody, CancellationToken token)
+    {
+        var ready = await EnsureClientAsync(token).ConfigureAwait(false);
+        if (ready is null)
+        {
+            return null;
+        }
+
+        var character = await ready.GetCharacter(id).WaitAsync(NetStoneTimeout, token).ConfigureAwait(false);
+        var uri = fullBody ? character?.Portrait : character?.Avatar;
+        if (uri is null)
+        {
+            return null;
+        }
+
+        return await http.GetBytesAsync(uri, token).ConfigureAwait(false);
+    }
+
+    public async Task<string?> ResolveIdAsync(string name, string world, CancellationToken token)
+    {
+        if (name.Length == 0 || world.Length == 0)
+        {
+            return null;
+        }
+
+        EnsureIdsLoaded();
+        var key = $"{name}@{world}";
+        lock (idSync)
+        {
+            if (resolvedIds.TryGetValue(key, out var cached))
+            {
+                return cached;
+            }
+
+            if (unresolvedAt.TryGetValue(key, out var missedAt) && DateTime.UtcNow - missedAt < UnresolvedRetryAfter)
+            {
+                return null;
+            }
+        }
+
+        var ready = await EnsureClientAsync(token).ConfigureAwait(false);
+        if (ready is null)
+        {
+            return null;
+        }
+
+        var page = await ready.SearchCharacter(new CharacterSearchQuery { CharacterName = name, World = world })
+            .WaitAsync(NetStoneTimeout, token).ConfigureAwait(false);
+        var id = SelectId(page, name);
+        lock (idSync)
+        {
+            if (id is null)
+            {
+                unresolvedAt[key] = DateTime.UtcNow;
+            }
+            else
+            {
+                resolvedIds[key] = id;
+                unresolvedAt.Remove(key);
+            }
+        }
+
+        if (id is not null)
+        {
+            AppendIdIndex(key, id);
+        }
+
+        return id;
+    }
+
+    private static string? SelectId(CharacterSearchPage? page, string name)
+    {
+        if (page?.Results is null)
+        {
+            return null;
+        }
+
+        var candidates = new List<LodestoneCandidate>();
+        foreach (var entry in page.Results)
+        {
+            candidates.Add(new LodestoneCandidate(entry.Name ?? string.Empty, entry.Id ?? string.Empty));
+        }
+
+        return LodestoneMatch.ExactId(candidates, name);
+    }
+
+    private async Task<LodestoneClient?> EnsureClientAsync(CancellationToken token)
+    {
+        if (client is not null)
+        {
+            return client;
+        }
+
+        await clientGate.WaitAsync(token).ConfigureAwait(false);
+        try
+        {
+            if (client is null && DateTime.UtcNow - lastInitFailureUtc >= InitRetryFor)
+            {
+                client = await LodestoneClient.GetClientAsync().WaitAsync(NetStoneTimeout, token).ConfigureAwait(false);
+            }
+        }
+        catch (OperationCanceledException) when (token.IsCancellationRequested)
+        {
+        }
+        catch (Exception exception)
+        {
+            lastInitFailureUtc = DateTime.UtcNow;
+            AepLog.Warning(exception, "Lodestone client init failed");
+        }
+        finally
+        {
+            clientGate.Release();
+        }
+
+        return client;
+    }
+
+    private void EnsureIdsLoaded()
+    {
+        if (idsLoaded)
+        {
+            return;
+        }
+
+        lock (idSync)
+        {
+            if (idsLoaded)
+            {
+                return;
+            }
+
+            idsLoaded = true;
+            try
+            {
+                if (!File.Exists(idIndexPath))
+                {
+                    return;
+                }
+
+                var lines = File.ReadAllLines(idIndexPath);
+                for (var index = 0; index < lines.Length; index++)
+                {
+                    var separator = lines[index].IndexOf('\t');
+                    if (separator <= 0 || separator >= lines[index].Length - 1)
+                    {
+                        continue;
+                    }
+
+                    resolvedIds[lines[index].Substring(0, separator)] = lines[index].Substring(separator + 1);
+                }
+            }
+            catch (Exception exception)
+            {
+                AepLog.Warning(exception, "Lodestone id index load failed");
+            }
+        }
+    }
+
+    private void AppendIdIndex(string key, string id)
+    {
+        try
+        {
+            File.AppendAllText(idIndexPath, $"{key}\t{id}{Environment.NewLine}");
+        }
+        catch (Exception exception)
+        {
+            AepLog.Warning(exception, "Lodestone id index append failed");
+        }
+    }
+
+    public void Dispose()
+    {
+        throttle.Dispose();
+        clientGate.Dispose();
+        client?.Dispose();
+    }
+}

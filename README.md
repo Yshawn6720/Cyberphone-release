@@ -1,6 +1,6 @@
 # Cyberphone 下載
 
-Cyberphone 是 FFXIV 台服用的 Dalamud 插件（遊戲內手機），改自 XeldarAlz 的 Aetherphone，授權 AGPL-3.0-or-later。本 repo 只放編譯好的檔案，與 Aetherphone 官方無關，也不連官方 Aethernet。
+Cyberphone 是 FFXIV 台服用的 Dalamud 插件（遊戲內手機），改自 XeldarAlz 的 Aetherphone，授權 AGPL-3.0-or-later。本 repo 放插件庫設定、編譯好的檔案（在 release）與公開原始碼（在 [`source/`](source)），與 Aetherphone 官方無關，也不連官方 Aethernet。
 
 ## 安裝（Dalamud 插件庫）
 
@@ -18,6 +18,12 @@ Cyberphone 是 FFXIV 台服用的 Dalamud 插件（遊戲內手機），改自 X
 
 - 插件：[Cyberphone.zip](https://github.com/Yshawn6720/Cyberphone-release/releases/latest/download/Cyberphone.zip)，解壓整個資料夾，在「Dev Plugin Locations」填 `Cyberphone.dll` 的完整路徑。
 - 對應原始碼：每個 release 裡的 `Cyberphone-source-<commit>.zip`。
+
+## 原始碼
+
+[`source/`](source) 是 Cyberphone 的公開原始碼，授權 **AGPL-3.0-or-later**（[`source/LICENSE.md`](source/LICENSE.md)），修改聲明見 [`source/NOTICE`](source/NOTICE)，第三方元件見 [`source/THIRD-PARTY-NOTICES.md`](source/THIRD-PARTY-NOTICES.md)。目前對應原始碼 repo 的 commit `63d5b87f04087423910fb20e72601e7479c889dc`。
+
+內容包含建置插件需要的程式碼與專案檔（`src/`）、自架看片派對伺服器（`server/`，架設方式見 [`source/docs/self-hosting-relay.md`](source/docs/self-hosting-relay.md)）、素材產生工具（`tools/`）與授權檔；建置方式見 [`source/README.md`](source/README.md)。
 
 ## 一起看派對
 

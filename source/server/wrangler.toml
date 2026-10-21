@@ -1,0 +1,28 @@
+name = "cyberphone-relay"
+main = "src/index.ts"
+compatibility_date = "2026-08-15"
+workers_dev = true
+
+# One Durable Object per room slot. Room state lives only in WebSocket attachments; the only
+# storage use is one closing alarm per open room. No cron triggers, so an idle relay costs zero requests.
+[[durable_objects.bindings]]
+name = "ROOMS"
+class_name = "PartyRoom"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["PartyRoom"]
+
+# Caps how often authenticated clients may open /rt connections (per Cloudflare location).
+# namespace_id must be unique within the Cloudflare account; period accepts only 10 or 60.
+[[ratelimits]]
+name = "CONNECT_LIMITER"
+namespace_id = "4101"
+simple = { limit = 10, period = 60 }
+
+[vars]
+MAX_ROOMS = "3"
+
+# Logs would draw on the account-wide events allowance shared with other projects.
+[observability]
+enabled = false

@@ -1,0 +1,166 @@
+using Aetherphone.Core;
+using Aetherphone.Core.Theme;
+using Xunit;
+
+namespace Aetherphone.Tests;
+
+public sealed class SeasonalThemeTests
+{
+    private static readonly DateTime HalloweenNight = new(2026, 10, 31, 21, 0, 0);
+    private static readonly DateTime Midsummer = new(2026, 7, 1, 12, 0, 0);
+
+    [Theory]
+    [InlineData(2026, 10, 15)]
+    [InlineData(2026, 10, 31)]
+    [InlineData(2026, 11, 2)]
+    [InlineData(2027, 10, 20)]
+    public void DatesInsideTheWindowAreHalloween(int year, int month, int day)
+    {
+        Assert.True(SeasonalTheme.IsHalloweenDate(new DateTime(year, month, day, 23, 59, 0)));
+    }
+
+    [Theory]
+    [InlineData(2026, 10, 14)]
+    [InlineData(2026, 11, 3)]
+    [InlineData(2026, 1, 1)]
+    [InlineData(2026, 12, 25)]
+    public void DatesOutsideTheWindowAreNotHalloween(int year, int month, int day)
+    {
+        Assert.False(SeasonalTheme.IsHalloweenDate(new DateTime(year, month, day, 0, 0, 0)));
+    }
+
+    [Fact]
+    public void HalloweenShowsInsideTheWindowWhenDecorationsAreOn()
+    {
+        SeasonalTheme.Update(Automatic(),HalloweenNight);
+
+        Assert.True(SeasonalTheme.Halloween);
+    }
+
+    [Fact]
+    public void TheOffModeHidesHalloween()
+    {
+        SeasonalTheme.Update(new Configuration { SeasonalThemeMode = SeasonalThemeMode.Off }, HalloweenNight);
+
+        Assert.False(SeasonalTheme.Halloween);
+    }
+
+    [Fact]
+    public void HalloweenStaysHiddenOutsideTheWindow()
+    {
+        SeasonalTheme.Update(Automatic(),Midsummer);
+
+        Assert.False(SeasonalTheme.Halloween);
+    }
+
+    [Fact]
+    public void TheHalloweenModeKeepsTheThemeAllYear()
+    {
+        SeasonalTheme.Update(new Configuration { SeasonalThemeMode = SeasonalThemeMode.Halloween }, Midsummer);
+
+        Assert.True(SeasonalTheme.Halloween);
+        Assert.False(SeasonalTheme.HalloweenByDate);
+    }
+
+    [Fact]
+    public void BlackletterNamesFollowTheNameFontSwitch()
+    {
+        SeasonalTheme.Update(Automatic(),HalloweenNight);
+        Assert.True(SeasonalTheme.BlackletterNames);
+
+        var plainNames = Automatic();
+        plainNames.SeasonalNameFont = false;
+        SeasonalTheme.Update(plainNames, HalloweenNight);
+        Assert.False(SeasonalTheme.BlackletterNames);
+    }
+
+    [Fact]
+    public void ParallaxFollowsItsSwitch()
+    {
+        SeasonalTheme.Update(Automatic(),HalloweenNight);
+        Assert.True(SeasonalTheme.Parallax);
+
+        var still = Automatic();
+        still.SeasonalParallax = false;
+        SeasonalTheme.Update(still, HalloweenNight);
+        Assert.False(SeasonalTheme.Parallax);
+    }
+
+    [Fact]
+    public void ParallaxNeedsHalloween()
+    {
+        SeasonalTheme.Update(Automatic(),Midsummer);
+
+        Assert.False(SeasonalTheme.Parallax);
+    }
+
+    [Fact]
+    public void BlackletterNamesNeedHalloween()
+    {
+        SeasonalTheme.Update(Automatic(),Midsummer);
+
+        Assert.False(SeasonalTheme.BlackletterNames);
+    }
+
+    [Fact]
+    public void OnlyTheThirtyFirstIsHalloweenNight()
+    {
+        SeasonalTheme.Update(Automatic(),HalloweenNight);
+
+        Assert.True(SeasonalTheme.IsHalloweenNight(new DateTime(2026, 10, 31)));
+        Assert.False(SeasonalTheme.IsHalloweenNight(new DateTime(2026, 10, 30)));
+        Assert.False(SeasonalTheme.IsHalloweenNight(new DateTime(2026, 11, 1)));
+    }
+
+    [Theory]
+    [InlineData(10, 15, 0)]
+    [InlineData(10, 27, 12)]
+    [InlineData(10, 31, 16)]
+    [InlineData(11, 1, 17)]
+    [InlineData(11, 2, 18)]
+    [InlineData(10, 14, -1)]
+    [InlineData(11, 3, -1)]
+    [InlineData(7, 1, -1)]
+    public void DayOfHalloweenCountsFromTheFifteenth(int month, int day, int expected)
+    {
+        Assert.Equal(expected, SeasonalTheme.DayOfHalloween(new DateTime(2026, month, day)));
+    }
+
+    [Fact]
+    public void OffIsTheDefault()
+    {
+        Assert.Equal(SeasonalThemeMode.Off, new Configuration().SeasonalThemeMode);
+    }
+
+    [Fact]
+    public void TheOptInTurnsAutomaticOff()
+    {
+        var configuration = Automatic();
+
+        Assert.True(configuration.ApplySeasonalThemeOptIn());
+        Assert.Equal(SeasonalThemeMode.Off, configuration.SeasonalThemeMode);
+        Assert.True(configuration.SeasonalThemeOptInApplied);
+    }
+
+    [Fact]
+    public void TheOptInKeepsAPickedHalloween()
+    {
+        var configuration = new Configuration { SeasonalThemeMode = SeasonalThemeMode.Halloween };
+
+        Assert.True(configuration.ApplySeasonalThemeOptIn());
+        Assert.Equal(SeasonalThemeMode.Halloween, configuration.SeasonalThemeMode);
+    }
+
+    [Fact]
+    public void TheOptInRunsOnlyOnce()
+    {
+        var configuration = new Configuration();
+        configuration.ApplySeasonalThemeOptIn();
+        configuration.SeasonalThemeMode = SeasonalThemeMode.Automatic;
+
+        Assert.False(configuration.ApplySeasonalThemeOptIn());
+        Assert.Equal(SeasonalThemeMode.Automatic, configuration.SeasonalThemeMode);
+    }
+
+    private static Configuration Automatic() => new() { SeasonalThemeMode = SeasonalThemeMode.Automatic };
+}

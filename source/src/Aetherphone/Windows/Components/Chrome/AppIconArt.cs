@@ -1,0 +1,1287 @@
+using Dalamud.Bindings.ImGui;
+
+namespace Aetherphone.Windows.Components;
+
+internal static class AppIconArt
+{
+    private const int ChipSpokes = 8;
+    private const float ChipRimInner = 0.84f;
+    private const float ChipCoreRadius = 0.58f;
+    private const float ChipSpokeThickness = 0.12f;
+
+    public static bool TryDraw(string id, Vector2 center, float size, Vector4 ink, Vector4 hole) =>
+        TryDraw(ImGui.GetWindowDrawList(), id, center, size, ink, hole);
+
+    public static bool TryDraw(ImDrawListPtr dl, string id, Vector2 center, float size, Vector4 ink, Vector4 hole)
+    {
+        if (AppIconTextures.TryDraw(dl, id, center, size, ink))
+        {
+            return true;
+        }
+
+        var extent = size * 0.30f;
+        var inkColor = ImGui.GetColorU32(ink);
+        var holeColor = ImGui.GetColorU32(hole);
+        switch (id)
+        {
+            case "casino":
+                DrawCasinoChip(dl, center, extent, inkColor, holeColor);
+                return true;
+            case "minesweeper":
+                DrawMine(dl, center, extent, inkColor, holeColor);
+                return true;
+            case "memory":
+                DrawMemory(dl, center, extent, inkColor, holeColor);
+                return true;
+            case "match3":
+                DrawGem(dl, center, extent, inkColor, holeColor);
+                return true;
+            case "2048":
+                DrawTiles(dl, center, extent, inkColor);
+                return true;
+            case "breakout":
+                DrawBreakout(dl, center, extent, inkColor);
+                return true;
+            case "bubbles":
+                DrawBubbles(dl, center, extent, inkColor, holeColor);
+                return true;
+            case "watersort":
+                DrawWaterSort(dl, center, extent, inkColor);
+                return true;
+            case "nonogram":
+                DrawNonogram(dl, center, extent, inkColor);
+                return true;
+            case "flow":
+                DrawFlow(dl, center, extent, inkColor, holeColor);
+                return true;
+            case "solitaire":
+                DrawSolitaire(dl, center, extent, inkColor, holeColor);
+                return true;
+            case "simon":
+                DrawSimon(dl, center, extent, inkColor, holeColor);
+                return true;
+            case "flap":
+                DrawFlap(dl, center, extent, inkColor, holeColor);
+                return true;
+            case "reversi":
+                DrawReversi(dl, center, extent, inkColor, holeColor);
+                return true;
+            case "whack":
+                DrawWhack(dl, center, extent, inkColor, holeColor);
+                return true;
+            case "snake":
+                DrawSnake(dl, center, extent, inkColor, holeColor);
+                return true;
+            case "tetris":
+                DrawTetris(dl, center, extent, inkColor);
+                return true;
+            case "sudoku":
+                DrawSudoku(dl, center, extent, inkColor, holeColor);
+                return true;
+            case "chess":
+                DrawChess(dl, center, extent, inkColor, holeColor);
+                return true;
+            case "stack":
+                DrawStack(dl, center, extent, inkColor);
+                return true;
+            case "crystaldrop":
+                DrawCrystalDrop(dl, center, extent, inkColor, holeColor);
+                return true;
+            case "beat":
+                DrawBeat(dl, center, extent, inkColor);
+                return true;
+            case "blade":
+                DrawBladeThrow(dl, center, extent, inkColor, holeColor);
+                return true;
+            case "trivia":
+                DrawTrivia(dl, center, extent, inkColor, holeColor);
+                return true;
+            case "skyfall":
+                DrawSkyfall(dl, center, extent, inkColor, holeColor);
+                return true;
+            case "invaders":
+                DrawInvaders(dl, center, extent, inkColor);
+                return true;
+            case "capman":
+                DrawCapMan(dl, center, extent, inkColor);
+                return true;
+            case "hop":
+                DrawHop(dl, center, extent, inkColor, holeColor);
+                return true;
+            case "squadron":
+                DrawSquadron(dl, center, extent, inkColor);
+                return true;
+            case "doom":
+                DrawDoom(dl, center, extent, inkColor, holeColor);
+                return true;
+            case "wordrun":
+                DrawWordRun(dl, center, extent, inkColor, holeColor);
+                return true;
+            case "coil":
+                CoilIcon.Draw(dl, center, extent, inkColor, holeColor);
+                return true;
+            case "updraft":
+                UpdraftIcon.Draw(dl, center, extent, inkColor, holeColor);
+                return true;
+            case "swoop":
+                SwoopIcon.Draw(dl, center, extent, inkColor, holeColor);
+                return true;
+            case "slice":
+                SliceIcon.Draw(dl, center, extent, inkColor, holeColor);
+                return true;
+            case "spiral":
+                SpiralIcon.Draw(dl, center, extent, inkColor, holeColor);
+                return true;
+            case "mahjong":
+                DrawMahjong(dl, center, extent, inkColor, holeColor);
+                return true;
+            case "gloop":
+                DrawGloop(dl, center, extent, inkColor, holeColor);
+                return true;
+            case "drift":
+                DrawDrift(dl, center, extent, inkColor, holeColor);
+                return true;
+            case "crawler":
+                DrawCrawler(dl, center, extent, inkColor, holeColor);
+                return true;
+            case "trails":
+                DrawTrails(dl, center, extent, inkColor, holeColor);
+                return true;
+            case "trailblaze":
+                DrawTrailblaze(dl, center, extent, inkColor, holeColor);
+                return true;
+            case "thrust":
+                DrawThrust(dl, center, extent, inkColor, holeColor);
+                return true;
+            case "pinball":
+                PinballIcon.Draw(dl, center, extent, inkColor, holeColor);
+                return true;
+            case "crates":
+                DrawCrates(dl, center, extent, inkColor, holeColor);
+                return true;
+            case "delve":
+                DrawDelve(dl, center, extent, inkColor, holeColor);
+                return true;
+            case "moogleclicker":
+                MoogleClickerIcon.Draw(dl, center, extent, inkColor, holeColor);
+                return true;
+            case "claim":
+                ClaimIcon.Draw(dl, center, extent, inkColor, holeColor);
+                return true;
+            case "lander":
+                LanderIcon.Draw(dl, center, extent, inkColor, holeColor);
+                return true;
+            case "luckydraw":
+                LuckyDrawIcon.Draw(dl, center, extent, inkColor, holeColor);
+                return true;
+            case "broadside":
+                BroadsideIcon.Draw(dl, center, extent, inkColor, holeColor);
+                return true;
+            case "pegfall":
+                DrawPegfall(dl, center, extent, inkColor, holeColor);
+                return true;
+            case "fling":
+                DrawFling(dl, center, extent, inkColor, holeColor);
+                return true;
+            case "siege":
+                SiegeIcon.Draw(dl, center, extent, inkColor, holeColor);
+                return true;
+            case "crater":
+                DrawCrater(dl, center, extent, inkColor, holeColor);
+                return true;
+            case "fuse":
+                DrawFuse(dl, center, extent, inkColor, holeColor);
+                return true;
+            case "snip":
+                DrawSnip(dl, center, extent, inkColor, holeColor);
+                return true;
+            case "minigolf":
+                DrawMiniGolf(dl, center, extent, inkColor, holeColor);
+                return true;
+            case "herd":
+                DrawHerd(dl, center, extent, inkColor, holeColor);
+                return true;
+            case "tempo":
+                DrawTempo(dl, center, extent, inkColor, holeColor);
+                return true;
+            default:
+                return false;
+        }
+    }
+
+    private static void DrawCasinoChip(ImDrawListPtr drawList, Vector2 center, float extent, uint ink, uint hole)
+    {
+        var rimRadius = extent * 0.98f;
+        drawList.AddCircleFilled(center, rimRadius, ink, 48);
+        drawList.AddCircleFilled(center, rimRadius * ChipRimInner, hole, 48);
+        var spokeThickness = rimRadius * ChipSpokeThickness;
+        for (var spoke = 0; spoke < ChipSpokes; spoke++)
+        {
+            var angle = spoke * (MathF.PI * 2f / ChipSpokes);
+            var direction = new Vector2(MathF.Cos(angle), MathF.Sin(angle));
+            drawList.AddLine(center + direction * rimRadius * ChipCoreRadius * 0.9f,
+                center + direction * rimRadius * ChipRimInner * 1.04f, ink, spokeThickness);
+        }
+
+        drawList.AddCircleFilled(center, rimRadius * ChipCoreRadius, ink, 40);
+    }
+
+    private static void DrawMine(ImDrawListPtr dl, Vector2 center, float extent, uint ink, uint hole)
+    {
+        var spikeThickness = extent * 0.16f;
+        for (var spike = 0; spike < 8; spike++)
+        {
+            var angle = spike * (MathF.PI / 4f);
+            dl.AddLine(Polar(center, extent, 0.45f, angle), Polar(center, extent, 0.98f, angle), ink, spikeThickness);
+        }
+
+        dl.AddCircleFilled(center, extent * 0.62f, ink, 32);
+        dl.AddCircleFilled(At(center, extent, -0.22f, -0.22f), extent * 0.16f, hole, 16);
+    }
+
+    private static void DrawMemory(ImDrawListPtr dl, Vector2 center, float extent, uint ink, uint hole)
+    {
+        var backMin = At(center, extent, -0.10f, -0.90f);
+        var backMax = At(center, extent, 0.85f, 0.45f);
+        dl.AddRectFilled(backMin, backMax, ink, extent * 0.16f);
+        var outlineMin = At(center, extent, -0.92f, -0.47f);
+        var outlineMax = At(center, extent, 0.20f, 0.92f);
+        dl.AddRectFilled(outlineMin, outlineMax, hole, extent * 0.20f);
+        var frontMin = At(center, extent, -0.80f, -0.35f);
+        var frontMax = At(center, extent, 0.08f, 0.80f);
+        dl.AddRectFilled(frontMin, frontMax, ink, extent * 0.16f);
+        var symbol = At(center, extent, -0.36f, 0.22f);
+        Span<Vector2> diamond = stackalloc Vector2[4]
+        {
+            new(symbol.X, symbol.Y - extent * 0.28f), new(symbol.X + extent * 0.24f, symbol.Y),
+            new(symbol.X, symbol.Y + extent * 0.28f), new(symbol.X - extent * 0.24f, symbol.Y),
+        };
+        FillConvex(dl, hole, diamond);
+    }
+
+    private static void DrawGem(ImDrawListPtr dl, Vector2 center, float extent, uint ink, uint hole)
+    {
+        Span<Vector2> gem = stackalloc Vector2[5]
+        {
+            At(center, extent, -0.60f, -0.55f), At(center, extent, 0.60f, -0.55f),
+            At(center, extent, 0.92f, -0.05f), At(center, extent, 0f, 0.92f), At(center, extent, -0.92f, -0.05f),
+        };
+        FillConvex(dl, ink, gem);
+        var facetThickness = extent * 0.06f;
+        dl.AddLine(At(center, extent, -0.92f, -0.05f), At(center, extent, 0.92f, -0.05f), hole, facetThickness);
+        dl.AddLine(At(center, extent, 0f, -0.55f), At(center, extent, 0f, -0.05f), hole, facetThickness);
+        dl.AddLine(At(center, extent, -0.60f, -0.55f), At(center, extent, 0f, 0.92f), hole, facetThickness);
+        dl.AddLine(At(center, extent, 0.60f, -0.55f), At(center, extent, 0f, 0.92f), hole, facetThickness);
+    }
+
+    private static void DrawTiles(ImDrawListPtr dl, Vector2 center, float extent, uint ink)
+    {
+        var tileExtent = extent * 0.40f;
+        var rounding = extent * 0.14f;
+        Span<Vector2> tileCenters = stackalloc Vector2[4]
+        {
+            At(center, extent, -0.45f, -0.45f), At(center, extent, 0.45f, -0.45f),
+            At(center, extent, -0.45f, 0.45f), At(center, extent, 0.45f, 0.45f),
+        };
+        for (var tile = 0; tile < tileCenters.Length; tile++)
+        {
+            var tileCenter = tileCenters[tile];
+            var tileMin = new Vector2(tileCenter.X - tileExtent, tileCenter.Y - tileExtent);
+            var tileMax = new Vector2(tileCenter.X + tileExtent, tileCenter.Y + tileExtent);
+            dl.AddRectFilled(tileMin, tileMax, ink, rounding);
+        }
+    }
+
+    private static void DrawBreakout(ImDrawListPtr dl, Vector2 center, float extent, uint ink)
+    {
+        var brickWidth = extent * 0.30f;
+        var brickHeight = extent * 0.16f;
+        var rounding = extent * 0.06f;
+        Span<float> columns = stackalloc float[3] { -0.62f, 0f, 0.62f };
+        for (var column = 0; column < columns.Length; column++)
+        {
+            var brick = At(center, extent, columns[column], -0.72f);
+            dl.AddRectFilled(new Vector2(brick.X - brickWidth, brick.Y - brickHeight),
+                new Vector2(brick.X + brickWidth, brick.Y + brickHeight), ink, rounding);
+        }
+
+        dl.AddCircleFilled(At(center, extent, 0.18f, 0.05f), extent * 0.15f, ink);
+        var paddle = At(center, extent, 0f, 0.78f);
+        var paddleWidth = extent * 0.52f;
+        var paddleHeight = extent * 0.12f;
+        dl.AddRectFilled(new Vector2(paddle.X - paddleWidth, paddle.Y - paddleHeight),
+            new Vector2(paddle.X + paddleWidth, paddle.Y + paddleHeight), ink, paddleHeight);
+    }
+
+    private static void DrawBubbles(ImDrawListPtr dl, Vector2 center, float extent, uint ink, uint hole)
+    {
+        Span<Vector2> bubbles = stackalloc Vector2[5]
+        {
+            At(center, extent, -0.46f, -0.42f), At(center, extent, 0.46f, -0.42f), At(center, extent, 0f, 0.04f),
+            At(center, extent, -0.42f, 0.5f), At(center, extent, 0.42f, 0.5f),
+        };
+        var radius = extent * 0.34f;
+        for (var bubble = 0; bubble < bubbles.Length; bubble++)
+        {
+            dl.AddCircleFilled(bubbles[bubble], radius, ink);
+            dl.AddCircleFilled(new Vector2(bubbles[bubble].X - radius * 0.32f, bubbles[bubble].Y - radius * 0.32f),
+                radius * 0.3f, hole);
+        }
+    }
+
+    private static void DrawWaterSort(ImDrawListPtr dl, Vector2 center, float extent, uint ink)
+    {
+        Span<float> tubeColumns = stackalloc float[2] { -0.5f, 0.5f };
+        Span<float> fillFractions = stackalloc float[2] { 0.62f, 0.86f };
+        var halfWidth = extent * 0.26f;
+        var topY = At(center, extent, 0f, -0.82f).Y;
+        var bottomY = At(center, extent, 0f, 0.84f).Y;
+        var thickness = extent * 0.09f;
+        var inset = extent * 0.05f;
+        for (var tube = 0; tube < tubeColumns.Length; tube++)
+        {
+            var centerX = At(center, extent, tubeColumns[tube], 0f).X;
+            var min = new Vector2(centerX - halfWidth, topY);
+            var max = new Vector2(centerX + halfWidth, bottomY);
+            dl.AddRect(min, max, ink, halfWidth, ImDrawFlags.RoundCornersBottom, thickness);
+            var fillTopY = bottomY - (bottomY - topY) * fillFractions[tube];
+            dl.AddRectFilled(new Vector2(min.X + inset, fillTopY), new Vector2(max.X - inset, max.Y - inset), ink,
+                halfWidth - inset, ImDrawFlags.RoundCornersBottom);
+        }
+    }
+
+    private static void DrawNonogram(ImDrawListPtr dl, Vector2 center, float extent, uint ink)
+    {
+        Span<float> tracks = stackalloc float[3] { -0.6f, 0f, 0.6f };
+        var half = extent * 0.26f;
+        var rounding = extent * 0.06f;
+        for (var row = 0; row < 3; row++)
+        {
+            for (var column = 0; column < 3; column++)
+            {
+                var cell = At(center, extent, tracks[column], tracks[row]);
+                var min = new Vector2(cell.X - half, cell.Y - half);
+                var max = new Vector2(cell.X + half, cell.Y + half);
+                if ((row + column) % 2 == 0)
+                {
+                    dl.AddRectFilled(min, max, ink, rounding);
+                }
+                else
+                {
+                    dl.AddRect(min, max, ink, rounding, ImDrawFlags.RoundCornersAll, extent * 0.05f);
+                }
+            }
+        }
+    }
+
+    private static void DrawFlow(ImDrawListPtr dl, Vector2 center, float extent, uint ink, uint hole)
+    {
+        var thickness = extent * 0.2f;
+        var first = At(center, extent, -0.55f, -0.45f);
+        var second = At(center, extent, -0.55f, 0.5f);
+        var third = At(center, extent, 0.55f, 0.5f);
+        var fourth = At(center, extent, 0.55f, -0.45f);
+        dl.AddLine(first, second, ink, thickness);
+        dl.AddLine(second, third, ink, thickness);
+        dl.AddLine(third, fourth, ink, thickness);
+        dl.AddCircleFilled(second, thickness * 0.5f, ink, 16);
+        dl.AddCircleFilled(third, thickness * 0.5f, ink, 16);
+        var dotRadius = extent * 0.22f;
+        dl.AddCircleFilled(first, dotRadius, ink, 24);
+        dl.AddCircleFilled(fourth, dotRadius, ink, 24);
+        dl.AddCircleFilled(first - new Vector2(dotRadius * 0.3f, dotRadius * 0.3f), dotRadius * 0.34f, hole, 16);
+        dl.AddCircleFilled(fourth - new Vector2(dotRadius * 0.3f, dotRadius * 0.3f), dotRadius * 0.34f, hole, 16);
+    }
+
+    private static void DrawSolitaire(ImDrawListPtr dl, Vector2 center, float extent, uint ink, uint hole)
+    {
+        var rounding = extent * 0.16f;
+        var backMin = At(center, extent, -0.18f, -0.82f);
+        var backMax = At(center, extent, 0.82f, 0.5f);
+        dl.AddRectFilled(backMin, backMax, ink, rounding);
+        var gap = extent * 0.08f;
+        var frontMin = At(center, extent, -0.82f, -0.5f);
+        var frontMax = At(center, extent, 0.18f, 0.82f);
+        dl.AddRectFilled(frontMin - new Vector2(gap, gap), frontMax + new Vector2(gap, gap), hole, rounding);
+        dl.AddRectFilled(frontMin, frontMax, ink, rounding);
+        var pip = (frontMin + frontMax) * 0.5f;
+        var pipRadius = extent * 0.24f;
+        Span<Vector2> diamond = stackalloc Vector2[4]
+        {
+            new(pip.X, pip.Y - pipRadius), new(pip.X + pipRadius * 0.72f, pip.Y), new(pip.X, pip.Y + pipRadius),
+            new(pip.X - pipRadius * 0.72f, pip.Y),
+        };
+        FillConvex(dl, hole, diamond);
+    }
+
+    private static void DrawSimon(ImDrawListPtr dl, Vector2 center, float extent, uint ink, uint hole)
+    {
+        Span<float> tracks = stackalloc float[2] { -0.46f, 0.46f };
+        var half = extent * 0.4f;
+        var rounding = extent * 0.16f;
+        for (var row = 0; row < 2; row++)
+        {
+            for (var column = 0; column < 2; column++)
+            {
+                var cell = At(center, extent, tracks[column], tracks[row]);
+                dl.AddRectFilled(new Vector2(cell.X - half, cell.Y - half), new Vector2(cell.X + half, cell.Y + half),
+                    ink, rounding);
+            }
+        }
+
+        dl.AddCircleFilled(center, extent * 0.3f, hole, 28);
+        dl.AddCircleFilled(center, extent * 0.18f, ink, 24);
+    }
+
+    private static void DrawFlap(ImDrawListPtr dl, Vector2 center, float extent, uint ink, uint hole)
+    {
+        var topMin = At(center, extent, 0.46f, -1f);
+        var topMax = At(center, extent, 0.92f, -0.28f);
+        dl.AddRectFilled(topMin, topMax, ink, extent * 0.08f);
+        var bottomMin = At(center, extent, 0.46f, 0.32f);
+        var bottomMax = At(center, extent, 0.92f, 1f);
+        dl.AddRectFilled(bottomMin, bottomMax, ink, extent * 0.08f);
+        var bird = At(center, extent, -0.34f, 0.04f);
+        var radius = extent * 0.42f;
+        dl.AddCircleFilled(bird, radius, ink, 28);
+        dl.AddCircleFilled(new Vector2(bird.X + radius * 0.34f, bird.Y - radius * 0.32f), radius * 0.24f, hole, 16);
+        Span<Vector2> beak = stackalloc Vector2[3]
+        {
+            new(bird.X + radius * 0.82f, bird.Y - radius * 0.12f),
+            new(bird.X + radius * 1.34f, bird.Y + radius * 0.06f),
+            new(bird.X + radius * 0.82f, bird.Y + radius * 0.28f),
+        };
+        FillConvex(dl, ink, beak);
+    }
+
+    private static void DrawReversi(ImDrawListPtr dl, Vector2 center, float extent, uint ink, uint hole)
+    {
+        Span<float> tracks = stackalloc float[2] { -0.44f, 0.44f };
+        var radius = extent * 0.36f;
+        for (var row = 0; row < 2; row++)
+        {
+            for (var column = 0; column < 2; column++)
+            {
+                var cell = At(center, extent, tracks[column], tracks[row]);
+                dl.AddCircleFilled(cell, radius, ink, 28);
+                if ((row + column) % 2 != 0)
+                {
+                    dl.AddCircleFilled(cell, radius * 0.6f, hole, 24);
+                }
+            }
+        }
+    }
+
+    private static void DrawWhack(ImDrawListPtr dl, Vector2 center, float extent, uint ink, uint hole)
+    {
+        var mole = At(center, extent, 0f, -0.05f);
+        var radius = extent * 0.52f;
+        dl.AddCircleFilled(mole, radius, ink, 30);
+        dl.AddCircleFilled(new Vector2(mole.X - radius * 0.34f, mole.Y - radius * 0.14f), radius * 0.16f, hole, 12);
+        dl.AddCircleFilled(new Vector2(mole.X + radius * 0.34f, mole.Y - radius * 0.14f), radius * 0.16f, hole, 12);
+        dl.AddCircleFilled(new Vector2(mole.X, mole.Y + radius * 0.16f), radius * 0.14f, hole, 12);
+        var lip = At(center, extent, 0f, 0.72f);
+        dl.AddRectFilled(new Vector2(lip.X - extent * 0.92f, lip.Y - extent * 0.18f),
+            new Vector2(lip.X + extent * 0.92f, lip.Y + extent * 0.32f), hole, extent * 0.2f);
+    }
+
+    private static void DrawSnake(ImDrawListPtr dl, Vector2 center, float extent, uint ink, uint hole)
+    {
+        Span<Vector2> body = stackalloc Vector2[5]
+        {
+            At(center, extent, -0.72f, 0.4f), At(center, extent, -0.36f, -0.08f), At(center, extent, 0.02f, 0.3f),
+            At(center, extent, 0.4f, -0.12f), At(center, extent, 0.66f, 0.12f),
+        };
+        var radius = extent * 0.24f;
+        for (var index = 0; index < body.Length; index++)
+        {
+            dl.AddCircleFilled(body[index], radius * (0.62f + 0.08f * index), ink, 20);
+        }
+
+        var head = At(center, extent, 0.82f, -0.08f);
+        dl.AddCircleFilled(head, radius * 1.15f, ink, 24);
+        dl.AddCircleFilled(new Vector2(head.X + radius * 0.34f, head.Y - radius * 0.34f), radius * 0.24f, hole, 12);
+        dl.AddCircleFilled(At(center, extent, -0.86f, -0.6f), extent * 0.16f, ink, 16);
+    }
+
+    private static void DrawTetris(ImDrawListPtr dl, Vector2 center, float extent, uint ink)
+    {
+        var blockExtent = extent * 0.30f;
+        var rounding = extent * 0.10f;
+        Span<Vector2> blockCenters = stackalloc Vector2[4]
+        {
+            At(center, extent, -0.66f, -0.33f), At(center, extent, 0f, -0.33f), At(center, extent, 0.66f, -0.33f),
+            At(center, extent, 0f, 0.33f),
+        };
+        for (var block = 0; block < blockCenters.Length; block++)
+        {
+            var blockCenter = blockCenters[block];
+            var blockMin = new Vector2(blockCenter.X - blockExtent, blockCenter.Y - blockExtent);
+            var blockMax = new Vector2(blockCenter.X + blockExtent, blockCenter.Y + blockExtent);
+            dl.AddRectFilled(blockMin, blockMax, ink, rounding);
+        }
+    }
+
+    private static void DrawSudoku(ImDrawListPtr dl, Vector2 center, float extent, uint ink, uint hole)
+    {
+        var half = extent * 0.92f;
+        var min = new Vector2(center.X - half, center.Y - half);
+        var max = new Vector2(center.X + half, center.Y + half);
+        var thickness = extent * 0.15f;
+        dl.AddRect(min, max, ink, extent * 0.18f, ImDrawFlags.RoundCornersAll, thickness);
+        var step = half * 2f / 3f;
+        for (var line = 1; line < 3; line++)
+        {
+            var offset = line * step;
+            dl.AddLine(new Vector2(min.X + offset, min.Y), new Vector2(min.X + offset, max.Y), ink, thickness * 0.7f);
+            dl.AddLine(new Vector2(min.X, min.Y + offset), new Vector2(max.X, min.Y + offset), ink, thickness * 0.7f);
+        }
+
+        var cell = step * 0.5f;
+        Span<Vector2> marks = stackalloc Vector2[3]
+        {
+            new(min.X + cell, min.Y + cell), new(min.X + step + cell, min.Y + step + cell),
+            new(min.X + step * 2f + cell, min.Y + cell),
+        };
+        for (var mark = 0; mark < marks.Length; mark++)
+        {
+            dl.AddCircleFilled(marks[mark], extent * 0.16f, ink, 16);
+        }
+
+        dl.AddCircleFilled(new Vector2(min.X + cell, min.Y + step * 2f + cell), extent * 0.16f, hole, 16);
+    }
+
+    private static void DrawChess(ImDrawListPtr dl, Vector2 center, float extent, uint ink, uint hole)
+    {
+        var headRadius = extent * 0.30f;
+        var head = At(center, extent, 0f, -0.52f);
+        dl.AddCircleFilled(head, headRadius, ink, 24);
+        var collarTop = At(center, extent, 0f, -0.20f);
+        var collarHalf = extent * 0.20f;
+        dl.AddRectFilled(new Vector2(collarTop.X - collarHalf, collarTop.Y - extent * 0.06f),
+            new Vector2(collarTop.X + collarHalf, collarTop.Y + extent * 0.10f), ink, extent * 0.05f);
+        Span<Vector2> body = stackalloc Vector2[4]
+        {
+            At(center, extent, -0.16f, -0.06f), At(center, extent, 0.16f, -0.06f), At(center, extent, 0.46f, 0.58f),
+            At(center, extent, -0.46f, 0.58f),
+        };
+        FillConvex(dl, ink, body);
+        var baseCenter = At(center, extent, 0f, 0.76f);
+        var baseHalf = extent * 0.62f;
+        dl.AddRectFilled(new Vector2(baseCenter.X - baseHalf, baseCenter.Y - extent * 0.14f),
+            new Vector2(baseCenter.X + baseHalf, baseCenter.Y + extent * 0.14f), ink, extent * 0.10f);
+        dl.AddCircleFilled(At(center, extent, -0.10f, -0.58f), headRadius * 0.30f, hole, 12);
+    }
+
+    private static void DrawStack(ImDrawListPtr dl, Vector2 center, float extent, uint ink)
+    {
+        Span<float> rows = stackalloc float[4] { 0.74f, 0.30f, -0.14f, -0.74f };
+        Span<float> halfWidths = stackalloc float[4] { 0.92f, 0.80f, 0.68f, 0.50f };
+        Span<float> offsets = stackalloc float[4] { 0f, -0.06f, 0.08f, 0.40f };
+        var halfHeight = extent * 0.18f;
+        var rounding = extent * 0.08f;
+        for (var row = 0; row < rows.Length; row++)
+        {
+            var bar = At(center, extent, offsets[row], rows[row]);
+            var halfWidth = extent * halfWidths[row];
+            dl.AddRectFilled(new Vector2(bar.X - halfWidth, bar.Y - halfHeight),
+                new Vector2(bar.X + halfWidth, bar.Y + halfHeight), ink, rounding);
+        }
+    }
+
+    private static void DrawCrystalDrop(ImDrawListPtr dl, Vector2 center, float extent, uint ink, uint hole)
+    {
+        var large = At(center, extent, -0.34f, 0.44f);
+        var medium = At(center, extent, 0.48f, 0.54f);
+        var small = At(center, extent, 0.14f, -0.18f);
+        var falling = At(center, extent, -0.42f, -0.72f);
+        dl.AddCircleFilled(large, extent * 0.54f, ink, 28);
+        dl.AddCircleFilled(medium, extent * 0.42f, ink, 24);
+        dl.AddCircleFilled(small, extent * 0.34f, ink, 22);
+        dl.AddCircleFilled(falling, extent * 0.22f, ink, 18);
+        dl.AddCircleFilled(new Vector2(large.X - extent * 0.20f, large.Y - extent * 0.20f), extent * 0.14f, hole, 14);
+        dl.AddCircleFilled(new Vector2(medium.X - extent * 0.16f, medium.Y - extent * 0.16f), extent * 0.11f, hole, 12);
+    }
+
+    private static void DrawBeat(ImDrawListPtr dl, Vector2 center, float extent, uint ink)
+    {
+        Span<float> columns = stackalloc float[4] { -0.72f, -0.24f, 0.24f, 0.72f };
+        Span<float> tops = stackalloc float[4] { 0.06f, -0.62f, -0.16f, -0.88f };
+        var halfWidth = extent * 0.16f;
+        var rounding = extent * 0.14f;
+        var bottom = At(center, extent, 0f, 0.92f).Y;
+        for (var column = 0; column < columns.Length; column++)
+        {
+            var bar = At(center, extent, columns[column], tops[column]);
+            dl.AddRectFilled(new Vector2(bar.X - halfWidth, bar.Y), new Vector2(bar.X + halfWidth, bottom), ink,
+                rounding);
+        }
+    }
+
+    private static void DrawBladeThrow(ImDrawListPtr dl, Vector2 center, float extent, uint ink, uint hole)
+    {
+        var wheel = At(center, extent, 0f, -0.22f);
+        var radius = extent * 0.60f;
+        dl.AddCircleFilled(wheel, radius, ink, 36);
+        dl.AddCircleFilled(wheel, radius * 0.44f, hole, 24);
+        var tip = new Vector2(wheel.X, wheel.Y + radius * 0.98f);
+        var halfWidth = extent * 0.13f;
+        var bladeBase = new Vector2(tip.X, tip.Y + extent * 0.42f);
+        Span<Vector2> blade = stackalloc Vector2[3]
+        {
+            tip, new(bladeBase.X + halfWidth, bladeBase.Y), new(bladeBase.X - halfWidth, bladeBase.Y),
+        };
+        FillConvex(dl, ink, blade);
+        var handleWidth = halfWidth * 0.7f;
+        dl.AddRectFilled(new Vector2(tip.X - handleWidth, bladeBase.Y),
+            new Vector2(tip.X + handleWidth, bladeBase.Y + extent * 0.46f), ink, extent * 0.06f);
+    }
+
+    private static void DrawSkyfall(ImDrawListPtr dl, Vector2 center, float extent, uint ink, uint hole)
+    {
+        var groundY = center.Y + extent * 0.78f;
+        dl.AddRectFilled(new Vector2(center.X - extent, groundY), new Vector2(center.X + extent, groundY + extent * 0.16f),
+            ink, extent * 0.06f);
+        var blast = At(center, extent, 0.18f, 0.04f);
+        var radius = extent * 0.46f;
+        dl.AddCircleFilled(blast, radius, ink, 32);
+        dl.AddCircleFilled(blast, radius * 0.5f, hole, 24);
+        var streakStart = At(center, extent, -0.92f, -0.96f);
+        var streakEnd = new Vector2(blast.X - radius * 0.78f, blast.Y - radius * 0.62f);
+        dl.AddLine(streakStart, streakEnd, ink, extent * 0.18f);
+        dl.AddCircleFilled(streakStart, extent * 0.09f, ink, 12);
+        var towerWidth = extent * 0.2f;
+        dl.AddRectFilled(new Vector2(center.X - extent * 0.86f, groundY - extent * 0.36f),
+            new Vector2(center.X - extent * 0.86f + towerWidth, groundY), ink, extent * 0.03f);
+        dl.AddRectFilled(new Vector2(center.X + extent * 0.66f, groundY - extent * 0.5f),
+            new Vector2(center.X + extent * 0.66f + towerWidth, groundY), ink, extent * 0.03f);
+    }
+
+    private static readonly string[] InvaderRows =
+    {
+        "..#....#..", "...#..#...", "..######..", ".##.##.##.", "##########", "#.######.#", "#.#....#.#", "...##.##..",
+    };
+
+    private static void DrawInvaders(ImDrawListPtr dl, Vector2 center, float extent, uint ink)
+    {
+        var columns = InvaderRows[0].Length;
+        var unit = extent * 1.8f / columns;
+        var origin = new Vector2(center.X - columns * unit * 0.5f, center.Y - InvaderRows.Length * unit * 0.5f);
+        for (var row = 0; row < InvaderRows.Length; row++)
+        {
+            var line = InvaderRows[row];
+            for (var column = 0; column < columns; column++)
+            {
+                if (line[column] != '#')
+                {
+                    continue;
+                }
+
+                var min = new Vector2(origin.X + column * unit, origin.Y + row * unit);
+                dl.AddRectFilled(min, min + new Vector2(unit + 0.5f, unit + 0.5f), ink);
+            }
+        }
+    }
+
+    private static void DrawCapMan(ImDrawListPtr dl, Vector2 center, float extent, uint ink)
+    {
+        var muncher = At(center, extent, -0.34f, 0f);
+        var radius = extent * 0.56f;
+        const float mouth = 0.55f;
+        dl.PathClear();
+        dl.PathLineTo(muncher);
+        dl.PathArcTo(muncher, radius, mouth, MathF.PI * 2f - mouth, 28);
+        dl.PathFillConvex(ink);
+        var dotRadius = extent * 0.11f;
+        for (var dot = 0; dot < 3; dot++)
+        {
+            dl.AddCircleFilled(At(center, extent, 0.38f + dot * 0.28f, 0f), dotRadius, ink, 12);
+        }
+    }
+
+    private static void DrawHop(ImDrawListPtr dl, Vector2 center, float extent, uint ink, uint hole)
+    {
+        var laneHeight = extent * 0.18f;
+        for (var lane = 0; lane < 3; lane++)
+        {
+            var y = center.Y + extent * (0.98f - lane * 0.34f);
+            dl.AddRectFilled(new Vector2(center.X - extent, y - laneHeight * 0.5f), new Vector2(center.X + extent, y + laneHeight * 0.5f),
+                ink, laneHeight * 0.3f);
+            var dashX = center.X - extent + extent * (0.2f + lane * 0.5f);
+            dl.AddRectFilled(new Vector2(dashX, y - laneHeight * 0.16f), new Vector2(dashX + extent * 0.5f, y + laneHeight * 0.16f), hole);
+        }
+
+        var critter = At(center, extent, 0f, -0.42f);
+        var radius = extent * 0.4f;
+        dl.AddCircleFilled(critter, radius, ink, 24);
+        Span<Vector2> leftEar = stackalloc Vector2[3]
+        {
+            new(critter.X - radius * 0.85f, critter.Y - radius * 0.35f), new(critter.X - radius * 0.7f, critter.Y - radius * 1.35f),
+            new(critter.X - radius * 0.15f, critter.Y - radius * 0.9f),
+        };
+        FillConvex(dl, ink, leftEar);
+        Span<Vector2> rightEar = stackalloc Vector2[3]
+        {
+            new(critter.X + radius * 0.15f, critter.Y - radius * 0.9f), new(critter.X + radius * 0.7f, critter.Y - radius * 1.35f),
+            new(critter.X + radius * 0.85f, critter.Y - radius * 0.35f),
+        };
+        FillConvex(dl, ink, rightEar);
+        dl.AddRectFilled(new Vector2(critter.X - radius * 0.8f, critter.Y - radius * 0.25f),
+            new Vector2(critter.X + radius * 0.8f, critter.Y + radius * 0.1f), hole, radius * 0.1f);
+    }
+
+    private static readonly string[] FighterRows = { "...#...", "...#...", "..###..", ".#####.", "###.###" };
+
+    private static void DrawSquadron(ImDrawListPtr dl, Vector2 center, float extent, uint ink)
+    {
+        DrawBitmap(dl, FighterRows, At(center, extent, 0f, 0.38f), extent * 0.24f, ink);
+        DrawBitmap(dl, FighterRows, At(center, extent, -0.58f, -0.5f), extent * 0.15f, ink);
+        DrawBitmap(dl, FighterRows, At(center, extent, 0.58f, -0.5f), extent * 0.15f, ink);
+    }
+
+    private static void DrawBitmap(ImDrawListPtr dl, string[] rows, Vector2 center, float unit, uint ink)
+    {
+        var columns = rows[0].Length;
+        var origin = new Vector2(center.X - columns * unit * 0.5f, center.Y - rows.Length * unit * 0.5f);
+        for (var row = 0; row < rows.Length; row++)
+        {
+            var line = rows[row];
+            for (var column = 0; column < columns; column++)
+            {
+                if (line[column] != '#')
+                {
+                    continue;
+                }
+
+                var min = new Vector2(origin.X + column * unit, origin.Y + row * unit);
+                dl.AddRectFilled(min, min + new Vector2(unit + 0.5f, unit + 0.5f), ink);
+            }
+        }
+    }
+
+    private static void DrawDoom(ImDrawListPtr dl, Vector2 center, float extent, uint ink, uint hole)
+    {
+        dl.AddRectFilled(At(center, extent, -0.96f, -0.74f), At(center, extent, 0.96f, 0.74f), ink, extent * 0.14f);
+        dl.AddRectFilled(At(center, extent, -0.80f, -0.58f), At(center, extent, 0.80f, 0.58f), hole, extent * 0.08f);
+        dl.AddRectFilled(At(center, extent, -0.80f, 0.02f), At(center, extent, 0.80f, 0.08f), ink);
+        dl.AddRectFilled(At(center, extent, -0.10f, -0.08f), At(center, extent, 0.10f, 0.58f), ink);
+        dl.AddRectFilled(At(center, extent, -0.24f, 0.28f), At(center, extent, 0.24f, 0.58f), ink, extent * 0.04f);
+    }
+
+    private static void DrawWordRun(ImDrawListPtr dl, Vector2 center, float extent, uint ink, uint hole)
+    {
+        var tile = extent * 0.54f;
+        var gap = extent * 0.12f;
+        var rounding = tile * 0.22f;
+        for (var row = 0; row < 2; row++)
+        {
+            for (var column = 0; column < 3; column++)
+            {
+                var min = new Vector2(center.X - tile * 1.5f - gap + column * (tile + gap), center.Y - tile - gap * 0.5f + row * (tile + gap));
+                var max = min + new Vector2(tile, tile);
+                var filled = (row == 0 && column == 1) || (row == 1 && column != 1);
+                if (filled)
+                {
+                    dl.AddRectFilled(min, max, ink, rounding);
+                    continue;
+                }
+
+                dl.AddRect(min, max, ink, rounding, ImDrawFlags.None, extent * 0.1f);
+            }
+        }
+    }
+
+    private static void DrawTrivia(ImDrawListPtr dl, Vector2 center, float extent, uint ink, uint hole)
+    {
+        var bubble = At(center, extent, 0f, -0.10f);
+        var halfWidth = extent * 0.86f;
+        var halfHeight = extent * 0.68f;
+        dl.AddRectFilled(new Vector2(bubble.X - halfWidth, bubble.Y - halfHeight),
+            new Vector2(bubble.X + halfWidth, bubble.Y + halfHeight), ink, extent * 0.26f);
+        Span<Vector2> tail = stackalloc Vector2[3]
+        {
+            new(bubble.X - extent * 0.34f, bubble.Y + halfHeight * 0.92f),
+            new(bubble.X - extent * 0.06f, bubble.Y + halfHeight * 0.92f),
+            new(bubble.X - extent * 0.30f, bubble.Y + halfHeight + extent * 0.40f),
+        };
+        FillConvex(dl, ink, tail);
+        var markCenter = new Vector2(bubble.X, bubble.Y - extent * 0.12f);
+        var markRadius = extent * 0.26f;
+        dl.PathArcTo(markCenter, markRadius, -MathF.PI, MathF.PI * 0.42f, 20);
+        dl.PathStroke(hole, ImDrawFlags.None, extent * 0.16f);
+        dl.AddRectFilled(new Vector2(markCenter.X - extent * 0.08f, markCenter.Y + markRadius * 0.55f),
+            new Vector2(markCenter.X + extent * 0.08f, markCenter.Y + markRadius * 1.25f), hole, extent * 0.03f);
+        dl.AddCircleFilled(new Vector2(markCenter.X, markCenter.Y + markRadius * 1.72f), extent * 0.10f, hole, 12);
+    }
+
+    private static void DrawMahjong(ImDrawListPtr drawList, Vector2 center, float extent, uint ink, uint hole)
+    {
+        var rounding = extent * 0.16f;
+        var gap = extent * 0.08f;
+        drawList.AddRectFilled(At(center, extent, -0.56f, -0.64f), At(center, extent, 0.80f, 0.96f), ink, rounding);
+        var faceMin = At(center, extent, -0.80f, -0.90f);
+        var faceMax = At(center, extent, 0.56f, 0.70f);
+        drawList.AddRectFilled(faceMin - new Vector2(gap, gap), faceMax + new Vector2(gap, gap), hole, rounding);
+        drawList.AddRectFilled(faceMin, faceMax, ink, rounding);
+        var pip = (faceMin + faceMax) * 0.5f;
+        var half = extent * 0.2f;
+        Span<Vector2> crystal = stackalloc Vector2[4]
+        {
+            new(pip.X, pip.Y - half * 1.5f), new(pip.X + half, pip.Y), new(pip.X, pip.Y + half * 1.5f),
+            new(pip.X - half, pip.Y),
+        };
+        FillConvex(drawList, hole, crystal);
+        drawList.AddCircleFilled(At(center, extent, -0.54f, -0.64f), extent * 0.1f, hole, 12);
+        drawList.AddCircleFilled(At(center, extent, 0.30f, 0.44f), extent * 0.1f, hole, 12);
+    }
+
+    private static void DrawGloop(ImDrawListPtr drawList, Vector2 center, float extent, uint ink, uint hole)
+    {
+        var radius = extent * 0.4f;
+        var bridge = radius * 0.62f;
+        var top = At(center, extent, -0.46f, -0.42f);
+        var left = At(center, extent, -0.46f, 0.42f);
+        var right = At(center, extent, 0.46f, 0.42f);
+        drawList.AddRectFilled(new Vector2(left.X, left.Y - bridge), new Vector2(right.X, right.Y + bridge), ink);
+        drawList.AddRectFilled(new Vector2(top.X - bridge, top.Y), new Vector2(left.X + bridge, left.Y), ink);
+        Span<Vector2> blobs = stackalloc Vector2[3] { top, left, right };
+        var rightEye = new Vector2(radius * 0.32f, -radius * 0.08f);
+        var leftEye = new Vector2(-rightEye.X, rightEye.Y);
+        for (var blob = 0; blob < blobs.Length; blob++)
+        {
+            drawList.AddCircleFilled(blobs[blob], radius, ink, 24);
+            drawList.AddCircleFilled(blobs[blob] + leftEye, radius * 0.16f, hole, 10);
+            drawList.AddCircleFilled(blobs[blob] + rightEye, radius * 0.16f, hole, 10);
+        }
+
+        var falling = At(center, extent, 0.5f, -0.6f);
+        drawList.AddCircleFilled(falling, radius * 0.72f, ink, 20);
+        drawList.AddCircleFilled(falling + new Vector2(-radius * 0.22f, -radius * 0.22f), radius * 0.16f, hole, 10);
+    }
+
+    private static readonly float[] DriftRockReach = { 1f, 0.8f, 0.96f, 0.76f, 1f, 0.84f, 0.98f, 0.78f, 0.93f };
+
+    private static void DrawDrift(ImDrawListPtr drawList, Vector2 center, float extent, uint ink, uint hole)
+    {
+        var rock = At(center, extent, 0.36f, -0.36f);
+        var rockRadius = extent * 0.52f;
+        var step = MathF.Tau / DriftRockReach.Length;
+        for (var vertex = 0; vertex < DriftRockReach.Length; vertex++)
+        {
+            var next = (vertex + 1) % DriftRockReach.Length;
+            var first = rock + new Vector2(MathF.Cos(vertex * step), MathF.Sin(vertex * step)) *
+                rockRadius * DriftRockReach[vertex];
+            var second = rock + new Vector2(MathF.Cos(next * step), MathF.Sin(next * step)) *
+                rockRadius * DriftRockReach[next];
+            drawList.AddTriangleFilled(rock, first, second, ink);
+        }
+
+        drawList.AddCircleFilled(rock + new Vector2(-rockRadius * 0.2f, rockRadius * 0.12f), rockRadius * 0.2f, hole, 14);
+        drawList.AddCircleFilled(rock + new Vector2(rockRadius * 0.3f, -rockRadius * 0.28f), rockRadius * 0.12f, hole, 12);
+        var ship = At(center, extent, -0.62f, 0.62f);
+        var forward = Vector2.Normalize(rock - ship);
+        var side = new Vector2(-forward.Y, forward.X);
+        var size = extent * 0.36f;
+        var nose = ship + forward * size * 1.25f;
+        var notch = ship - forward * size * 0.5f;
+        var leftWing = ship - forward * size + side * size * 0.85f;
+        var rightWing = ship - forward * size - side * size * 0.85f;
+        drawList.AddTriangleFilled(nose, leftWing, notch, ink);
+        drawList.AddTriangleFilled(nose, notch, rightWing, ink);
+        var shotRadius = extent * 0.08f;
+        drawList.AddCircleFilled(ship + forward * size * 1.7f, shotRadius, ink, 10);
+        drawList.AddCircleFilled(ship + forward * size * 2.2f, shotRadius, ink, 10);
+    }
+
+    private static void DrawCrawler(ImDrawListPtr drawList, Vector2 center, float extent, uint ink, uint hole)
+    {
+        var segmentRadius = extent * 0.2f;
+        var legWidth = extent * 0.07f;
+        for (var segment = 0; segment < 4; segment++)
+        {
+            var body = At(center, extent, -0.8f + segment * 0.36f, -0.42f + (segment % 2) * 0.08f);
+            drawList.AddLine(body, body + new Vector2(-segmentRadius * 0.5f, segmentRadius * 1.5f), ink, legWidth);
+            drawList.AddLine(body, body + new Vector2(segmentRadius * 0.5f, segmentRadius * 1.5f), ink, legWidth);
+            drawList.AddCircleFilled(body, segmentRadius, ink, 18);
+        }
+
+        var head = At(center, extent, 0.66f, -0.42f);
+        drawList.AddLine(head, head + new Vector2(extent * 0.22f, -extent * 0.4f), ink, legWidth);
+        drawList.AddLine(head, head + new Vector2(extent * 0.38f, -extent * 0.24f), ink, legWidth);
+        drawList.AddCircleFilled(head, segmentRadius * 1.2f, ink, 20);
+        drawList.AddCircleFilled(head + new Vector2(segmentRadius * 0.4f, -segmentRadius * 0.2f), segmentRadius * 0.28f,
+            hole, 10);
+        var cap = At(center, extent, -0.1f, 0.62f);
+        var capRadius = extent * 0.46f;
+        drawList.PathClear();
+        drawList.PathArcTo(cap, capRadius, MathF.PI, MathF.Tau, 20);
+        drawList.PathFillConvex(ink);
+        drawList.AddRectFilled(new Vector2(cap.X - capRadius * 0.32f, cap.Y - 1f),
+            new Vector2(cap.X + capRadius * 0.32f, cap.Y + capRadius * 0.62f), ink, capRadius * 0.12f);
+        drawList.AddCircleFilled(cap + new Vector2(-capRadius * 0.42f, -capRadius * 0.38f), capRadius * 0.14f, hole, 10);
+        drawList.AddCircleFilled(cap + new Vector2(capRadius * 0.28f, -capRadius * 0.56f), capRadius * 0.12f, hole, 10);
+    }
+
+    private static void DrawTrails(ImDrawListPtr drawList, Vector2 center, float extent, uint ink, uint hole)
+    {
+        DrawTrail(drawList, At(center, extent, -0.82f, 0.9f), At(center, extent, -0.82f, -0.22f),
+            At(center, extent, 0.3f, -0.22f), extent, ink, hole);
+        DrawTrail(drawList, At(center, extent, 0.82f, -0.9f), At(center, extent, 0.82f, 0.3f),
+            At(center, extent, -0.26f, 0.3f), extent, ink, hole);
+    }
+
+    private static void DrawTrail(ImDrawListPtr drawList, Vector2 start, Vector2 corner, Vector2 head, float extent,
+        uint ink, uint hole)
+    {
+        var thickness = extent * 0.16f;
+        drawList.AddLine(start, corner, ink, thickness);
+        drawList.AddLine(corner, head, ink, thickness);
+        drawList.AddCircleFilled(corner, thickness * 0.5f, ink, 12);
+        drawList.AddCircleFilled(head, extent * 0.22f, ink, 20);
+        drawList.AddCircleFilled(head, extent * 0.08f, hole, 12);
+    }
+
+    private static void DrawTrailblaze(ImDrawListPtr drawList, Vector2 center, float extent, uint ink, uint hole)
+    {
+        Span<Vector2> road = stackalloc Vector2[4]
+        {
+            At(center, extent, -1f, 1f), At(center, extent, 1f, 1f), At(center, extent, 0.2f, -0.2f),
+            At(center, extent, -0.2f, -0.2f),
+        };
+        FillConvex(drawList, ink, road);
+        Span<Vector2> stripe = stackalloc Vector2[4];
+        for (var side = -1; side <= 1; side += 2)
+        {
+            for (var dash = 0; dash < 2; dash++)
+            {
+                var near = 0.92f - dash * 0.62f;
+                var far = near - 0.34f + dash * 0.08f;
+                var nearX = side * 0.34f * (near + 0.2f) / 1.2f;
+                var farX = side * 0.34f * (far + 0.2f) / 1.2f;
+                var nearHalf = 0.055f * (near + 0.4f);
+                var farHalf = 0.055f * (far + 0.4f);
+                stripe[0] = At(center, extent, nearX - nearHalf, near);
+                stripe[1] = At(center, extent, nearX + nearHalf, near);
+                stripe[2] = At(center, extent, farX + farHalf, far);
+                stripe[3] = At(center, extent, farX - farHalf, far);
+                FillConvex(drawList, hole, stripe);
+            }
+        }
+
+        var coin = At(center, extent, 0f, -0.6f);
+        drawList.AddCircleFilled(coin, extent * 0.32f, ink, 28);
+        drawList.AddCircle(coin, extent * 0.2f, hole, 24, extent * 0.07f);
+        drawList.AddCircleFilled(At(center, extent, -0.62f, -0.42f), extent * 0.1f, ink, 14);
+        drawList.AddCircleFilled(At(center, extent, 0.62f, -0.42f), extent * 0.1f, ink, 14);
+    }
+
+    private static void DrawThrust(ImDrawListPtr drawList, Vector2 center, float extent, uint ink, uint hole)
+    {
+        Span<Vector2> bolt = stackalloc Vector2[5]
+        {
+            At(center, extent, -0.74f, -0.86f), At(center, extent, -0.58f, -0.46f), At(center, extent, -0.86f, -0.16f),
+            At(center, extent, -0.6f, 0.14f), At(center, extent, -0.74f, 0.48f),
+        };
+        for (var segment = 1; segment < bolt.Length; segment++)
+        {
+            drawList.AddLine(bolt[segment - 1], bolt[segment], ink, extent * 0.1f);
+        }
+
+        drawList.AddCircleFilled(bolt[0], extent * 0.15f, ink, 14);
+        drawList.AddCircleFilled(bolt[^1], extent * 0.15f, ink, 14);
+        Span<Vector2> flame = stackalloc Vector2[3]
+        {
+            At(center, extent, -0.24f, 0.46f), At(center, extent, 0.02f, 0.46f), At(center, extent, -0.18f, 1f),
+        };
+        FillConvex(drawList, ink, flame);
+        drawList.AddRectFilled(At(center, extent, -0.26f, -0.22f), At(center, extent, 0.02f, 0.5f), ink, extent * 0.1f);
+        var body = At(center, extent, 0.32f, 0.04f);
+        drawList.AddCircleFilled(body, extent * 0.46f, hole, 28);
+        drawList.AddCircleFilled(body, extent * 0.4f, ink, 28);
+        drawList.AddCircleFilled(At(center, extent, 0.5f, -0.06f), extent * 0.07f, hole, 10);
+        drawList.AddLine(At(center, extent, 0.3f, -0.34f), At(center, extent, 0.44f, -0.72f), ink, extent * 0.07f);
+        drawList.AddCircleFilled(At(center, extent, 0.46f, -0.8f), extent * 0.14f, ink, 14);
+    }
+
+    private static void DrawCrates(ImDrawListPtr drawList, Vector2 center, float extent, uint ink, uint hole)
+    {
+        var rounding = extent * 0.14f;
+        var crateMin = At(center, extent, -0.92f, -0.5f);
+        var crateMax = At(center, extent, 0.22f, 0.64f);
+        drawList.AddRectFilled(crateMin, crateMax, ink, rounding);
+        var inset = new Vector2(extent * 0.17f, extent * 0.17f);
+        var panelMin = crateMin + inset;
+        var panelMax = crateMax - inset;
+        drawList.AddRectFilled(panelMin, panelMax, hole, rounding * 0.5f);
+        drawList.AddLine(panelMin, panelMax, ink, extent * 0.14f);
+        drawList.AddLine(new Vector2(panelMin.X, panelMax.Y), panelMax, ink, extent * 0.06f);
+        var target = At(center, extent, 0.66f, 0.07f);
+        drawList.AddCircle(target, extent * 0.28f, ink, 24, extent * 0.11f);
+        drawList.AddCircleFilled(target, extent * 0.09f, ink, 12);
+        var arrow = At(center, extent, 0.3f, -0.84f);
+        drawList.AddTriangleFilled(arrow + new Vector2(extent * 0.34f, 0f), arrow + new Vector2(0f, -extent * 0.16f),
+            arrow + new Vector2(0f, extent * 0.16f), ink);
+        drawList.AddLine(arrow - new Vector2(extent * 0.42f, 0f), arrow, ink, extent * 0.1f);
+    }
+
+    private static void DrawDelve(ImDrawListPtr drawList, Vector2 center, float extent, uint ink, uint hole)
+    {
+        var handleStart = At(center, extent, -0.86f, 0.86f);
+        var handleEnd = At(center, extent, 0.2f, -0.2f);
+        drawList.AddLine(handleStart, handleEnd, ink, extent * 0.16f);
+        var head = At(center, extent, 0.2f, -0.2f);
+        drawList.PathClear();
+        drawList.PathArcTo(head + new Vector2(-extent * 0.61f, extent * 0.61f), extent * 0.86f,
+            MathF.PI * 1.75f - 0.48f, MathF.PI * 1.75f + 0.48f, 14);
+        drawList.PathStroke(ink, ImDrawFlags.None, extent * 0.2f);
+        var gem = At(center, extent, 0.5f, 0.42f);
+        var half = extent * 0.34f;
+        Span<Vector2> facets = stackalloc Vector2[4]
+        {
+            new(gem.X, gem.Y - half * 1.25f), new(gem.X + half, gem.Y), new(gem.X, gem.Y + half * 1.25f),
+            new(gem.X - half, gem.Y),
+        };
+        FillConvex(drawList, ink, facets);
+        drawList.AddLine(new Vector2(gem.X - half * 0.55f, gem.Y - half * 0.1f),
+            new Vector2(gem.X + half * 0.55f, gem.Y - half * 0.1f), hole, extent * 0.07f);
+        drawList.AddCircleFilled(At(center, extent, -0.62f, -0.7f), extent * 0.09f, ink, 10);
+        drawList.AddCircleFilled(At(center, extent, -0.82f, -0.38f), extent * 0.06f, ink, 8);
+    }
+
+    private static void DrawPegfall(ImDrawListPtr drawList, Vector2 center, float extent, uint ink, uint hole)
+    {
+        var launcher = At(center, extent, -0.5f, -0.78f);
+        drawList.AddCircleFilled(launcher, extent * 0.24f, ink, 20);
+        drawList.AddCircleFilled(launcher + new Vector2(-extent * 0.07f, -extent * 0.07f), extent * 0.07f, hole, 10);
+        Span<Vector2> trail = stackalloc Vector2[3]
+        {
+            At(center, extent, -0.18f, -0.62f), At(center, extent, 0.08f, -0.56f), At(center, extent, 0.3f, -0.42f),
+        };
+        for (var dot = 0; dot < trail.Length; dot++)
+        {
+            drawList.AddCircleFilled(trail[dot], extent * 0.06f, ink, 10);
+        }
+
+        var ball = At(center, extent, 0.56f, -0.2f);
+        drawList.AddCircleFilled(ball, extent * 0.16f, ink, 16);
+        drawList.AddCircleFilled(ball + new Vector2(-extent * 0.05f, -extent * 0.05f), extent * 0.05f, hole, 10);
+        Span<Vector2> pegs = stackalloc Vector2[5]
+        {
+            At(center, extent, -0.66f, 0.02f), At(center, extent, -0.1f, 0.02f), At(center, extent, -0.38f, 0.42f),
+            At(center, extent, 0.18f, 0.42f), At(center, extent, 0.74f, 0.42f),
+        };
+        for (var peg = 0; peg < pegs.Length; peg++)
+        {
+            drawList.AddCircleFilled(pegs[peg], extent * 0.13f, ink, 14);
+        }
+
+        drawList.AddCircleFilled(pegs[1], extent * 0.06f, hole, 10);
+        var cupTop = At(center, extent, 0f, 0.7f).Y;
+        var cupBottom = At(center, extent, 0f, 0.94f).Y;
+        var cupCenter = At(center, extent, -0.08f, 0f).X;
+        drawList.AddQuadFilled(new Vector2(cupCenter - extent * 0.42f, cupTop), new Vector2(cupCenter + extent * 0.42f, cupTop),
+            new Vector2(cupCenter + extent * 0.3f, cupBottom), new Vector2(cupCenter - extent * 0.3f, cupBottom), ink);
+    }
+
+    private static void DrawFling(ImDrawListPtr drawList, Vector2 center, float extent, uint ink, uint hole)
+    {
+        var thickness = extent * 0.16f;
+        var fork = At(center, extent, -0.6f, 0.2f);
+        drawList.AddLine(At(center, extent, -0.6f, 0.92f), fork, ink, thickness);
+        drawList.AddLine(fork, At(center, extent, -0.86f, -0.3f), ink, thickness);
+        drawList.AddLine(fork, At(center, extent, -0.34f, -0.3f), ink, thickness);
+        drawList.AddCircleFilled(fork, thickness * 0.5f, ink, 10);
+        var bird = At(center, extent, -0.12f, -0.56f);
+        var birdRadius = extent * 0.3f;
+        drawList.AddCircleFilled(bird, birdRadius, ink, 20);
+        drawList.AddCircleFilled(bird + new Vector2(birdRadius * 0.3f, -birdRadius * 0.2f), birdRadius * 0.24f, hole, 10);
+        drawList.AddTriangleFilled(bird + new Vector2(birdRadius * 0.85f, -birdRadius * 0.3f),
+            bird + new Vector2(birdRadius * 1.5f, 0f), bird + new Vector2(birdRadius * 0.85f, birdRadius * 0.3f), ink);
+        var postWidth = extent * 0.07f;
+        Span<float> posts = stackalloc float[2] { 0.42f, 0.86f };
+        for (var post = 0; post < posts.Length; post++)
+        {
+            var top = At(center, extent, posts[post], 0.12f);
+            var bottom = At(center, extent, posts[post], 0.92f);
+            drawList.AddRectFilled(new Vector2(top.X - postWidth, top.Y), new Vector2(bottom.X + postWidth, bottom.Y), ink);
+        }
+
+        var roofLeft = At(center, extent, 0.3f, -0.02f);
+        var roofRight = At(center, extent, 0.98f, 0.12f);
+        drawList.AddRectFilled(roofLeft, roofRight, ink);
+        var goblin = At(center, extent, 0.64f, -0.24f);
+        var goblinRadius = extent * 0.2f;
+        drawList.AddCircleFilled(goblin, goblinRadius, ink, 16);
+        drawList.AddCircleFilled(goblin + new Vector2(-goblinRadius * 0.35f, -goblinRadius * 0.1f), goblinRadius * 0.22f,
+            hole, 8);
+        drawList.AddCircleFilled(goblin + new Vector2(goblinRadius * 0.35f, -goblinRadius * 0.1f), goblinRadius * 0.22f,
+            hole, 8);
+    }
+
+    private static void DrawCrater(ImDrawListPtr drawList, Vector2 center, float extent, uint ink, uint hole)
+    {
+        var groundTop = center.Y + extent * 0.38f;
+        drawList.AddRectFilled(new Vector2(center.X - extent, groundTop), new Vector2(center.X + extent, center.Y + extent),
+            ink, extent * 0.08f);
+        var crater = new Vector2(center.X + extent * 0.34f, groundTop);
+        drawList.PathClear();
+        drawList.PathArcTo(crater, extent * 0.36f, 0f, MathF.PI, 16);
+        drawList.PathFillConvex(hole);
+        var moogle = At(center, extent, -0.62f, 0.14f);
+        drawList.AddCircleFilled(moogle, extent * 0.24f, ink, 20);
+        drawList.AddLine(moogle - new Vector2(0f, extent * 0.2f), moogle + new Vector2(-extent * 0.12f, -extent * 0.46f), ink,
+            extent * 0.06f);
+        drawList.AddCircleFilled(moogle + new Vector2(-extent * 0.12f, -extent * 0.5f), extent * 0.09f, ink, 12);
+        for (var dot = 0; dot < 6; dot++)
+        {
+            var along = (dot + 1) / 7f;
+            var x = -0.4f + along * 0.74f;
+            var y = 0.02f - MathF.Sin(along * MathF.PI) * 0.86f;
+            drawList.AddCircleFilled(At(center, extent, x, y), extent * (0.05f + along * 0.025f), ink, 10);
+        }
+
+        var burst = crater - new Vector2(0f, extent * 0.06f);
+        for (var ray = 0; ray < 5; ray++)
+        {
+            var angle = MathF.PI * (1.15f + ray * 0.175f);
+            var direction = new Vector2(MathF.Cos(angle), MathF.Sin(angle));
+            drawList.AddLine(burst + direction * extent * 0.22f, burst + direction * extent * 0.42f, ink, extent * 0.07f);
+        }
+    }
+
+    private static void DrawFuse(ImDrawListPtr drawList, Vector2 center, float extent, uint ink, uint hole)
+    {
+        var body = At(center, extent, -0.14f, 0.2f);
+        var radius = extent * 0.68f;
+        drawList.AddCircleFilled(body, radius, ink, 36);
+        drawList.AddCircleFilled(body + new Vector2(-radius * 0.38f, -radius * 0.36f), radius * 0.17f, hole, 14);
+        Span<Vector2> cap = stackalloc Vector2[4]
+        {
+            At(center, extent, 0.18f, -0.54f), At(center, extent, 0.44f, -0.3f), At(center, extent, 0.3f, -0.16f),
+            At(center, extent, 0.04f, -0.4f),
+        };
+        FillConvex(drawList, ink, cap);
+        var cordStart = At(center, extent, 0.32f, -0.44f);
+        var cordTip = At(center, extent, 0.62f, -0.76f);
+        drawList.AddBezierQuadratic(cordStart, At(center, extent, 0.34f, -0.8f), cordTip, ink, extent * 0.09f, 10);
+        var spark = At(center, extent, 0.7f, -0.84f);
+        var arm = extent * 0.2f;
+        var thickness = extent * 0.07f;
+        drawList.AddLine(spark - new Vector2(arm, 0f), spark + new Vector2(arm, 0f), ink, thickness);
+        drawList.AddLine(spark - new Vector2(0f, arm), spark + new Vector2(0f, arm), ink, thickness);
+        drawList.AddLine(spark - new Vector2(arm, arm) * 0.68f, spark + new Vector2(arm, arm) * 0.68f, ink, thickness);
+        drawList.AddLine(spark - new Vector2(arm, -arm) * 0.68f, spark + new Vector2(arm, -arm) * 0.68f, ink, thickness);
+        drawList.AddCircleFilled(spark, extent * 0.08f, hole, 10);
+    }
+
+    private static void DrawSnip(ImDrawListPtr drawList, Vector2 center, float extent, uint ink, uint hole)
+    {
+        var anchor = At(center, extent, -0.2f, -0.95f);
+        var knot = At(center, extent, 0.05f, -0.02f);
+        drawList.AddLine(anchor, knot, ink, extent * 0.13f);
+        drawList.AddCircleFilled(anchor, extent * 0.16f, ink, 14);
+        drawList.AddLine(At(center, extent, -0.55f, -0.62f), At(center, extent, 0.3f, -0.36f), hole, extent * 0.14f);
+        Span<Vector2> gem = stackalloc Vector2[4]
+        {
+            At(center, extent, 0.05f, -0.08f), At(center, extent, 0.58f, 0.42f), At(center, extent, 0.05f, 1f),
+            At(center, extent, -0.48f, 0.42f),
+        };
+        FillConvex(drawList, ink, gem);
+        drawList.AddLine(gem[3], gem[1], hole, extent * 0.06f);
+        drawList.AddLine(At(center, extent, -0.2f, 0.42f), gem[2], hole, extent * 0.05f);
+        drawList.AddCircleFilled(At(center, extent, 0.7f, -0.72f), extent * 0.13f, ink, 12);
+        drawList.AddCircleFilled(At(center, extent, 0.88f, -0.32f), extent * 0.08f, ink, 10);
+    }
+
+    private static void DrawMiniGolf(ImDrawListPtr drawList, Vector2 center, float extent, uint ink, uint hole)
+    {
+        Span<Vector2> green = stackalloc Vector2[4]
+        {
+            At(center, extent, -0.95f, 0.62f), At(center, extent, 0.95f, 0.62f), At(center, extent, 0.7f, 1f),
+            At(center, extent, -0.7f, 1f),
+        };
+        FillConvex(drawList, ink, green);
+        drawList.AddCircleFilled(At(center, extent, 0.2f, 0.8f), extent * 0.16f, hole, 16);
+        drawList.AddLine(At(center, extent, 0.2f, 0.78f), At(center, extent, 0.2f, -0.95f), ink, extent * 0.09f);
+        Span<Vector2> flag = stackalloc Vector2[3]
+        {
+            At(center, extent, 0.24f, -0.95f), At(center, extent, 0.92f, -0.66f), At(center, extent, 0.24f, -0.36f),
+        };
+        FillConvex(drawList, ink, flag);
+        var ball = At(center, extent, -0.48f, 0.2f);
+        drawList.AddCircleFilled(ball, extent * 0.26f, ink, 20);
+        drawList.AddCircleFilled(ball + new Vector2(-extent * 0.08f, -extent * 0.08f), extent * 0.06f, hole, 8);
+        drawList.AddCircleFilled(ball + new Vector2(extent * 0.08f, extent * 0.02f), extent * 0.05f, hole, 8);
+    }
+
+    private static void DrawHerd(ImDrawListPtr drawList, Vector2 center, float extent, uint ink, uint hole)
+    {
+        for (var side = -1; side <= 1; side += 2)
+        {
+            var back = At(center, extent, side * 0.62f, 0.42f);
+            drawList.AddCircleFilled(back, extent * 0.34f, ink, 24);
+            drawList.AddCircleFilled(At(center, extent, side * 0.62f + side * 0.02f, 0.4f), extent * 0.05f, hole, 8);
+        }
+
+        var head = At(center, extent, 0f, 0.28f);
+        drawList.AddCircleFilled(head, extent * 0.6f, hole, 32);
+        drawList.AddCircleFilled(head, extent * 0.52f, ink, 32);
+        drawList.AddCircleFilled(At(center, extent, -0.18f, 0.2f), extent * 0.075f, hole, 10);
+        drawList.AddCircleFilled(At(center, extent, 0.18f, 0.2f), extent * 0.075f, hole, 10);
+        drawList.AddCircleFilled(At(center, extent, 0f, 0.42f), extent * 0.09f, hole, 12);
+        drawList.AddBezierQuadratic(At(center, extent, 0f, -0.22f), At(center, extent, 0.16f, -0.5f),
+            At(center, extent, 0.3f, -0.72f), ink, extent * 0.08f);
+        drawList.AddCircleFilled(At(center, extent, 0.32f, -0.78f), extent * 0.2f, ink, 20);
+        drawList.AddCircleFilled(At(center, extent, 0.26f, -0.84f), extent * 0.06f, hole, 10);
+    }
+
+    private static void DrawTempo(ImDrawListPtr drawList, Vector2 center, float extent, uint ink, uint hole)
+    {
+        drawList.AddRectFilled(At(center, extent, -1f, 0.78f), At(center, extent, 1f, 0.92f), ink, extent * 0.05f);
+        Span<Vector2> spike = stackalloc Vector2[3]
+        {
+            At(center, extent, 0.34f, 0.78f), At(center, extent, 0.62f, 0.26f), At(center, extent, 0.9f, 0.78f),
+        };
+        FillConvex(drawList, ink, spike);
+        var cube = At(center, extent, -0.26f, -0.3f);
+        Span<Vector2> outer = stackalloc Vector2[4];
+        Span<Vector2> inner = stackalloc Vector2[4];
+        for (var corner = 0; corner < 4; corner++)
+        {
+            var angle = 0.42f + corner * MathF.PI * 0.5f;
+            var direction = new Vector2(MathF.Cos(angle), MathF.Sin(angle));
+            outer[corner] = cube + direction * extent * 0.56f;
+            inner[corner] = cube + direction * extent * 0.26f;
+        }
+
+        FillConvex(drawList, ink, outer);
+        FillConvex(drawList, hole, inner);
+        for (var dash = 0; dash < 3; dash++)
+        {
+            var y = -0.52f + dash * 0.22f;
+            drawList.AddLine(At(center, extent, -1f + dash * 0.08f, y), At(center, extent, -0.78f, y), ink, extent * 0.07f);
+        }
+    }
+
+    private static Vector2 At(Vector2 center, float extent, float unitX, float unitY)
+    {
+        return new Vector2(center.X + unitX * extent, center.Y + unitY * extent);
+    }
+
+    private static Vector2 Polar(Vector2 center, float extent, float radius, float angle)
+    {
+        return new Vector2(center.X + MathF.Cos(angle) * radius * extent,
+            center.Y + MathF.Sin(angle) * radius * extent);
+    }
+
+    private static void FillConvex(ImDrawListPtr dl, uint color, ReadOnlySpan<Vector2> points)
+    {
+        dl.PathClear();
+        for (var index = 0; index < points.Length; index++)
+        {
+            dl.PathLineTo(points[index]);
+        }
+
+        dl.PathFillConvex(color);
+    }
+}

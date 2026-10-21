@@ -1,0 +1,16 @@
+# Runs the relay with `wrangler dev` behind a Cloudflare Tunnel; see docs/self-hosting-relay.md.
+# relay.env holds INVITE_CODE=<invite>; .env holds TUNNEL_TOKEN=<token>. Neither file is committed.
+services:
+  relay:
+    build: .
+    restart: unless-stopped
+    init: true
+    env_file: relay.env
+  tunnel:
+    image: cloudflare/cloudflared:2026.10.2
+    restart: unless-stopped
+    command: tunnel --no-autoupdate run
+    environment:
+      TUNNEL_TOKEN: ${TUNNEL_TOKEN:?set TUNNEL_TOKEN in .env}
+    depends_on:
+      - relay

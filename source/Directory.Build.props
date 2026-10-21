@@ -1,0 +1,63 @@
+<Project>
+
+  <!--
+    Single source of truth for cross-project MSBuild settings.
+    Mirrors the suite convention: Version drives CI tagging/release.
+  -->
+
+  <PropertyGroup Label="Identity">
+    <Version>1.3.3.0</Version>
+    <!-- Cyberphone is a fork; upstream copyright stays, the project and repository URLs are the fork's. -->
+    <Authors>XeldarAlz; Cyberphone fork by Yshawn6720</Authors>
+    <Copyright>Copyright (c) XeldarAlz; modifications Copyright (c) 2026 Yshawn6720</Copyright>
+    <PackageProjectUrl>https://github.com/Yshawn6720/Cyberphone</PackageProjectUrl>
+    <PackageLicenseExpression>AGPL-3.0-or-later</PackageLicenseExpression>
+    <RepositoryUrl>https://github.com/Yshawn6720/Cyberphone</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+  </PropertyGroup>
+
+  <PropertyGroup Label="Determinism" Condition="'$(GITHUB_ACTIONS)' == 'true'">
+    <ContinuousIntegrationBuild>true</ContinuousIntegrationBuild>
+    <Deterministic>true</Deterministic>
+    <!-- CI only: a warning nobody fails on is a warning nobody reads. Local
+         builds stay warn-only so a work in progress still compiles. -->
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+  </PropertyGroup>
+
+  <!--
+    Code style is enforced by the compiler, not by review. Without
+    EnforceCodeStyleInBuild the IDE rules in .editorconfig fire in an editor
+    and under dotnet format but never during a build, so CI never sees them.
+    ManagedDoom opts out of all three in its own csproj.
+  -->
+  <PropertyGroup Label="CodeStyle">
+    <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
+    <EnableNETAnalyzers>true</EnableNETAnalyzers>
+    <AnalysisLevel>latest-minimum</AnalysisLevel>
+  </PropertyGroup>
+
+  <PropertyGroup Label="Restore">
+    <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
+  </PropertyGroup>
+
+  <!--
+    SixLabors.ImageSharp validates an assembly-scoped license before compiling
+    any project that references it directly. The community license at the
+    repository root covers the Aetherphone assembly until 2028-01-09; Six
+    Labors opens renewal 90 days before expiry, and an expired key fails every
+    Release build, old tags included.
+  -->
+  <PropertyGroup Label="Licensing">
+    <SixLaborsLicenseFile>$(MSBuildThisFileDirectory)sixlabors.lic</SixLaborsLicenseFile>
+  </PropertyGroup>
+
+  <!--
+    Cyberphone targets the Traditional Chinese (TC) client's Dalamud fork (API 13 / net9).
+    The SDK's Windows default points at XIVLauncher's dev hooks, which belong to the global
+    client, so DALAMUD_HOME is pinned to the TC launcher unless the caller sets it.
+  -->
+  <PropertyGroup Label="Dalamud" Condition="'$(DALAMUD_HOME)' == ''">
+    <DALAMUD_HOME>$(APPDATA)\FFXIVSimpleLauncher\Dalamud\Injector</DALAMUD_HOME>
+  </PropertyGroup>
+
+</Project>

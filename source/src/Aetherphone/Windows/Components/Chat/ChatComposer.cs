@@ -1,0 +1,1074 @@
+using Aetherphone.Core;
+using Aetherphone.Core.Localization;
+using Aetherphone.Core.Media;
+using Aetherphone.Core.Notifications;
+using Aetherphone.Core.Photos;
+using Aetherphone.Core.Theme;
+using Aetherphone.Core.Wallpapers;
+using Dalamud.Bindings.ImGui;
+using Dalamud.Interface;
+using Dalamud.Interface.Utility.Raii;
+
+namespace Aetherphone.Windows.Components;
+
+internal enum ChatComposerStyle : byte
+{
+    Bar,
+    Pill,
+    Plus,
+}
+
+internal struct ChatComposerModel
+{
+    public AppSkin Ui;
+    public ChatComposerStyle Style;
+    public Rect Screen;
+    public string Hint;
+    public string ConversationId;
+    public int MaxLength;
+    public bool Sending;
+    public bool CanImage;
+    public bool CanVoice;
+    public bool CanLocation;
+    public bool CanHandleEscape;
+    public bool Blocked;
+    public string BlockedNotice;
+    public Action? OnBlockedTap;
+    public Func<VoiceInput> ResolveVoiceInput;
+    public Action<string> OnPickImage;
+    public Action<string> OnShareLocation;
+    public Action<string, string, string?> OnSendText;
+    public Action<string, string, string> OnEditText;
+    public Action<string, byte[], int> OnSendVoice;
+    public Action<string, string, string> OnSendImage;
+    public PhotoLibrary? Library;
+    public WallpaperImageCache? Thumbnails;
+}
+
+internal sealed class ChatComposer : IDisposable
+{
+    private const int TextKind = 0;
+    private const int MaxLines = 6;
+    private const float AccessoryBarHeight = 46f;
+    private const float ImageBarHeight = 64f;
+    private const float BarHeight = 56f;
+    private const float PillComposerHeight = 66f;
+    private const float PillEdgePad = 10f;
+    private const float PillInsetY = 8f;
+    private const float PillCameraInset = 4f;
+    private const float PillCameraGlyph = 22f;
+    private const float PillTextGap = 8f;
+    private const float PillIconEdge = 6f;
+    private const float PillIconHit = 30f;
+    private const float PillIconGlyph = 24f;
+    private const float PillIconGap = 0f;
+    private const float PillSendPad = 8f;
+    private const float PillIdleAlpha = 0.9f;
+    private const float PlusComposerHeight = 60f;
+    private const float PlusEdgePad = 8f;
+    private const float PlusButtonRadius = 18f;
+    private const float PlusSendRadius = 20f;
+    private const float PlusPillGap = 8f;
+    private const float PlusPillInsetY = 10f;
+    private const float PlusGlyph = 22f;
+    private const float PlusSendGlyph = 20f;
+    private const float PlusEmojiRadius = 15f;
+    private const float PlusEmojiInset = 6f;
+    private const float PlusTextPad = 14f;
+    private static readonly Vector4 White = new(1f, 1f, 1f, 1f);
+    private static readonly Vector4 PlusHoverFill = new(1f, 1f, 1f, 0.16f);
+    private static readonly Vector4 FieldFill = new(1f, 1f, 1f, 0.10f);
+    private static readonly Vector4 BarFill = new(1f, 1f, 1f, 0.05f);
+    private static readonly Vector4 PillFill = new(1f, 1f, 1f, 0.08f);
+    private static readonly Vector4 PillStroke = new(1f, 1f, 1f, 0.10f);
+    private static readonly TextStyle SendStyle = TextStyles.BodyEmphasized;
+
+    private readonly VoiceNoteRecorder recorder = new();
+    private readonly EmojiPicker emojiPicker = new();
+    private readonly EmojiSuggestions suggestions = new();
+    private readonly DropdownMenu attachMenu = new();
+    private readonly DropdownMenu.Item[] attachItems = new DropdownMenu.Item[2];
+    private readonly SoftWrapEditor editor = new();
+    private readonly ImageIntake intake = new();
+    private string? pendingImage;
+    private float fieldGrowth;
+    private bool focus;
+    private bool typing;
+    private bool emojiOpen;
+    private int emojiOpenedFrame = -1;
+    private int emojiClosedFrame = -1;
+    private string? replyTargetId;
+    private string replyBarName = string.Empty;
+    private string replyBarPreview = string.Empty;
+    private string? editTargetId;
+    private string editBarPreview = string.Empty;
+
+    public string Draft
+    {
+        get => editor.Text;
+        set => editor.Adopt(value);
+    }
+
+    public UiSound SendSound { get; set; } = UiSound.MessageSent;
+
+    public bool IsEditing => editTargetId is not null;
+
+    public bool HasReplyTarget => replyTargetId is not null;
+
+    public bool Recording => recorder.Recording;
+
+    public float AccessoryHeight => TargetBarHeight + ImageStripHeight;
+
+    private float TargetBarHeight => replyTargetId is not null || editTargetId is not null
+        ? AccessoryBarHeight * UiScale.Current
+        : 0f;
+
+    private float ImageStripHeight => pendingImage is not null ? ImageBarHeight * UiScale.Current : 0f;
+
+    private bool ReadyToSend => editor.HasContent || pendingImage is not null;
+
+    private bool CanAttachImage(in ChatComposerModel model) => model.CanImage && editTargetId is null;
+
+    private static float Height(ChatComposerStyle style) => style switch
+    {
+        ChatComposerStyle.Pill => PillComposerHeight * UiScale.Current,
+        ChatComposerStyle.Plus => PlusComposerHeight * UiScale.Current,
+        _ => BarHeight * UiScale.Current,
+    };
+
+    public float Measure(ChatComposerStyle style, float ceiling)
+    {
+        var baseHeight = Height(style);
+        return MathF.Max(baseHeight, MathF.Min(baseHeight + fieldGrowth, ceiling));
+    }
+
+    public void Gate() => attachMenu.Gate();
+
+    public void BeginReply(string messageId, string senderName, string preview)
+    {
+        ClearEdit();
+        replyTargetId = messageId;
+        replyBarName = senderName;
+        replyBarPreview = preview;
+        focus = true;
+    }
+
+    public void BeginEdit(string messageId, string body)
+    {
+        ClearReply();
+        pendingImage = null;
+        intake.Discard();
+        editTargetId = messageId;
+        editBarPreview = ChatText.QuotePreview(body, TextKind);
+        editor.Adopt(body);
+        focus = true;
+    }
+
+    public void ClearReply()
+    {
+        replyTargetId = null;
+        replyBarName = string.Empty;
+        replyBarPreview = string.Empty;
+    }
+
+    public void ClearEdit()
+    {
+        if (editTargetId is null)
+        {
+            return;
+        }
+
+        editTargetId = null;
+        editor.Adopt(string.Empty);
+    }
+
+    public void ClearTargets()
+    {
+        replyTargetId = null;
+        replyBarName = string.Empty;
+        replyBarPreview = string.Empty;
+        editTargetId = null;
+        pendingImage = null;
+        intake.Discard();
+    }
+
+    public bool OfferPaste(ref Rect importRect, out Rect pasteRect) =>
+        intake.OfferPaste(ref importRect, out pasteRect);
+
+    public void PasteImage(PhotoLibrary library) => intake.Paste(library);
+
+    public void AcceptImageDrop(Rect area, PhotoLibrary library, Vector4 highlight)
+    {
+        if (editTargetId is not null)
+        {
+            return;
+        }
+
+        intake.AcceptDrop(area, library, highlight);
+    }
+
+    public void AttachImage(string path)
+    {
+        if (editTargetId is not null)
+        {
+            return;
+        }
+
+        if (GifMedia.IsGif(path) && !GifMedia.FitsSizeCap(path))
+        {
+            ShellToast.Show(Loc.T(L.Common.GifTooLarge));
+            return;
+        }
+
+        pendingImage = path;
+        focus = true;
+    }
+
+    public void Clear()
+    {
+        ClearTargets();
+        editor.Adopt(string.Empty);
+    }
+
+    public void CancelVoice()
+    {
+        recorder.Cancel();
+    }
+
+    public void Dispose()
+    {
+        recorder.Dispose();
+    }
+
+    public void CloseMenus()
+    {
+        attachMenu.Close();
+        emojiOpen = false;
+    }
+
+    public void Draw(Rect composerRect, in ChatComposerModel model)
+    {
+        if (intake.TryTake(out var taken))
+        {
+            AttachImage(taken);
+            intake.Discard();
+        }
+
+        if (pendingImage is { } image)
+        {
+            var stripTop = composerRect.Min.Y - AccessoryHeight;
+            DrawImageBar(new Rect(new Vector2(composerRect.Min.X, stripTop),
+                new Vector2(composerRect.Max.X, stripTop + ImageStripHeight)), image, model);
+        }
+
+        var accessory = TargetBarHeight;
+        if (accessory > 0f)
+        {
+            var barRect = new Rect(new Vector2(composerRect.Min.X, composerRect.Min.Y - accessory),
+                new Vector2(composerRect.Max.X, composerRect.Min.Y));
+            if (editTargetId is not null)
+            {
+                DrawEditBar(barRect, model);
+            }
+            else
+            {
+                DrawReplyBar(barRect, model);
+            }
+        }
+
+        var surface = PaintSurface(composerRect, model);
+        if (model.Blocked)
+        {
+            fieldGrowth = 0f;
+            DrawBlockedComposer(surface, model);
+            return;
+        }
+
+        if (recorder.Recording)
+        {
+            fieldGrowth = 0f;
+            DrawRecordingComposer(surface, model);
+            return;
+        }
+
+        if (model.Style == ChatComposerStyle.Pill)
+        {
+            DrawPillComposer(composerRect, surface, model);
+        }
+        else if (model.Style == ChatComposerStyle.Plus)
+        {
+            DrawPlusComposer(composerRect, model);
+        }
+        else
+        {
+            DrawInputComposer(composerRect, model);
+        }
+
+        DrawSuggestions(composerRect, model);
+    }
+
+    private bool DrawField(Rect pill, float textLeft, float textRight, in ChatComposerModel model)
+    {
+        var scale = UiScale.Current;
+        var padding = ImGui.GetStyle().FramePadding;
+        var fieldWidth = MathF.Max(1f, textRight - textLeft);
+        editor.Rewrap(MathF.Max(1f, fieldWidth - padding.X * 2f - 4f * scale));
+        var lineHeight = ImGui.GetTextLineHeight();
+        var wantedLines = Math.Clamp(editor.LineCount, 1, MaxLines);
+        fieldGrowth = (wantedLines - 1) * lineHeight;
+        var fits = Math.Max(1, (int)MathF.Floor((pill.Height - padding.Y * 2f) / lineHeight));
+        var lines = Math.Min(wantedLines, fits);
+        var fieldHeight = lines * lineHeight + padding.Y * 2f;
+        var fieldTop = (pill.Min.Y + pill.Max.Y) * 0.5f - fieldHeight * 0.5f;
+        ImGui.SetCursorScreenPos(new Vector2(textLeft, fieldTop));
+        if (focus)
+        {
+            ImGui.SetKeyboardFocusHere();
+            focus = false;
+        }
+
+        bool submitted;
+        using (ImRaii.PushColor(ImGuiCol.FrameBg, new Vector4(0f, 0f, 0f, 0f)))
+        using (ImRaii.PushColor(ImGuiCol.Text, model.Ui.Theme.TextStrong))
+        {
+            submitted = editor.Draw("##chatComposerInput", new Vector2(fieldWidth, fieldHeight), model.MaxLength, 0)
+                        && !suggestions.Showing;
+        }
+
+        var bandMin = new Vector2(textLeft, pill.Min.Y);
+        var bandMax = new Vector2(textRight, pill.Max.Y);
+        if (ComposerFieldPress.PressedAroundInput(bandMin, bandMax))
+        {
+            focus = true;
+        }
+
+        typing = EmojiSuggestions.FieldTyping();
+
+        if (CanAttachImage(model) && model.Library is { } library && ImGui.IsItemActive()
+            && ImageIntake.PasteRequested())
+        {
+            intake.Paste(library);
+        }
+
+        if (editor.Text.Length == 0)
+        {
+            Plugin.Fonts.NoticeText(model.Hint);
+            var hint = Typography.FitText(model.Hint, fieldWidth - padding.X * 2f, TextStyles.Body);
+            Typography.Draw(ImGui.GetWindowDrawList(), new Vector2(textLeft + padding.X, fieldTop + padding.Y), hint,
+                model.Ui.Theme.TextMuted, TextStyles.Body);
+        }
+
+        return submitted;
+    }
+
+    private void DrawPlusComposer(Rect area, in ChatComposerModel model)
+    {
+        var ui = model.Ui;
+        var theme = ui.Theme;
+        var scale = UiScale.Current;
+        var drawList = ImGui.GetWindowDrawList();
+        var edgePad = PlusEdgePad * scale;
+        var centerY = area.Max.Y - PlusComposerHeight * scale * 0.5f;
+        var showAttach = CanAttachImage(model) || model.CanLocation;
+        var pillLeft = area.Min.X + edgePad;
+        if (showAttach)
+        {
+            var plusRadius = PlusButtonRadius * scale;
+            var plusCenter = new Vector2(area.Min.X + edgePad + plusRadius, centerY);
+            var plusExtent = new Vector2(plusRadius, plusRadius);
+            var plusHovered = UiInteract.Hover(plusCenter - plusExtent, plusCenter + plusExtent);
+            drawList.AddCircleFilled(plusCenter, plusRadius,
+                ImGui.GetColorU32(plusHovered || attachMenu.Open ? PlusHoverFill : FieldFill), 32);
+            PhoneIcon.Draw(drawList, plusCenter, PhoneIcons.Plus, attachMenu.Open ? ui.Accent : theme.TextStrong,
+                PlusGlyph * scale);
+            HoverTooltip.Show(new Rect(plusCenter - plusExtent, plusCenter + plusExtent), Loc.T(L.Message.Attach),
+                HoverLabelSide.Above);
+            if (plusHovered)
+            {
+                ImGui.SetMouseCursor(ImGuiMouseCursor.Hand);
+                if (ImGui.IsMouseClicked(ImGuiMouseButton.Left))
+                {
+                    emojiOpen = false;
+                    attachMenu.Toggle("chatComposer.attach", new Rect(plusCenter - plusExtent, plusCenter + plusExtent));
+                }
+            }
+
+            pillLeft = plusCenter.X + plusRadius + PlusPillGap * scale;
+        }
+
+        var sendRadius = PlusSendRadius * scale;
+        var sendCenter = new Vector2(area.Max.X - edgePad - sendRadius, centerY);
+        var pillMin = new Vector2(pillLeft, area.Min.Y + PlusPillInsetY * scale);
+        var pillMax = new Vector2(sendCenter.X - sendRadius - PlusPillGap * scale, area.Max.Y - PlusPillInsetY * scale);
+        var pillRounding = MathF.Min(pillMax.Y - pillMin.Y,
+            (PlusComposerHeight - PlusPillInsetY * 2f) * scale) * 0.5f;
+        Squircle.Fill(drawList, pillMin, pillMax, pillRounding, ImGui.GetColorU32(FieldFill));
+
+        var emojiRadius = PlusEmojiRadius * scale;
+        var emojiCenter = new Vector2(pillMax.X - PlusEmojiInset * scale - emojiRadius, centerY);
+        var emojiExtent = new Vector2(emojiRadius, emojiRadius);
+        var emojiHovered = UiInteract.Hover(emojiCenter - emojiExtent, emojiCenter + emojiExtent);
+        var emojiInk = emojiOpen ? ui.Accent : emojiHovered ? theme.TextStrong : ui.MutedInk;
+        PhoneIcon.Draw(drawList, emojiCenter, PhoneIcons.MoodSmile, emojiInk, PlusGlyph * scale);
+        HoverTooltip.Show(new Rect(emojiCenter - emojiExtent, emojiCenter + emojiExtent), Loc.T(L.Common.Emoji),
+            HoverLabelSide.Above);
+        if (emojiHovered)
+        {
+            ImGui.SetMouseCursor(ImGuiMouseCursor.Hand);
+            if (ImGui.IsMouseClicked(ImGuiMouseButton.Left))
+            {
+                attachMenu.Close();
+                ToggleEmoji();
+            }
+        }
+
+        var textLeft = pillMin.X + PlusTextPad * scale;
+        var textRight = emojiCenter.X - emojiRadius - 4f * scale;
+        var submitted = DrawField(new Rect(pillMin, pillMax), textLeft, textRight, model);
+        var hasDraft = ReadyToSend;
+        var canSend = hasDraft && !model.Sending;
+        var sendExtent = new Vector2(sendRadius, sendRadius);
+        var sendRect = new Rect(sendCenter - sendExtent, sendCenter + sendExtent);
+        var sendHovered = UiInteract.Hover(sendRect.Min, sendRect.Max);
+        if (hasDraft)
+        {
+            var fill = canSend ? (sendHovered ? Palette.Lighten(ui.Accent, 0.10f) : ui.Accent) : theme.SurfaceMuted;
+            drawList.AddCircleFilled(sendCenter, sendRadius, ImGui.GetColorU32(fill), 32);
+            PhoneIcon.Draw(drawList, sendCenter + new Vector2(1f * scale, 0f), PhoneIcons.SendFilled, White,
+                PlusSendGlyph * scale);
+            HoverTooltip.Show(sendRect, Loc.T(L.Velvet.Send), HoverLabelSide.Above);
+            if (sendHovered)
+            {
+                ImGui.SetMouseCursor(ImGuiMouseCursor.Hand);
+                if (ImGui.IsMouseClicked(ImGuiMouseButton.Left) && canSend)
+                {
+                    submitted = true;
+                }
+            }
+        }
+        else if (model.CanVoice)
+        {
+            var fill = sendHovered ? Palette.Lighten(ui.Accent, 0.10f) : ui.Accent;
+            drawList.AddCircleFilled(sendCenter, sendRadius, ImGui.GetColorU32(fill), 32);
+            PhoneIcon.Draw(drawList, sendCenter, PhoneIcons.Microphone, White, PlusSendGlyph * scale);
+            HoverTooltip.Show(sendRect, Loc.T(L.Message.RecordVoiceHint), HoverLabelSide.Above);
+            if (sendHovered)
+            {
+                ImGui.SetMouseCursor(ImGuiMouseCursor.Hand);
+                if (ImGui.IsMouseClicked(ImGuiMouseButton.Left) && !model.Sending)
+                {
+                    attachMenu.Close();
+                    recorder.Start(model.ResolveVoiceInput());
+                    UiFeedback.Play(UiSound.RecordStart);
+                }
+            }
+        }
+        else
+        {
+            drawList.AddCircleFilled(sendCenter, sendRadius, ImGui.GetColorU32(theme.SurfaceMuted), 32);
+            PhoneIcon.Draw(drawList, sendCenter + new Vector2(1f * scale, 0f), PhoneIcons.SendFilled, White,
+                PlusSendGlyph * scale);
+        }
+
+        if (submitted && canSend)
+        {
+            Submit(model);
+        }
+
+        DrawAttachMenu(model);
+        if (emojiOpen)
+        {
+            DrawEmojiPanel(area, model);
+        }
+    }
+
+    private void DrawAttachMenu(in ChatComposerModel model)
+    {
+        if (!attachMenu.Open)
+        {
+            return;
+        }
+
+        var count = 0;
+        var canImage = CanAttachImage(model);
+        if (canImage)
+        {
+            attachItems[count++] = new DropdownMenu.Item(Loc.T(L.Common.SendPhoto), PhoneIcons.Photo);
+        }
+
+        if (model.CanLocation)
+        {
+            attachItems[count++] = new DropdownMenu.Item(Loc.T(L.Message.ShareLocation), PhoneIcons.MapPin);
+        }
+
+        var picked = attachMenu.Draw(model.Screen, model.Ui.Theme, attachItems.AsSpan(0, count));
+        if (picked < 0)
+        {
+            return;
+        }
+
+        if (canImage && picked == 0)
+        {
+            model.OnPickImage(model.ConversationId);
+            return;
+        }
+
+        model.OnShareLocation(model.ConversationId);
+    }
+
+    private static Rect PaintSurface(Rect area, in ChatComposerModel model)
+    {
+        var drawList = ImGui.GetWindowDrawList();
+        if (model.Style == ChatComposerStyle.Plus)
+        {
+            drawList.AddLine(area.Min, new Vector2(area.Max.X, area.Min.Y), ImGui.GetColorU32(model.Ui.Hairline), 1f);
+            return area;
+        }
+
+        if (model.Style != ChatComposerStyle.Pill)
+        {
+            drawList.AddLine(area.Min, new Vector2(area.Max.X, area.Min.Y),
+                ImGui.GetColorU32(model.Ui.Theme.Separator), 1f);
+            return area;
+        }
+
+        var scale = UiScale.Current;
+        var pill = new Rect(new Vector2(area.Min.X + PillEdgePad * scale, area.Min.Y + PillInsetY * scale),
+            new Vector2(area.Max.X - PillEdgePad * scale, area.Max.Y - PillInsetY * scale));
+        var rounding = MathF.Min(pill.Height, (PillComposerHeight - PillInsetY * 2f) * scale) * 0.5f;
+        Squircle.Fill(drawList, pill.Min, pill.Max, rounding, ImGui.GetColorU32(PillFill));
+        Squircle.Stroke(drawList, pill.Min, pill.Max, rounding, ImGui.GetColorU32(PillStroke), 1f * scale);
+        return pill;
+    }
+
+    private static void DrawBlockedComposer(Rect area, in ChatComposerModel model)
+    {
+        var ui = model.Ui;
+        var scale = UiScale.Current;
+        var drawList = ImGui.GetWindowDrawList();
+        var edgePad = 14f * scale;
+        var iconRadius = 13f * scale;
+        var iconCenter = new Vector2(area.Min.X + edgePad + iconRadius, area.Center.Y);
+        AppSkin.Icon(iconCenter, IconGlyph.Of(FontAwesomeIcon.Lock), ui.MutedInk, 0.9f);
+
+        var textLeft = iconCenter.X + iconRadius + 9f * scale;
+        var label = Typography.FitText(model.BlockedNotice, area.Max.X - edgePad - textLeft, TextStyles.Footnote);
+        var labelSize = Typography.Measure(label, TextStyles.Footnote);
+        Typography.Draw(drawList, new Vector2(textLeft, area.Center.Y - labelSize.Y * 0.5f), label, ui.MutedInk,
+            TextStyles.Footnote);
+
+        if (model.OnBlockedTap is not { } onBlockedTap)
+        {
+            return;
+        }
+
+        if (UiInteract.Hover(area.Min, area.Max))
+        {
+            ImGui.SetMouseCursor(ImGuiMouseCursor.Hand);
+        }
+
+        if (UiInteract.HoverClick(area.Min, area.Max))
+        {
+            onBlockedTap();
+        }
+    }
+
+    private void DrawInputComposer(Rect area, in ChatComposerModel model)
+    {
+        var ui = model.Ui;
+        var theme = ui.Theme;
+        var scale = UiScale.Current;
+        var drawList = ImGui.GetWindowDrawList();
+        var buttonRadius = 18f * scale;
+        var iconRadius = 15f * scale;
+        var edgePad = 10f * scale;
+        var centerY = area.Max.Y - BarHeight * scale * 0.5f;
+        var sendCenter = new Vector2(area.Max.X - edgePad - buttonRadius, centerY);
+        var pillMin = new Vector2(area.Min.X + edgePad, area.Min.Y + 7f * scale);
+        var pillMax = new Vector2(sendCenter.X - buttonRadius - 8f * scale, area.Max.Y - 7f * scale);
+        var pillRounding = MathF.Min(pillMax.Y - pillMin.Y, (BarHeight - 14f) * scale) * 0.5f;
+        Squircle.Fill(drawList, pillMin, pillMax, pillRounding, ImGui.GetColorU32(FieldFill));
+
+        var emojiCenter = new Vector2(pillMin.X + iconRadius + 5f * scale, centerY);
+        var emojiMin = emojiCenter - new Vector2(iconRadius, iconRadius);
+        var emojiMax = emojiCenter + new Vector2(iconRadius, iconRadius);
+        var emojiHovered = UiInteract.Hover(emojiMin, emojiMax);
+        var emojiColor = emojiOpen ? ui.Accent : emojiHovered ? theme.TextStrong : ui.MutedInk;
+        AppSkin.Icon(emojiCenter, IconGlyph.Of(FontAwesomeIcon.Smile), emojiColor, 0.95f);
+        HoverTooltip.Show(new Rect(emojiMin, emojiMax), Loc.T(L.Common.Emoji), HoverLabelSide.Above);
+        if (emojiHovered)
+        {
+            ImGui.SetMouseCursor(ImGuiMouseCursor.Hand);
+            if (ImGui.IsMouseClicked(ImGuiMouseButton.Left))
+            {
+                ToggleEmoji();
+            }
+        }
+
+        var textRight = pillMax.X - 14f * scale;
+        var trailingIconX = pillMax.X - iconRadius - 5f * scale;
+        if (CanAttachImage(model))
+        {
+            var pictureCenter = new Vector2(trailingIconX, centerY);
+            var pictureMin = pictureCenter - new Vector2(iconRadius, iconRadius);
+            var pictureMax = pictureCenter + new Vector2(iconRadius, iconRadius);
+            var pictureHovered = UiInteract.Hover(pictureMin, pictureMax);
+            AppSkin.Icon(pictureCenter, IconGlyph.Of(FontAwesomeIcon.Image),
+                pictureHovered ? theme.TextStrong : ui.MutedInk, 0.95f);
+            HoverTooltip.Show(new Rect(pictureMin, pictureMax), Loc.T(L.Velvet.SendPicture), HoverLabelSide.Above);
+            if (pictureHovered)
+            {
+                ImGui.SetMouseCursor(ImGuiMouseCursor.Hand);
+                if (ImGui.IsMouseClicked(ImGuiMouseButton.Left))
+                {
+                    model.OnPickImage(model.ConversationId);
+                }
+            }
+
+            trailingIconX = pictureMin.X - iconRadius - 4f * scale;
+            textRight = pictureMin.X - 6f * scale;
+        }
+
+        if (model.CanLocation)
+        {
+            var locationCenter = new Vector2(trailingIconX, centerY);
+            var locationMin = locationCenter - new Vector2(iconRadius, iconRadius);
+            var locationMax = locationCenter + new Vector2(iconRadius, iconRadius);
+            var locationHovered = UiInteract.Hover(locationMin, locationMax);
+            AppSkin.Icon(locationCenter, IconGlyph.Of(FontAwesomeIcon.MapMarkerAlt),
+                locationHovered ? theme.TextStrong : ui.MutedInk, 0.95f);
+            HoverTooltip.Show(new Rect(locationMin, locationMax), Loc.T(L.Message.ShareLocation),
+                HoverLabelSide.Above);
+            if (locationHovered)
+            {
+                ImGui.SetMouseCursor(ImGuiMouseCursor.Hand);
+                if (ImGui.IsMouseClicked(ImGuiMouseButton.Left))
+                {
+                    model.OnShareLocation(model.ConversationId);
+                }
+            }
+
+            textRight = locationMin.X - 6f * scale;
+        }
+
+        var textLeft = emojiMax.X + 4f * scale;
+        var submitted = DrawField(new Rect(pillMin, pillMax), textLeft, textRight, model);
+        var hasDraft = ReadyToSend;
+        var canSend = hasDraft && !model.Sending;
+        var sendRect = new Rect(sendCenter - new Vector2(buttonRadius, buttonRadius),
+            sendCenter + new Vector2(buttonRadius, buttonRadius));
+        if (hasDraft)
+        {
+            drawList.AddCircleFilled(sendCenter, buttonRadius,
+                ImGui.GetColorU32(canSend ? ui.Accent : theme.SurfaceMuted), 24);
+            AppSkin.Icon(sendCenter, IconGlyph.Of(FontAwesomeIcon.PaperPlane), White, 0.9f);
+            HoverTooltip.Show(sendRect, Loc.T(L.Velvet.Send), HoverLabelSide.Above);
+            if (UiInteract.Hover(sendRect.Min, sendRect.Max))
+            {
+                ImGui.SetMouseCursor(ImGuiMouseCursor.Hand);
+                if (ImGui.IsMouseClicked(ImGuiMouseButton.Left) && canSend)
+                {
+                    submitted = true;
+                }
+            }
+        }
+        else if (model.CanVoice)
+        {
+            drawList.AddCircleFilled(sendCenter, buttonRadius, ImGui.GetColorU32(ui.Accent), 24);
+            AppSkin.Icon(sendCenter, IconGlyph.Of(FontAwesomeIcon.Microphone), White, 0.9f);
+            HoverTooltip.Show(sendRect, Loc.T(L.Message.RecordVoiceHint), HoverLabelSide.Above);
+            if (UiInteract.Hover(sendRect.Min, sendRect.Max))
+            {
+                ImGui.SetMouseCursor(ImGuiMouseCursor.Hand);
+                if (ImGui.IsMouseClicked(ImGuiMouseButton.Left) && !model.Sending)
+                {
+                    recorder.Start(model.ResolveVoiceInput());
+                    UiFeedback.Play(UiSound.RecordStart);
+                }
+            }
+        }
+        else
+        {
+            drawList.AddCircleFilled(sendCenter, buttonRadius, ImGui.GetColorU32(theme.SurfaceMuted), 24);
+            AppSkin.Icon(sendCenter, IconGlyph.Of(FontAwesomeIcon.PaperPlane), White, 0.9f);
+        }
+
+        if (submitted && canSend)
+        {
+            Submit(model);
+        }
+
+        if (emojiOpen)
+        {
+            DrawEmojiPanel(area, model);
+        }
+    }
+
+    private void DrawPillComposer(Rect area, Rect pill, in ChatComposerModel model)
+    {
+        var ui = model.Ui;
+        var theme = ui.Theme;
+        var scale = UiScale.Current;
+        var drawList = ImGui.GetWindowDrawList();
+        var rowHeight = (PillComposerHeight - PillInsetY * 2f) * scale;
+        var rowTop = pill.Max.Y - rowHeight;
+        var centerY = pill.Max.Y - rowHeight * 0.5f;
+        var textLeft = pill.Min.X + PillTextGap * scale;
+        if (CanAttachImage(model))
+        {
+            var cameraRadius = rowHeight * 0.5f - PillCameraInset * scale;
+            var cameraCenter = new Vector2(pill.Min.X + PillCameraInset * scale + cameraRadius, centerY);
+            var cameraExtent = new Vector2(cameraRadius, cameraRadius);
+            var cameraHovered = UiInteract.Hover(cameraCenter - cameraExtent, cameraCenter + cameraExtent);
+            drawList.AddCircleFilled(cameraCenter, cameraRadius,
+                ImGui.GetColorU32(cameraHovered ? Palette.Lighten(ui.Accent, 0.12f) : ui.Accent), 32);
+            PhoneIcon.Draw(drawList, cameraCenter, PhoneIcons.Camera, White, PillCameraGlyph * scale);
+            HoverTooltip.Show(new Rect(cameraCenter - cameraExtent, cameraCenter + cameraExtent),
+                Loc.T(L.Velvet.SendPicture), HoverLabelSide.Above);
+            if (cameraHovered)
+            {
+                ImGui.SetMouseCursor(ImGuiMouseCursor.Hand);
+                if (ImGui.IsMouseClicked(ImGuiMouseButton.Left))
+                {
+                    model.OnPickImage(model.ConversationId);
+                }
+            }
+
+            textLeft = cameraCenter.X + cameraRadius + PillTextGap * scale;
+        }
+
+        var idleInk = Palette.WithAlpha(theme.TextStrong, PillIdleAlpha);
+        var hasDraft = ReadyToSend;
+        var submitted = false;
+        var rightEdge = pill.Max.X - PillIconEdge * scale;
+        if (hasDraft)
+        {
+            var label = Loc.T(L.Velvet.Send);
+            var labelSize = Typography.Measure(label, SendStyle);
+            var sendPad = PillSendPad * scale;
+            var sendMin = new Vector2(rightEdge - labelSize.X - sendPad * 2f, rowTop);
+            var sendMax = new Vector2(rightEdge, pill.Max.Y);
+            var canSend = !model.Sending;
+            var sendHovered = canSend && UiInteract.Hover(sendMin, sendMax);
+            var sendInk = !canSend ? ui.MutedInk : sendHovered ? Palette.Lighten(ui.Accent, 0.18f) : ui.Accent;
+            Typography.Draw(drawList, new Vector2(sendMin.X + sendPad, centerY - labelSize.Y * 0.5f), label, sendInk,
+                SendStyle);
+            HoverTooltip.Show(new Rect(sendMin, sendMax), label, HoverLabelSide.Above);
+            if (sendHovered)
+            {
+                ImGui.SetMouseCursor(ImGuiMouseCursor.Hand);
+                if (ImGui.IsMouseClicked(ImGuiMouseButton.Left))
+                {
+                    submitted = true;
+                }
+            }
+
+            rightEdge = sendMin.X - PillIconGap * scale;
+            if (DrawPillIcon(drawList, ref rightEdge, centerY, PhoneIcons.MoodSmile,
+                    emojiOpen ? ui.Accent : idleInk, theme.TextStrong, Loc.T(L.Common.Emoji), scale))
+            {
+                ToggleEmoji();
+            }
+        }
+        else
+        {
+            if (model.CanLocation && DrawPillIcon(drawList, ref rightEdge, centerY, PhoneIcons.MapPin, idleInk,
+                    theme.TextStrong, Loc.T(L.Message.ShareLocation), scale))
+            {
+                model.OnShareLocation(model.ConversationId);
+            }
+
+            if (DrawPillIcon(drawList, ref rightEdge, centerY, PhoneIcons.MoodSmile,
+                    emojiOpen ? ui.Accent : idleInk, theme.TextStrong, Loc.T(L.Common.Emoji), scale))
+            {
+                ToggleEmoji();
+            }
+
+            if (model.CanVoice && DrawPillIcon(drawList, ref rightEdge, centerY, PhoneIcons.Microphone, idleInk,
+                    theme.TextStrong, Loc.T(L.Message.RecordVoiceHint), scale) && !model.Sending)
+            {
+                recorder.Start(model.ResolveVoiceInput());
+                UiFeedback.Play(UiSound.RecordStart);
+            }
+        }
+
+        var textRight = rightEdge - PillTextGap * scale;
+        submitted |= DrawField(pill, textLeft, textRight, model);
+
+        if (submitted && ReadyToSend && !model.Sending)
+        {
+            Submit(model);
+        }
+
+        if (emojiOpen)
+        {
+            DrawEmojiPanel(area, model);
+        }
+    }
+
+    private static bool DrawPillIcon(ImDrawListPtr drawList, ref float rightEdge, float centerY, string glyph,
+        Vector4 idleInk, Vector4 hoverInk, string tooltip, float scale)
+    {
+        var half = PillIconHit * 0.5f * scale;
+        var center = new Vector2(rightEdge - half, centerY);
+        var extent = new Vector2(half, half);
+        var min = center - extent;
+        var max = center + extent;
+        var hovered = UiInteract.Hover(min, max);
+        PhoneIcon.Draw(drawList, center, glyph, hovered ? hoverInk : idleInk, PillIconGlyph * scale);
+        HoverTooltip.Show(new Rect(min, max), tooltip, HoverLabelSide.Above);
+        rightEdge = min.X - PillIconGap * scale;
+        if (!hovered)
+        {
+            return false;
+        }
+
+        ImGui.SetMouseCursor(ImGuiMouseCursor.Hand);
+        return ImGui.IsMouseClicked(ImGuiMouseButton.Left);
+    }
+
+    private void ToggleEmoji()
+    {
+        if (ImGui.GetFrameCount() == emojiClosedFrame)
+        {
+            return;
+        }
+
+        emojiOpen = !emojiOpen;
+        emojiOpenedFrame = ImGui.GetFrameCount();
+    }
+
+    private void Submit(in ChatComposerModel model)
+    {
+        var body = editor.Text.Trim();
+        if (body.Length == 0 && pendingImage is null)
+        {
+            return;
+        }
+
+        if (editTargetId is { } editId)
+        {
+            model.OnEditText(model.ConversationId, editId, body);
+            ClearEdit();
+        }
+        else if (pendingImage is { } image)
+        {
+            model.OnSendImage(model.ConversationId, image, body);
+            UiFeedback.Play(UiSound.MessageSent);
+            pendingImage = null;
+            editor.Adopt(string.Empty);
+            ClearReply();
+        }
+        else
+        {
+            model.OnSendText(model.ConversationId, body, replyTargetId);
+            UiFeedback.Play(SendSound);
+            editor.Adopt(string.Empty);
+            ClearReply();
+        }
+
+        emojiOpen = false;
+        focus = true;
+    }
+
+    private void DrawEmojiPanel(Rect composerArea, in ChatComposerModel model)
+    {
+        var scale = UiScale.Current;
+        var height = 250f * scale;
+        var bottom = composerArea.Min.Y - AccessoryHeight;
+        var panel = new Rect(new Vector2(composerArea.Min.X, bottom - height),
+            new Vector2(composerArea.Max.X, bottom));
+        var picked = emojiPicker.Draw(panel, model.Ui);
+        if (picked is null)
+        {
+            DismissEmojiOnOutsideClick(panel);
+            return;
+        }
+
+        if (editor.Text.Length + picked.Length < model.MaxLength)
+        {
+            editor.Append(picked);
+            Plugin.Fonts.NoticeText(editor.Text);
+        }
+    }
+
+    private void DrawSuggestions(Rect composerArea, in ChatComposerModel model)
+    {
+        var typed = typing;
+        typing = false;
+        if (emojiOpen)
+        {
+            return;
+        }
+
+        var bar = new Rect(new Vector2(composerArea.Min.X, composerArea.Min.Y - AccessoryHeight), composerArea.Max);
+        var draft = editor.Text;
+        if (!suggestions.Draw(bar, model.Screen, model.Ui, ref draft, typed) || draft.Length > model.MaxLength)
+        {
+            return;
+        }
+
+        editor.Adopt(draft);
+        editor.MoveCursor(editor.Text.Length);
+        focus = true;
+    }
+
+    private void DismissEmojiOnOutsideClick(Rect panel)
+    {
+        var frame = ImGui.GetFrameCount();
+        if (frame == emojiOpenedFrame || !UiInteract.ClickedOutside(panel.Min, panel.Max))
+        {
+            return;
+        }
+
+        emojiOpen = false;
+        emojiClosedFrame = frame;
+    }
+
+    private void DrawRecordingComposer(Rect area, in ChatComposerModel model)
+    {
+        var ui = model.Ui;
+        var theme = ui.Theme;
+        var scale = UiScale.Current;
+        var drawList = ImGui.GetWindowDrawList();
+        var cancelCenter = new Vector2(area.Min.X + 28f * scale, area.Center.Y);
+        if (ui.IconButton(cancelCenter, 16f * scale, IconGlyph.Of(FontAwesomeIcon.TrashAlt), theme.Danger,
+                AppSkin.Transparent, 1f, Loc.T(L.Common.Cancel), HoverLabelSide.Above))
+        {
+            recorder.Cancel();
+            UiFeedback.Play(UiSound.RecordCancel);
+            return;
+        }
+
+        var pulse = 0.55f + 0.45f * MathF.Sin((float)ImGui.GetTime() * 5f);
+        var dotCenter = new Vector2(cancelCenter.X + 34f * scale, area.Center.Y);
+        drawList.AddCircleFilled(dotCenter, 5f * scale,
+            ImGui.GetColorU32(Palette.WithAlpha(theme.Danger, 0.4f + 0.6f * pulse)), 16);
+        var elapsed = TimeText.MinutesSeconds((int)recorder.ElapsedSeconds);
+        Typography.Draw(new Vector2(dotCenter.X + 12f * scale, area.Center.Y
+            - Typography.Measure(elapsed, 1f, FontWeight.SemiBold).Y * 0.5f), elapsed, theme.TextStrong, 1f,
+            FontWeight.SemiBold);
+        var meterLeft = dotCenter.X + 64f * scale;
+        var meterRight = area.Max.X - 64f * scale;
+        if (meterRight > meterLeft + 30f * scale)
+        {
+            var meterY = area.Center.Y;
+            drawList.AddRectFilled(new Vector2(meterLeft, meterY - 2f * scale),
+                new Vector2(meterRight, meterY + 2f * scale), ImGui.GetColorU32(FieldFill), 2f * scale);
+            var level = Math.Clamp(recorder.Level * 6f, 0f, 1f);
+            drawList.AddRectFilled(new Vector2(meterLeft, meterY - 2f * scale),
+                new Vector2(meterLeft + (meterRight - meterLeft) * level, meterY + 2f * scale),
+                ImGui.GetColorU32(ui.Accent), 2f * scale);
+        }
+
+        var sendCenter = new Vector2(area.Max.X - 28f * scale, area.Center.Y);
+        drawList.AddCircleFilled(sendCenter, 16f * scale, ImGui.GetColorU32(ui.Accent), 24);
+        AppSkin.Icon(sendCenter, IconGlyph.Of(FontAwesomeIcon.PaperPlane), White, 0.9f);
+        var sendRect = new Rect(sendCenter - new Vector2(16f * scale, 16f * scale),
+            sendCenter + new Vector2(16f * scale, 16f * scale));
+        HoverTooltip.Show(sendRect, Loc.T(L.Velvet.Send), HoverLabelSide.Above);
+        var sendClicked = UiInteract.HoverClick(sendRect.Min, sendRect.Max);
+        if (sendClicked || recorder.AtCapacity)
+        {
+            if (recorder.Stop(out var wavBytes, out var durationSecs))
+            {
+                model.OnSendVoice(model.ConversationId, wavBytes, durationSecs);
+                UiFeedback.Play(SendSound);
+            }
+        }
+    }
+
+    private void DrawReplyBar(Rect area, in ChatComposerModel model)
+    {
+        var ui = model.Ui;
+        var theme = ui.Theme;
+        var scale = UiScale.Current;
+        var drawList = ImGui.GetWindowDrawList();
+        drawList.AddRectFilled(area.Min, area.Max, ImGui.GetColorU32(BarFill));
+        drawList.AddLine(area.Min, new Vector2(area.Max.X, area.Min.Y), ImGui.GetColorU32(theme.Separator), 1f);
+        var barMin = new Vector2(area.Min.X + 14f * scale, area.Min.Y + 8f * scale);
+        var barMax = new Vector2(barMin.X + 3f * scale, area.Max.Y - 8f * scale);
+        Squircle.Fill(drawList, barMin, barMax, 1.5f * scale, ImGui.GetColorU32(ui.Accent));
+        var textLeft = barMax.X + 9f * scale;
+        var closeRadius = 13f * scale;
+        var textWidth = area.Max.X - 20f * scale - closeRadius * 2f - textLeft;
+        Typography.Draw(new Vector2(textLeft, area.Min.Y + 7f * scale),
+            Typography.FitText(Loc.T(L.Message.ReplyingTo, replyBarName), textWidth, 0.78f, FontWeight.SemiBold),
+            ui.Accent, 0.78f, FontWeight.SemiBold);
+        Typography.Draw(new Vector2(textLeft, area.Min.Y + 24f * scale),
+            Typography.FitText(replyBarPreview, textWidth, 0.82f, FontWeight.Regular), ui.MutedInk, 0.82f);
+        var closeCenter = new Vector2(area.Max.X - 14f * scale - closeRadius, area.Center.Y);
+        if (ui.IconButton(closeCenter, closeRadius, IconGlyph.Of(FontAwesomeIcon.Times), ui.MutedInk,
+                AppSkin.Transparent, 0.9f, Loc.T(L.Common.Cancel))
+            || (model.CanHandleEscape && ImGui.IsKeyPressed(ImGuiKey.Escape)))
+        {
+            ClearReply();
+        }
+    }
+
+    private void DrawImageBar(Rect area, string path, in ChatComposerModel model)
+    {
+        var ui = model.Ui;
+        var theme = ui.Theme;
+        var scale = UiScale.Current;
+        var drawList = ImGui.GetWindowDrawList();
+        drawList.AddRectFilled(area.Min, area.Max, ImGui.GetColorU32(BarFill));
+        drawList.AddLine(area.Min, new Vector2(area.Max.X, area.Min.Y), ImGui.GetColorU32(theme.Separator), 1f);
+        var pad = Metrics.Space.Sm * scale;
+        var tile = area.Height - pad * 2f;
+        var min = new Vector2(area.Min.X + 14f * scale, area.Min.Y + pad);
+        var max = min + new Vector2(tile, tile);
+        var rounding = Metrics.Radius.Sm * scale;
+        var texture = model.Thumbnails?.Get(path);
+        if (texture is null)
+        {
+            Squircle.Fill(drawList, min, max, rounding, ImGui.GetColorU32(theme.SurfaceMuted));
+        }
+        else
+        {
+            var (uv0, uv1) = ImageFit.CoverSquare(texture.Size);
+            drawList.AddImageRounded(texture.Handle, min, max, uv0, uv1, 0xFFFFFFFFu, rounding,
+                ImDrawFlags.RoundCornersAll);
+        }
+
+        if (GifMedia.IsGif(path))
+        {
+            GifBadge.Draw(drawList, new Rect(min, max));
+        }
+
+        var closeRadius = 13f * scale;
+        var closeCenter = new Vector2(area.Max.X - 14f * scale - closeRadius, area.Center.Y);
+        if (ui.IconButton(closeCenter, closeRadius, IconGlyph.Of(FontAwesomeIcon.Times), ui.MutedInk,
+                AppSkin.Transparent, 0.9f, Loc.T(L.Common.Cancel)))
+        {
+            pendingImage = null;
+        }
+    }
+
+    private void DrawEditBar(Rect area, in ChatComposerModel model)
+    {
+        var ui = model.Ui;
+        var theme = ui.Theme;
+        var scale = UiScale.Current;
+        var drawList = ImGui.GetWindowDrawList();
+        drawList.AddRectFilled(area.Min, area.Max, ImGui.GetColorU32(BarFill));
+        drawList.AddLine(area.Min, new Vector2(area.Max.X, area.Min.Y), ImGui.GetColorU32(theme.Separator), 1f);
+        var iconCenter = new Vector2(area.Min.X + 22f * scale, area.Center.Y);
+        AppSkin.Icon(iconCenter, IconGlyph.Of(FontAwesomeIcon.Pen), ui.Accent, 0.9f);
+        var textLeft = iconCenter.X + 16f * scale;
+        var closeRadius = 13f * scale;
+        var textWidth = area.Max.X - 20f * scale - closeRadius * 2f - textLeft;
+        Typography.Draw(new Vector2(textLeft, area.Min.Y + 7f * scale),
+            Typography.FitText(Loc.T(L.Message.EditingLabel), textWidth, 0.78f, FontWeight.SemiBold),
+            ui.Accent, 0.78f, FontWeight.SemiBold);
+        Typography.Draw(new Vector2(textLeft, area.Min.Y + 24f * scale),
+            Typography.FitText(editBarPreview, textWidth, 0.82f, FontWeight.Regular), ui.MutedInk, 0.82f);
+        var closeCenter = new Vector2(area.Max.X - 14f * scale - closeRadius, area.Center.Y);
+        if (ui.IconButton(closeCenter, closeRadius, IconGlyph.Of(FontAwesomeIcon.Times), ui.MutedInk,
+                AppSkin.Transparent, 0.9f, Loc.T(L.Common.Cancel))
+            || (model.CanHandleEscape && ImGui.IsKeyPressed(ImGuiKey.Escape)))
+        {
+            ClearEdit();
+        }
+    }
+}

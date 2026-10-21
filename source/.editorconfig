@@ -1,0 +1,152 @@
+root = true
+# top-most EditorConfig file
+
+[*]
+charset = utf-8
+
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+
+# 4 space indentation
+indent_style = space
+indent_size = 4
+
+[*.md]
+trim_trailing_whitespace = false
+
+[*.{yml,yaml,json}]
+indent_size = 2
+
+[*.cs]
+# File-scoped namespaces; matches existing codebase
+csharp_style_namespace_declarations = file_scoped:warning
+
+# Microsoft .NET properties
+csharp_indent_braces = false
+csharp_new_line_before_catch = true
+csharp_new_line_before_else = true
+csharp_new_line_before_finally = true
+csharp_new_line_before_members_in_object_initializers = false
+csharp_new_line_before_open_brace = all
+csharp_preferred_modifier_order = public, private, protected, internal, new, abstract, virtual, sealed, override, static, readonly, extern, unsafe, volatile, async:warning
+csharp_style_var_elsewhere = true:warning
+csharp_style_var_for_built_in_types = true:warning
+csharp_style_var_when_type_is_apparent = true:warning
+dotnet_code_quality_unused_parameters = non_public
+
+# House rules from docs/conventions.md, enforced by the build rather than by
+# review. Each line below replaces a rule that was previously only policed in
+# a pull request comment.
+
+# Braces on every if, else, and loop body, even a single-line one
+csharp_prefer_braces = true:warning
+
+# Explicit accessibility keywords on everything, including private members.
+# Interface members are excluded: the rule is about class members, and the tree
+# deliberately leaves interface declarations bare.
+dotnet_style_require_accessibility_modifiers = for_non_interface_members:warning
+
+# const and readonly wherever possible
+dotnet_style_readonly_field = true:warning
+
+# sealed by default: seal an internal type that has no subclass
+dotnet_diagnostic.CA1852.severity = warning
+
+# A blank line after a closing brace before the next statement
+dotnet_diagnostic.IDE2003.severity = warning
+
+# Unused usings are not gated. Inside a build this analyzer only reports when
+# GenerateDocumentationFile is on, which this tree never sets, so under
+# EnforceCodeStyleInBuild it was the single most expensive analyzer (a third of
+# all analyzer time on the main project) and could not fail anything. The
+# compiler only skips an analyzer when every id it owns is off, and this one
+# owns four.
+dotnet_diagnostic.IDE0005.severity = none
+dotnet_diagnostic.IDE0005_gen.severity = none
+dotnet_diagnostic.EnableGenerateDocumentationFile.severity = none
+dotnet_diagnostic.RemoveUnnecessaryImportsFixable.severity = none
+
+# Naming. Types, members and constants PascalCase; interfaces I prefixed;
+# locals, parameters and private fields camelCase with no underscore.
+# The per rule severities below only take effect once IDE1006 itself is raised,
+# otherwise the whole block is inert.
+dotnet_diagnostic.IDE1006.severity = warning
+dotnet_naming_style.pascal_case.capitalization = pascal_case
+dotnet_naming_style.camel_case.capitalization = camel_case
+dotnet_naming_style.i_prefixed.capitalization = pascal_case
+dotnet_naming_style.i_prefixed.required_prefix = I
+
+dotnet_naming_symbols.types.applicable_kinds = class, struct, enum, delegate
+dotnet_naming_symbols.types.applicable_accessibilities = *
+dotnet_naming_rule.types_are_pascal_case.symbols = types
+dotnet_naming_rule.types_are_pascal_case.style = pascal_case
+dotnet_naming_rule.types_are_pascal_case.severity = warning
+
+dotnet_naming_symbols.interfaces.applicable_kinds = interface
+dotnet_naming_symbols.interfaces.applicable_accessibilities = *
+dotnet_naming_rule.interfaces_are_i_prefixed.symbols = interfaces
+dotnet_naming_rule.interfaces_are_i_prefixed.style = i_prefixed
+dotnet_naming_rule.interfaces_are_i_prefixed.severity = warning
+
+dotnet_naming_symbols.members.applicable_kinds = method, property, event
+dotnet_naming_symbols.members.applicable_accessibilities = *
+dotnet_naming_rule.members_are_pascal_case.symbols = members
+dotnet_naming_rule.members_are_pascal_case.style = pascal_case
+dotnet_naming_rule.members_are_pascal_case.severity = warning
+
+# A const field is a table, so it stays PascalCase. This rule must sit above
+# the field rule below, because the first matching rule wins.
+dotnet_naming_symbols.constants.applicable_kinds = field
+dotnet_naming_symbols.constants.applicable_accessibilities = *
+dotnet_naming_symbols.constants.required_modifiers = const
+dotnet_naming_rule.constants_are_pascal_case.symbols = constants
+dotnet_naming_rule.constants_are_pascal_case.style = pascal_case
+dotnet_naming_rule.constants_are_pascal_case.severity = warning
+
+# Parameters only, not locals: a local const is PascalCase here and no analyzer
+# can tell it apart from an ordinary local.
+dotnet_naming_symbols.parameters.applicable_kinds = parameter
+dotnet_naming_rule.parameters_are_camel_case.symbols = parameters
+dotnet_naming_rule.parameters_are_camel_case.style = camel_case
+dotnet_naming_rule.parameters_are_camel_case.severity = warning
+
+# There is deliberately no naming rule for non public fields. A private static
+# readonly holding a lookup table is PascalCase here while one holding mutable
+# state is camelCase, and nothing in the symbol shape separates them, so any
+# capitalization rule fires on roughly a thousand correct names. The one part
+# that is checkable, the absence of a leading underscore, is a CI grep instead.
+
+# Surfaced but not gated. Each of these is either not a house rule or needs a
+# per-site behavior judgement, so it stays visible in an editor without failing
+# a build. Promote one to warning when its backlog is actually cleared.
+
+# 181 sites, mostly game renderer helpers. Not a documented house rule.
+dotnet_diagnostic.CA1822.severity = suggestion
+
+# 108 sites. Many are deliberate signature symmetry across renderers and draw
+# entry points, where dropping the parameter would break the uniform shape.
+dotnet_diagnostic.IDE0060.severity = suggestion
+
+# Moving a CancellationToken changes public signatures and every call site.
+dotnet_diagnostic.CA1068.severity = suggestion
+
+# Forwarding a token to Task.Run adds pre-start cancellation, a behavior change.
+dotnet_diagnostic.CA2016.severity = suggestion
+
+# Explicit CharSet changes how strings marshal across the P/Invoke boundary.
+dotnet_diagnostic.CA2101.severity = suggestion
+
+# Narrowing a return type to a concrete class changes public signatures.
+dotnet_diagnostic.CA1859.severity = suggestion
+
+[*.{appxmanifest,asax,ascx,aspx,axaml,axml,build,c,c++,cc,cginc,compute,config,cp,cpp,cs,cshtml,css,cu,cuh,cxx,h,hh,hlsl,hpp,htm,html,hxx,inc,inl,ino,ipp,js,json,jsproj,jsx,master,mpp,proj,props,proto,razor,resx,skin,targets,tasks,ts,tsx,vb,vbproj,xaml,xml,xsd}]
+indent_style = space
+indent_size = 4
+tab_width = 4
+
+[src/Aetherphone.Tests/**.cs]
+# An inline literal array is the clearest way to write an expected value, and a
+# test method runs once, so hoisting it to a static readonly field would trade
+# readability for a saving that does not exist here.
+dotnet_diagnostic.CA1861.severity = none

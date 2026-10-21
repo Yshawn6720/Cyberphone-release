@@ -1,0 +1,224 @@
+using Aetherphone.Core;
+using Aetherphone.Core.Animation;
+using Aetherphone.Core.Onboarding;
+using Aetherphone.Core.Theme;
+using Dalamud.Bindings.ImGui;
+using Dalamud.Interface;
+
+namespace Aetherphone.Windows.Components;
+
+internal readonly record struct NavTab(FontAwesomeIcon Icon, string Label, int Badge = 0, bool Raised = false,
+    string? AnchorKey = null, bool Disabled = false, string Glyph = "", string ActiveGlyph = "")
+{
+    public bool UsesPhoneGlyph => Glyph.Length > 0;
+
+    public string GlyphFor(bool active) => active && ActiveGlyph.Length > 0 ? ActiveGlyph : Glyph;
+}
+
+internal sealed class BottomTabBar
+{
+    public const float Height = 52f;
+    public const float LabelledHeight = 72f;
+
+    private const float LabelIconOffset = 26f;
+    private const float LabelBaseline = 25f;
+    private const float LabelIconScale = 1.18f;
+    private const float LabelActiveIconScale = 1.3f;
+    private const float LabelPillWidth = 54f;
+    private const float LabelPillHeight = 40f;
+    private const float HitRadius = 17f;
+    private const float RaisedRadius = 19f;
+    private const float PillWidth = 40f;
+    private const float PillHeight = 34f;
+    private const float PillAlpha = 0.10f;
+    private const float MaxFrameSeconds = 0.1f;
+    private const float IconScale = 1.2f;
+    private const float ActiveIconScale = 1.3f;
+    private const float PhoneGlyphSize = 26f;
+    private const float LabelledPhoneGlyphSize = 24f;
+
+    private Spring[] hover = Array.Empty<Spring>();
+
+    public int Draw(Rect bar, AppSkin ui, PhoneTheme theme, ReadOnlySpan<NavTab> tabs, int active,
+        bool showLabels = false, Vector4? activeInk = null)
+    {
+        if (tabs.Length == 0)
+        {
+            return -1;
+        }
+
+        if (hover.Length != tabs.Length)
+        {
+            hover = new Spring[tabs.Length];
+        }
+
+        var scale = UiScale.Current;
+        var drawList = ImGui.GetWindowDrawList();
+        drawList.AddLine(bar.Min, new Vector2(bar.Max.X, bar.Min.Y),
+            ImGui.GetColorU32(new Vector4(1f, 1f, 1f, 0.10f)), 1f);
+        var slot = bar.Width / tabs.Length;
+        var tapped = -1;
+        for (var index = 0; index < tabs.Length; index++)
+        {
+            var center = new Vector2(bar.Min.X + slot * (index + 0.5f), bar.Center.Y);
+            if (tabs[index].AnchorKey is { } anchorKey)
+            {
+                var half = new Vector2(HitRadius * scale, HitRadius * scale);
+                UiAnchors.Report(anchorKey, new Rect(center - half, center + half));
+            }
+
+            var picked = tabs[index].Raised
+                ? DrawRaised(drawList, ui, tabs[index], center, index, scale)
+                : showLabels
+                    ? DrawLabelledTab(drawList, ui, theme, tabs[index], bar, slot, index, index == active, scale)
+                    : DrawTab(ui, theme, tabs[index], center, index, index == active, scale, activeInk);
+            if (picked)
+            {
+                tapped = index;
+            }
+        }
+
+        return tapped;
+    }
+
+    private bool DrawLabelledTab(ImDrawListPtr drawList, AppSkin ui, PhoneTheme theme, in NavTab tab, Rect bar,
+        float slot, int index, bool active, float scale)
+    {
+        var cellMin = new Vector2(bar.Min.X + slot * index, bar.Min.Y);
+        var cellMax = new Vector2(cellMin.X + slot, bar.Max.Y);
+        if (tab.Disabled)
+        {
+            var dimInk = Palette.WithAlpha(ui.MutedInk, 0.35f);
+            var disabledIconCenter = new Vector2((cellMin.X + cellMax.X) * 0.5f, cellMin.Y + LabelIconOffset * scale);
+            AppSkin.Icon(drawList, disabledIconCenter, IconGlyph.Of(tab.Icon), dimInk, LabelIconScale);
+            var disabledStyle = TextStyles.Footnote;
+            var disabledLabel = Typography.FitText(tab.Label, slot - 6f * scale, disabledStyle);
+            Typography.DrawCentered(drawList,
+                new Vector2(disabledIconCenter.X, disabledIconCenter.Y + LabelBaseline * scale), disabledLabel,
+                dimInk, disabledStyle);
+            HoverTooltip.Show(new Rect(cellMin, cellMax), tab.Label, HoverLabelSide.Above);
+            return false;
+        }
+
+        var hovered = UiInteract.Hover(cellMin, cellMax);
+        var delta = MathF.Min(ImGui.GetIO().DeltaTime, MaxFrameSeconds);
+        hover[index].Step(hovered ? 1f : 0f, Motion.HoverLift, delta);
+        var iconCenter = new Vector2((cellMin.X + cellMax.X) * 0.5f, cellMin.Y + LabelIconOffset * scale);
+        DrawLabelPill(drawList, ui, iconCenter, Math.Clamp(hover[index].Value, 0f, 1f), scale);
+
+        var pressed = hovered && ImGui.IsMouseDown(ImGuiMouseButton.Left);
+        var press = PressFx.Scale(tab.Label, pressed, PressFx.ControlPressedScale);
+        var ink = active ? ui.Accent : hovered ? ui.TitleInk : ui.MutedInk;
+        if (tab.UsesPhoneGlyph)
+        {
+            PhoneIcon.Draw(drawList, iconCenter, tab.GlyphFor(active), ink, LabelledPhoneGlyphSize * scale * press);
+        }
+        else
+        {
+            AppSkin.Icon(drawList, iconCenter, IconGlyph.Of(tab.Icon), ink,
+                (active ? LabelActiveIconScale : LabelIconScale) * press);
+        }
+
+        var style = active ? TextStyles.FootnoteEmphasized : TextStyles.Footnote;
+        var label = Typography.FitText(tab.Label, slot - 6f * scale, style);
+        Typography.DrawCentered(drawList, new Vector2(iconCenter.X, iconCenter.Y + LabelBaseline * scale), label, ink,
+            style);
+        ActivityBadge.Draw(iconCenter + new Vector2(13f * scale, -10f * scale), tab.Badge, theme, scale);
+        HoverTooltip.Show(new Rect(cellMin, cellMax), tab.Label, HoverLabelSide.Above);
+        if (hovered)
+        {
+            ImGui.SetMouseCursor(ImGuiMouseCursor.Hand);
+        }
+
+        return UiInteract.Click(cellMin, cellMax, hovered);
+    }
+
+    private static void DrawLabelPill(ImDrawListPtr drawList, AppSkin ui, Vector2 center, float amount, float scale)
+    {
+        if (amount <= 0.001f)
+        {
+            return;
+        }
+
+        var grow = 0.86f + 0.14f * amount;
+        var half = new Vector2(LabelPillWidth * 0.5f * scale * grow, LabelPillHeight * 0.5f * scale * grow);
+        var tint = Palette.WithAlpha(ui.HoverTint, PillAlpha * amount);
+        Squircle.Fill(drawList, center - half, center + half, half.Y * 0.6f, ImGui.GetColorU32(tint));
+    }
+
+    private bool DrawTab(AppSkin ui, PhoneTheme theme, in NavTab tab, Vector2 center, int slot, bool active,
+        float scale, Vector4? activeInk)
+    {
+        if (tab.Disabled)
+        {
+            var hit = new Vector2(HitRadius * scale, HitRadius * scale);
+            AppSkin.Icon(center, IconGlyph.Of(tab.Icon), Palette.WithAlpha(ui.MutedInk, 0.35f), IconScale);
+            HoverTooltip.Show(new Rect(center - hit, center + hit), tab.Label, HoverLabelSide.Above);
+            return false;
+        }
+
+        DrawHoverPill(ui, center, StepHover(slot, center, HitRadius * scale), scale);
+        var ink = active ? activeInk ?? ui.TitleInk : ui.MutedInk;
+        var picked = tab.UsesPhoneGlyph
+            ? DrawPhoneGlyphTab(tab, center, ink, active, scale)
+            : ui.IconButton(center, HitRadius * scale, IconGlyph.Of(tab.Icon), ink, AppSkin.Transparent,
+                active ? ActiveIconScale : IconScale, tab.Label);
+        ActivityBadge.Draw(center + new Vector2(11f * scale, -10f * scale), tab.Badge, theme, scale);
+        return picked;
+    }
+
+    private static bool DrawPhoneGlyphTab(in NavTab tab, Vector2 center, Vector4 ink, bool active, float scale)
+    {
+        var hit = new Vector2(HitRadius * scale, HitRadius * scale);
+        var hovered = UiInteract.Hover(center - hit, center + hit);
+        PhoneIcon.Draw(ImGui.GetWindowDrawList(), center, tab.GlyphFor(active), ink, PhoneGlyphSize * scale);
+        HoverTooltip.Show(new Rect(center - hit, center + hit), tab.Label, HoverLabelSide.Above);
+        if (hovered)
+        {
+            ImGui.SetMouseCursor(ImGuiMouseCursor.Hand);
+        }
+
+        return UiInteract.Click(center - hit, center + hit, hovered);
+    }
+
+    private bool DrawRaised(ImDrawListPtr drawList, AppSkin ui, in NavTab tab, Vector2 center, int slot, float scale)
+    {
+        var radius = RaisedRadius * scale;
+        var half = new Vector2(radius, radius);
+        var hovered = UiInteract.Hover(center - half, center + half);
+        var grow = 1f + 0.06f * StepHover(slot, center, radius);
+        var fill = hovered ? Palette.Mix(ui.Accent, new Vector4(1f, 1f, 1f, 1f), 0.12f) : ui.Accent;
+        Elevation.Floating(drawList, center - half, center + half, radius, scale, 0.55f);
+        drawList.AddCircleFilled(center, radius * grow, ImGui.GetColorU32(fill), 40);
+        AppSkin.Icon(drawList, center, IconGlyph.Of(tab.Icon), new Vector4(0.11f, 0.08f, 0.02f, 1f), 1.05f);
+        HoverTooltip.Show(new Rect(center - half, center + half), tab.Label, HoverLabelSide.Above);
+        if (hovered)
+        {
+            ImGui.SetMouseCursor(ImGuiMouseCursor.Hand);
+        }
+
+        return UiInteract.Click(center - half, center + half, hovered);
+    }
+
+    private float StepHover(int slot, Vector2 center, float radius)
+    {
+        var half = new Vector2(radius, radius);
+        var hovered = UiInteract.Hover(center - half, center + half);
+        var delta = MathF.Min(ImGui.GetIO().DeltaTime, MaxFrameSeconds);
+        hover[slot].Step(hovered ? 1f : 0f, Motion.HoverLift, delta);
+        return Math.Clamp(hover[slot].Value, 0f, 1f);
+    }
+
+    private static void DrawHoverPill(AppSkin ui, Vector2 center, float amount, float scale)
+    {
+        if (amount <= 0.001f)
+        {
+            return;
+        }
+
+        var grow = 0.86f + 0.14f * amount;
+        var half = new Vector2(PillWidth * 0.5f * scale * grow, PillHeight * 0.5f * scale * grow);
+        var tint = Palette.WithAlpha(ui.HoverTint, PillAlpha * amount);
+        Squircle.Fill(ImGui.GetWindowDrawList(), center - half, center + half, half.Y, ImGui.GetColorU32(tint));
+    }
+}

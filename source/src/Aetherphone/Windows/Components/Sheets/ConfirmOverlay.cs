@@ -1,0 +1,119 @@
+using Aetherphone.Core;
+using Aetherphone.Core.Animation;
+using Aetherphone.Core.Confirm;
+using Aetherphone.Core.Theme;
+using Dalamud.Bindings.ImGui;
+using Dalamud.Interface.Utility.Raii;
+
+namespace Aetherphone.Windows.Components;
+
+internal sealed class ConfirmOverlay
+{
+    private const ImGuiWindowFlags OverlayFlags = ImGuiWindowFlags.NoScrollbar | ImGuiWindowFlags.NoScrollWithMouse |
+                                                  ImGuiWindowFlags.NoBackground | ImGuiWindowFlags.NoInputs;
+
+    private const float MaxDim = 0.55f;
+    private const float MinCardScale = 0.92f;
+    private readonly ConfirmService service;
+    private readonly int host;
+    private Spring reveal;
+    private ConfirmRequest? shown;
+    private ConfirmRequest? armedRequest;
+    private int openedFrame;
+
+    public ConfirmOverlay(ConfirmService service, int host = ConfirmHosts.Phone)
+    {
+        this.service = service;
+        this.host = host;
+    }
+
+    public bool CapturesPointer => Owned is not null || !reveal.IsResting(0f, 0.001f, 0.005f);
+
+    private ConfirmRequest? Owned => service.Active is { } request && request.Host == host ? request : null;
+
+    public void CancelActive()
+    {
+        if (Owned is null)
+        {
+            return;
+        }
+
+        service.CancelActive();
+    }
+
+    public void Draw(Rect screen, PhoneTheme theme)
+    {
+        var active = Owned;
+        if (active is not null)
+        {
+            shown = active;
+            if (!ReferenceEquals(active, armedRequest))
+            {
+                armedRequest = active;
+                openedFrame = ImGui.GetFrameCount();
+            }
+        }
+        else
+        {
+            armedRequest = null;
+        }
+
+        var delta = MathF.Min(ImGui.GetIO().DeltaTime, TransitionTiming.MaxFrameSeconds);
+        var target = active is not null ? 1f : 0f;
+        reveal.Step(target, Motion.Sheet, delta);
+        if (shown is null)
+        {
+            return;
+        }
+
+        if (active is null && reveal.IsResting(0f, 0.001f, 0.005f))
+        {
+            reveal.SnapTo(0f);
+            shown = null;
+            return;
+        }
+
+        var opacity = Math.Clamp(reveal.Value, 0f, 1f);
+        var cardScale = MinCardScale + (1f - MinCardScale) * opacity;
+        ImGui.SetCursorScreenPos(screen.Min);
+        using (ImRaii.Child("##confirmOverlay", screen.Size, false, OverlayFlags))
+        {
+            var drawList = ImGui.GetWindowDrawList();
+            drawList.AddRectFilled(screen.Min, screen.Max,
+                ImGui.GetColorU32(new Vector4(0f, 0f, 0f, MaxDim * opacity)));
+            Rect cardRect;
+            bool canceled;
+            bool confirmed;
+            if (shown.Sheet && shown.Sections is null && !shown.Acknowledge)
+            {
+                ConfirmDialog.DrawSheet(screen, theme, shown.Title, shown.Message, shown.ConfirmLabel,
+                    shown.CancelLabel, shown.BusyLabel ?? shown.ConfirmLabel, service.Busy, service.Status,
+                    shown.Danger, opacity, out cardRect, out canceled, out confirmed);
+            }
+            else
+            {
+                ConfirmDialog.Draw(screen, theme, shown.Title, shown.Message, shown.Sections, shown.ConfirmLabel,
+                    shown.CancelLabel, shown.BusyLabel ?? shown.ConfirmLabel, service.Busy, service.Status,
+                    shown.Danger, shown.Acknowledge, opacity, cardScale, out cardRect, out canceled, out confirmed);
+            }
+            if (active is null || opacity <= 0.5f)
+            {
+                return;
+            }
+
+            if (confirmed)
+            {
+                service.Proceed();
+            }
+            else if (canceled)
+            {
+                service.CancelActive();
+            }
+            else if (!service.Busy && ImGui.GetFrameCount() != openedFrame &&
+                     UiInteract.ClickedOutside(cardRect.Min, cardRect.Max))
+            {
+                service.CancelActive();
+            }
+        }
+    }
+}

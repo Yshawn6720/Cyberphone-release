@@ -1,0 +1,1980 @@
+using Aetherphone.Core;
+using Aetherphone.Core.Aethernet;
+using Aetherphone.Core.Aethernet.Clients;
+using Aetherphone.Core.Aethernet.Contracts;
+using Aetherphone.Core.Animation;
+using Aetherphone.Core.Apps;
+using Aetherphone.Core.Conduct;
+using Aetherphone.Core.Confirm;
+using Aetherphone.Core.Crypto;
+using Aetherphone.Core.Game;
+using Aetherphone.Core.Home;
+using Aetherphone.Core.Honorific;
+using Aetherphone.Core.Localization;
+using Aetherphone.Core.Lodestone;
+using Aetherphone.Core.Media;
+using Aetherphone.Core.Net;
+using Aetherphone.Core.Notifications;
+using Aetherphone.Core.Onboarding;
+using Aetherphone.Core.Photos;
+using Aetherphone.Core.Report;
+using Aetherphone.Core.Runtime;
+using Aetherphone.Core.Sharing;
+using Aetherphone.Core.Social;
+using Aetherphone.Core.Theme;
+using Aetherphone.Core.Translation;
+using Aetherphone.Core.Wallpapers;
+using Aetherphone.Windows;
+using Aetherphone.Windows.Components;
+using Dalamud.Bindings.ImGui;
+using Dalamud.Interface;
+using Dalamud.Interface.Utility.Raii;
+
+namespace Aetherphone.Apps.Aethergram;
+
+internal sealed partial class AethergramApp : IResumableApp, ITabIconDrawer, INameplateHandleSource
+{
+    private enum PostSheetAction
+    {
+        View,
+        Edit,
+        Pin,
+        Unpin,
+        Archive,
+        Restore,
+        Delete,
+        Follow,
+        RemoveTag,
+        Report,
+        Block,
+    }
+
+    private enum PostNotice
+    {
+        None,
+        Replace,
+        PinFailed,
+        UnpinFailed,
+        Pinned,
+        Unpinned,
+        Archived,
+        Unarchived,
+        ArchiveFailed,
+        UnarchiveFailed,
+        TagApproved,
+        TagRemoved,
+        TagApproveFailed,
+        TagRemoveFailed,
+    }
+
+    private const int MaxCaptionLength = 500;
+    private const int MaxPhotoTags = 20;
+    private const int MaxCommentLength = 500;
+    private const int FeedCaptionMaxLines = 2;
+    private const int NavTabCount = 4;
+    private const int FilterToggleCount = 3;
+    private const float TopBarIconSize = 26f;
+    private const float LogoSize = 30f;
+    private const float LogoGap = 10f;
+    private const float FeedTabRowHeight = 44f;
+    private const float FeedTabUnderline = 2f;
+    private const float FabRadius = 27f;
+    private const float CardPadTop = 10f;
+    private const float CardPadBottom = 12f;
+    private const float CardAvatarRadius = 16f;
+    private const float CardRingGap = 3f;
+    private const float CardHeaderBlock = 36f;
+    private const float CardBannerGap = 6f;
+    private const float LatestScopeRowHeight = 40f;
+    private const float LatestScopePillGap = 8f;
+    private const float CardNameGap = 10f;
+    private const float CardMediaGap = 8f;
+    private const float CardMoreRadius = 16f;
+    private const float CardActionsHeight = 44f;
+    private const float CardActionIconSize = 24f;
+    private const float CardActionInset = 12f;
+    private const float CardActionGap = 18f;
+    private const float CardCountGap = 6f;
+    private const float CardTextGap = 2f;
+    private const float CardLineGap = 4f;
+    private const float CardCaptionScale = 0.95f;
+    private const int GridColumns = 3;
+    private const int PostSheetMaxItems = 5;
+    private const int MaxPinnedPosts = 3;
+    private const float CardPinGlyphSize = 12f;
+    private const float CardPinGlyphGap = 3f;
+    private const float TagPromptPad = 12f;
+    private const float TagPromptIconSize = 18f;
+    private const float TagPromptIconGap = 8f;
+    private const float TagPromptTitleGap = 2f;
+    private const float TagPromptRowGap = 10f;
+    private const float TagPromptPillHeight = Button.SmallHeight;
+    private const float TagPromptPillWidth = 88f;
+    private const float TagPromptPillGap = 8f;
+
+    public string Id => "aethergram";
+    public Vector4 Accent => AppAccents.For(Id);
+    public string DisplayName => Loc.T(L.Apps.Aethergram);
+
+    public NameplateStatus TagStatus => NameplateStatus.Aethergram;
+
+    public string ResolveNameplateHandle()
+    {
+        store.EnsureMe();
+        return store.Me?.Handle ?? string.Empty;
+    }
+    public string Glyph => "Ag";
+    public int BadgeCount => dmStore.UnreadCount + social.UnseenCount(Id);
+    public bool HasBadge => true;
+    public ShareKindSet AcceptedShares => store.IsSignedIn ? ShareKindSet.Photo : ShareKindSet.None;
+    private static readonly TextStyle CardNameStyle = TextStyles.Headline;
+    private static readonly TextStyle CardMetaStyle = TextStyles.Subheadline;
+    private static readonly TextStyle CardCountStyle = TextStyles.SubheadlineEmphasized;
+    private static readonly TextStyle CardLinkStyle = TextStyles.Subheadline;
+    private static readonly TextStyle CardTimeStyle = TextStyles.Footnote;
+    private static readonly TextStyle WordmarkStyle = TextStyles.Title2;
+    private static readonly TextStyle FeedTabStyle = TextStyles.Headline;
+    private static readonly TextStyle FeedTabIdleStyle = TextStyles.BodyEmphasized;
+    private static readonly UnderlineTabStyle StandardFeedTabs = FeedTabsStyleFor(AethergramInk.Standard);
+    private static readonly UnderlineTabStyle BloodMoonFeedTabs = FeedTabsStyleFor(AethergramInk.BloodMoon);
+
+    private static UnderlineTabStyle FeedTabsStyle => SeasonalTheme.Halloween ? BloodMoonFeedTabs : StandardFeedTabs;
+
+    private readonly Dictionary<SocialFeedScope, PullToRefresh> pullToRefresh = new()
+    {
+        { SocialFeedScope.ForYou, new() },
+        { SocialFeedScope.Latest, new() },
+        { SocialFeedScope.Following, new() }
+    };
+    private readonly InfoSheet feedExplainer = new();
+    private readonly string[] feedExplainerParagraphs = new string[4];
+    private readonly AethergramStore store;
+    private readonly GramDmStore dmStore;
+    private readonly AccountClient account;
+    private readonly SocialLauncher launcher;
+    private readonly GramDmLauncher dmLauncher;
+    private readonly GameData gameData;
+    private readonly Configuration configuration;
+    private readonly LodestoneService lodestone;
+    private readonly PhotoLibrary library;
+    private readonly RemoteImageCache images;
+    private readonly HttpService http;
+    private readonly SocialNotificationService social;
+    private readonly ConductGateService conduct;
+    private readonly ConfirmService confirm;
+    private readonly TranslationService translation;
+    private readonly ReportService report;
+    private readonly WallpaperImageCache wallpaperImages;
+    internal readonly EncryptionHelpService encryptionHelp;
+    private readonly ActionSheet postSheet = new();
+    private Spring tabSegment;
+    private readonly FeedFilterSheet filterSheet = new();
+    private readonly string[] filterLabels = new string[FilterToggleCount];
+    private string cardTimestampPostId = string.Empty;
+    private string cardTimestamp = string.Empty;
+    private long? cardTimestampEditedAt;
+    private readonly ActionSheet.Item[] postSheetItems = new ActionSheet.Item[PostSheetMaxItems];
+    private readonly PostSheetAction[] postSheetActions = new PostSheetAction[PostSheetMaxItems];
+    private int postSheetCount;
+    private string postSheetTitle = string.Empty;
+    private volatile PostNotice pendingPostNotice;
+    private string pendingNoticePostId = string.Empty;
+    private bool pendingNoticeLeavesDetail;
+    private readonly ScreenToast toast = new();
+    private readonly Action<NotificationDto> openActivityActor;
+    private readonly Action<NotificationDto> openActivityPost;
+    private readonly SocialActivityFeed activityFeed;
+    private readonly Action loadOlderActivity;
+    private PostDto? sheetPost;
+    private readonly StoryPresenter stories;
+    private readonly PhotoViewerOverlay photoViewer = new();
+    private readonly AvatarLightbox avatarLightbox = new();
+    private readonly PhotoCarousel carousel = new();
+    private readonly DoubleTapLike doubleTapLike = new();
+    private readonly DeferredTap pendingPhotoTap = new();
+    private readonly AppSkin ui = new(AppPalettes.Aethergram);
+    private readonly TabBar tabBar = new();
+    private readonly TabItem[] tabItems = new TabItem[NavTabCount];
+    private readonly SocialProfilePages profile;
+    private readonly RichTextCache bodyLayouts = new(scanHashtags: true);
+    private readonly FeedVirtualizer feedVirtualizer = new(400f);
+    private readonly RichTextCache commentLayouts = new(scanHashtags: true);
+    private readonly HashSet<string> expandedCaptions = new(StringComparer.Ordinal);
+    private readonly MentionPopup mentionPopup = new();
+    private readonly EmojiComposer commentEmoji = new();
+    private readonly EmojiComposer captionEmoji = new();
+    private readonly MentionAutocomplete composeMentions;
+    private readonly MentionAutocomplete commentMentions;
+    private readonly ViewRouter<AethergramRoute> router;
+    private readonly RouterDraw<AethergramRoute> drawView;
+    private readonly Action back;
+    private PhoneTheme theme = PhoneTheme.Default;
+    private INavigator navigation = null!;
+    private AethergramTab activeTab = AethergramTab.Home;
+    private SocialFeedScope activeScope = SocialFeedScope.ForYou;
+    private SocialFeedScope latestScope = SocialFeedScope.Latest;
+    private bool feedScrollTopPending;
+    private bool feedActionsAnchorPending;
+    private bool commentFocusPending;
+    private readonly PhotoComposeSession composeSession;
+    private readonly ImageIntake composeIntake = new();
+    private bool composeAvatarMode;
+    private bool composeStoryMode;
+    private string? pendingSharedPhoto;
+    private int profileTab;
+    private bool composeTagMode;
+    private int composeTagPhotoIndex;
+    private Vector2 composeTagPoint;
+    private readonly List<PhotoTagDto> composeTags = new();
+    private readonly PhotoTagOverlay tagOverlay = new();
+    private volatile string? tagDecisionPostId;
+    private readonly PersonPicker personPicker;
+    private string caption = string.Empty;
+    private bool composeSensitive;
+    private bool captionFocus;
+    private bool captionTyping;
+    private readonly FailureSlot feedFailure = new();
+    private readonly FailureSlot commentFailure = new();
+    private string? commentRestore;
+    private readonly CommentAttachment commentAttachment = new();
+    private string? commentAttachmentRestore;
+    private string composeStatus = string.Empty;
+    private volatile int composeOutcome;
+    private string commentDraft = string.Empty;
+    private string hashtagTitle = string.Empty;
+    private string hashtagTitleTag = string.Empty;
+    private readonly ActionSheet inboxRowSheet = new();
+    private readonly CancellationTokenSource settingsCancellation = new();
+    private readonly HashSet<string> shareSentUserIds = new(StringComparer.Ordinal);
+    private string shareSearchDraft = string.Empty;
+    private readonly ThreadView threadView;
+
+    public AethergramApp(AethernetSession session, AethernetApi net, LodestoneService lodestone,
+        RemoteImageCache images, PhotoLibrary library, SocialLauncher launcher, GramDmLauncher dmLauncher,
+        GameData gameData, Configuration configuration, SocialNotificationService social,
+        NotificationService notifications, HttpService http, KeyVault keyVault,
+        ConversationKeyStore conversationKeys, DecryptedHistoryStore chatHistory,
+        PhoneVisibility visibility, RealtimeSignalBus realtimeSignals,
+        WallpaperImageCache wallpaperImages, ConfirmService confirm, TranslationService translation,
+        ReportService report, ConductGateService conduct,
+        AppInstaller installer, EncryptionHelpService encryptionHelp)
+    {
+        this.translation = translation;
+        store = new AethergramStore(session, net.Account, net.Social, net.Grams, net.Safety, net.Media, realtimeSignals);
+        store.SetFeedRegions(SocialRegion.FilterCsv(configuration.AethergramFeedRegionMask));
+        store.SetFeedSensitive(configuration.AethergramShowSensitivePosts, activeScope);
+        account = net.Account;
+        dmStore = new GramDmStore(session, net.GramDm, net.Social, net.Safety, net.Media, notifications, keyVault,
+            conversationKeys, chatHistory, visibility, realtimeSignals, installer);
+        composeMentions = new MentionAutocomplete(store.NewMentionSuggestions());
+        commentMentions = new MentionAutocomplete(store.NewMentionSuggestions());
+        editPostMentions = new MentionAutocomplete(store.NewMentionSuggestions());
+        editPostPreviewPage = DrawEditPostPreviewPage;
+        personPicker = new PersonPicker(store.NewMentionSuggestions());
+        stories = new StoryPresenter(session, net.Grams, net.Media, images, lodestone, AethergramArt.StoryRing,
+            AppPalettes.Aethergram, new StoryConfirmLabels(L.Aethergram.DeleteConfirm, L.Aethergram.DeleteCancel,
+                L.Aethergram.Saving), confirm, translation, realtimeSignals, "Aethergram stories", StartStoryCompose,
+            new StoryReplyHooks(L.Aethergram.ReplyToStory, dmStore.SendStoryReply, OpenThread), OpenProfile);
+        this.launcher = launcher;
+        this.dmLauncher = dmLauncher;
+        this.gameData = gameData;
+        this.configuration = configuration;
+        this.lodestone = lodestone;
+        this.library = library;
+        composeSession = new PhotoComposeSession(library, wallpaperImages);
+        composeEditBack = composeSession.EditBack;
+        composeCaptionBack = composeSession.CaptionBack;
+        composeExitTagMode = ExitTagMode;
+        this.images = images;
+        this.http = http;
+        this.social = social;
+        this.conduct = conduct;
+        this.confirm = confirm;
+        this.report = report;
+        this.wallpaperImages = wallpaperImages;
+        this.encryptionHelp = encryptionHelp;
+        activityFeed = new SocialActivityFeed(SocialActivity.AethergramApp, session, net.Account);
+        loadOlderActivity = activityFeed.LoadOlder;
+        router = new ViewRouter<AethergramRoute>(AethergramRoute.Home);
+        drawView = DrawView;
+        back = () => router.Pop();
+        openActivityActor = item => OpenProfile(item.ActorId);
+        openActivityPost = item => OpenDetailFromLink(item.PostId!);
+        profile = new SocialProfilePages(store, new SocialProfileStyle
+        {
+            Saving = L.Aethergram.Saving,
+            DeleteConfirmMessage = L.Aethergram.DeleteConfirmMessage,
+            DeleteConfirm = L.Aethergram.DeleteConfirm,
+            DeleteCancel = L.Aethergram.DeleteCancel,
+            DeleteFailed = L.Aethergram.DeleteFailed,
+            DeleteCommentConfirmMessage = L.Aethergram.DeleteCommentConfirmMessage,
+            DeleteCommentFailed = L.Aethergram.DeleteCommentFailed,
+            RemoveCommentConfirmMessage = L.Aethergram.RemoveCommentConfirmMessage,
+        }, confirm, report);
+        threadView = new ThreadView(this);
+    }
+
+    public void OnOpened()
+    {
+        router.Reset();
+        activeTab = AethergramTab.Home;
+        avatarLightbox.Reset();
+        caption = string.Empty;
+        composeSensitive = false;
+        commentDraft = string.Empty;
+        shareSearchDraft = string.Empty;
+        shareSentUserIds.Clear();
+        store.ClearDiscover();
+        introSwarmPending = intro.Begin(Id);
+        RefreshAndConsumeLaunch();
+    }
+
+    public void OnResumed()
+    {
+        RefreshAndConsumeLaunch();
+    }
+
+    private void RefreshAndConsumeLaunch()
+    {
+        if (store.IsSignedIn)
+        {
+            RestoreFeedScope();
+            store.RefreshFeed(SocialFeedScope.ForYou);
+            store.RefreshFeed(latestScope);
+            stories.RefreshTray();
+        }
+
+        if (store.IsSignedIn && dmLauncher.TryConsume(out var threadUserId, out var threadDraft))
+        {
+            ShowLaunchedThread(threadUserId);
+            if (!string.IsNullOrEmpty(threadDraft))
+            {
+                threadView.PrefillDraft(threadDraft);
+            }
+
+            return;
+        }
+
+        if (store.IsSignedIn && launcher.TryConsume(Id, out var link))
+        {
+            if (link.Kind == SocialLinkKind.Profile)
+            {
+                OpenProfile(link.Id);
+            }
+            else if (link.Kind == SocialLinkKind.Requests)
+            {
+                social.MarkSeen(Id);
+                OpenFollowRequests();
+            }
+            else
+            {
+                OpenDetailFromLink(link.Id);
+            }
+        }
+    }
+
+    private void ShowLaunchedThread(string userId)
+    {
+        var target = AethergramRoute.Thread(userId);
+        if (router.Current == target)
+        {
+            return;
+        }
+
+        router.Reset();
+        ResetInboxState();
+        router.Push(AethergramRoute.Inbox, false);
+        router.Push(target, false);
+    }
+
+    public void OnClosed()
+    {
+        store.FlushFeedSignals();
+        threadView.OnAppClosed();
+        stories.Close();
+    }
+
+    public void Draw(in PhoneContext context)
+    {
+        using var names = UserName.Style(SeasonalTheme.BlackletterNames);
+        using var tapGlow = TapGlow.Use(SeasonalTheme.Halloween, GlowInk);
+        dmStore.NoteInboxWatched();
+        theme = context.Theme;
+        navigation = context.Navigation;
+        ui.Theme = theme;
+        SyncSeason();
+        postSheet.Gate();
+        filterSheet.Gate();
+        feedExplainer.Gate();
+        commentSheet.Gate();
+        profileMenu.Gate();
+        profileActionSheet.Gate();
+        inboxRowSheet.Gate();
+        threadView.GateMenus();
+        var screen = SceneChrome.ScreenFrom(context.Content, theme, UiScale.Current);
+        screenRect = screen;
+        ui.Backdrop(screen);
+        ConsumeSharedPhoto();
+        AdvancePendingPhotoView();
+        stories.Advance();
+        if (photoViewer.Active)
+        {
+            photoViewer.Draw(screen, theme);
+            return;
+        }
+
+        if (stories.Active)
+        {
+            stories.DrawViewer(screen, theme);
+            return;
+        }
+
+        DrawNight(screen, context.Content.Min.Y);
+        using (InputShield.Engage(avatarLightbox.Expanded))
+        using (intro.FadeContent())
+        {
+            router.Draw(SceneChrome.AppAreaFrom(context.Content, theme, UiScale.Current), AppSkin.Transparent,
+                ImGui.GetIO().DeltaTime, drawView);
+        }
+
+        UpdateTourHold();
+        if (avatarLightbox.Active)
+        {
+            avatarLightbox.Draw(screen, theme);
+        }
+
+        DrawFilterSheet(screen);
+        DrainPostNotices();
+        DrawPostSheet(screen);
+        DrawFeedExplainer(screen);
+        DrawCommentSheet(screen);
+        DrawProfileMenu(screen);
+        DrawProfileActionSheet(screen);
+        DrawInboxRowSheet(screen);
+        DrawFlights(screen);
+        toast.Draw(screen, ScreenToastStyle.From(ui));
+    }
+
+    private void DrawView(AethergramRoute route, Rect area, int depth)
+    {
+        if (router.IsTransitioning)
+        {
+            ui.Body(area);
+            DrawNight(screenRect, area.Min.Y);
+        }
+
+        switch (route.Screen)
+        {
+            case AethergramScreen.Compose:
+                DrawCompose(area);
+                break;
+            case AethergramScreen.Detail:
+                DrawDetail(area, route.Id!);
+                break;
+            case AethergramScreen.Posts:
+                DrawPosts(area, route.Id!, route.Source);
+                break;
+            case AethergramScreen.Profile:
+                DrawProfile(area, route.Id!);
+                break;
+            case AethergramScreen.EditProfile:
+                DrawEditProfile(area);
+                break;
+            case AethergramScreen.EditPost:
+                DrawEditPost(area);
+                break;
+            case AethergramScreen.UserList:
+                DrawUserList(area, route.Id!, route.Kind);
+                break;
+            case AethergramScreen.Inbox:
+                DrawInbox(area);
+                break;
+            case AethergramScreen.InboxArchived:
+                DrawInboxArchived(area);
+                break;
+            case AethergramScreen.NewMessage:
+                DrawNewMessage(area);
+                break;
+            case AethergramScreen.Thread:
+                threadView.Draw(ChatArea(area), route.Id!, depth == router.Depth);
+                break;
+            case AethergramScreen.ChatImage:
+                threadView.DrawImagePicker(ChatArea(area), route.Id!);
+                break;
+            case AethergramScreen.ImageView:
+                threadView.DrawImageViewer(ChatArea(area), route.Id!);
+                break;
+            case AethergramScreen.Reactions:
+                threadView.DrawReactions(ChatArea(area), route.Id!);
+                break;
+            case AethergramScreen.Settings:
+                DrawSettings(area);
+                break;
+            case AethergramScreen.Share:
+                DrawShare(area, route.Id!);
+                break;
+            case AethergramScreen.FollowRequests:
+                DrawFollowRequests(area);
+                break;
+            case AethergramScreen.Saved:
+                DrawSaved(area);
+                break;
+            case AethergramScreen.Liked:
+                DrawLiked(area);
+                break;
+            case AethergramScreen.Encryption:
+                threadView.DrawEncryptionScreen(ChatArea(area));
+                break;
+            case AethergramScreen.Archive:
+                DrawArchive(area);
+                break;
+            case AethergramScreen.Hashtag:
+                DrawHashtag(area, route.Id!);
+                break;
+            case AethergramScreen.Activity:
+                DrawActivity(area);
+                break;
+            case AethergramScreen.BadgeProgress:
+                DrawBadgeProgress(area);
+                break;
+            default:
+                DrawRoot(area);
+                break;
+        }
+
+        SocialSeason.OfferTreat(screenRect, area, depth, TreatSpot.AethergramFeed, TreatSpot.AethergramDeep,
+            AppHeader.Height);
+    }
+
+    private Rect ChatArea(Rect area)
+    {
+        var sidePadding = theme.SidePadding * UiScale.Current;
+        return new Rect(new Vector2(area.Min.X + sidePadding, area.Min.Y),
+            new Vector2(area.Max.X - sidePadding, area.Max.Y));
+    }
+
+    private void DrawRoot(Rect area)
+    {
+        var scale = UiScale.Current;
+        if (!store.IsSignedIn)
+        {
+            DrawHomeTopBar(area);
+            var body = new Rect(new Vector2(area.Min.X, area.Min.Y + AppHeader.Height * scale), area.Max);
+            if (EmptyState.Draw(body, ui, PhoneIcons.User, DisplayName, Loc.T(L.Aethergram.SetUpAccount),
+                    Loc.T(L.Aethergram.OpenSettings)))
+            {
+                navigation.Open("settings");
+            }
+
+            return;
+        }
+
+        using (TabBar.ReserveContent(scale))
+        using (ImRaii.PushId((int)activeTab))
+        {
+            switch (activeTab)
+            {
+                case AethergramTab.Search:
+                    DrawSearchTab(area);
+                    break;
+                case AethergramTab.Profile:
+                    DrawProfileTab(area);
+                    break;
+                default:
+                    DrawFeedTab(area);
+                    break;
+            }
+        }
+
+        DrawBottomNav(area);
+    }
+
+    private void UpdateTourHold()
+    {
+        if (store.IsSignedIn && router.Depth == 1 && activeTab == AethergramTab.Home)
+        {
+            TourHolds.Release(Id);
+            return;
+        }
+
+        TourHolds.Hold(Id);
+    }
+
+    private void DrawFeedTab(Rect area)
+    {
+        var scale = UiScale.Current;
+        store.EnsureMe();
+        DrawHomeTopBar(area);
+        var top = area.Min.Y + AppHeader.Height * scale;
+        var rowRect = new Rect(new Vector2(area.Min.X, top), new Vector2(area.Max.X, top + FeedTabRowHeight * scale));
+        UiAnchors.Report("aethergram.feeds", rowRect);
+        var picked = UnderlineTabs.Draw(rowRect, Loc.T(L.Aethergram.ForYou), Loc.T(L.Social.FeedLatest),
+            activeScope != SocialFeedScope.ForYou, ref tabSegment, Ink, FeedTabsStyle,
+            SocialSeason.Sound(UiSound.HalloweenThump));
+        if (picked >= 0)
+        {
+            SelectScope(picked == 1 ? latestScope : SocialFeedScope.ForYou);
+        }
+
+        var listTop = activeScope == SocialFeedScope.ForYou ? rowRect.Max.Y : DrawLatestScopeRow(area, rowRect.Max.Y);
+        var listRect = new Rect(new Vector2(area.Min.X, listTop), area.Max);
+        DrawFeedList(listRect, activeScope);
+        if (ComposeFab.Draw(TabBar.ContentArea(listRect, scale), "##aethergramComposeFab", Ink.Accent, PhoneIcons.Plus,
+                Loc.T(L.Aethergram.NewPost), "aethergram.compose", Ink.AccentDeep, FabRadius, true,
+                tapSound: SocialSeason.Sound(UiSound.HalloweenIgnite)))
+        {
+            StartCompose(false);
+        }
+    }
+
+    private void RefreshActiveFeed()
+    {
+        if (!store.IsSignedIn || store.IsLoading(activeScope))
+        {
+            return;
+        }
+
+        feedScrollTopPending = true;
+        RefreshFeed(activeScope);
+    }
+
+    private void RefreshFeed(SocialFeedScope scope)
+    {
+        store.RefreshFeed(scope);
+        stories.RefreshTray();
+    }
+
+    private void SelectTab(AethergramTab tab)
+    {
+        if (tab == AethergramTab.Home && activeTab == AethergramTab.Home)
+        {
+            RefreshActiveFeed();
+            return;
+        }
+
+        activeTab = tab;
+        postSheet.Close();
+        switch (tab)
+        {
+            case AethergramTab.Home:
+                profile.EnsureLoaded(activeScope);
+                break;
+            case AethergramTab.Search:
+                ResetExplore();
+                break;
+            case AethergramTab.Profile:
+                store.EnsureMe();
+                break;
+        }
+    }
+
+    private bool HiddenByMediaPreference(PostDto post)
+    {
+        if (post.Sensitive && !configuration.AethergramShowSensitivePosts && !IsOwnPost(post))
+        {
+            return true;
+        }
+
+        if (configuration.AethergramShowGifPosts)
+        {
+            return false;
+        }
+
+        var photos = PostMedia.Photos(post.MediaUrls, post.MediaUrl);
+        return photos.Length > 0 && GifMedia.IsGif(photos[0]);
+    }
+
+    private bool IsOwnPost(PostDto post) => store.Me is { } me && me.Id == post.AuthorId;
+
+    private bool HiddenByMediaPreference(CommentDto comment)
+    {
+        return comment.Text.Length == 0 && CommentMediaHidden(comment.MediaUrl);
+    }
+
+    private bool CommentMediaHidden(string? mediaUrl)
+    {
+        return mediaUrl is not null && !configuration.AethergramShowCommentMedia;
+    }
+
+    private void OpenPostSheet(PostDto post, bool includeView)
+    {
+        sheetPost = post;
+        postSheetTitle = SocialIdentity.Name(post.AuthorDisplayName, post.AuthorHandle);
+        postSheetCount = 0;
+        if (includeView)
+        {
+            AddPostSheetItem(PostSheetAction.View, Loc.T(L.Aethergram.ViewPost), false);
+        }
+
+        if (IsOwnPost(post))
+        {
+            AddPostSheetItem(PostSheetAction.Edit, Loc.T(L.Aethergram.EditPost), false);
+            if (post.ArchivedAtUnix is not null)
+            {
+                AddPostSheetItem(PostSheetAction.Restore, Loc.T(L.Social.UnarchiveAction), false);
+            }
+            else
+            {
+                if (post.PinnedAtUnix is null)
+                {
+                    AddPostSheetItem(PostSheetAction.Pin, Loc.T(L.Social.PinToProfile), false);
+                }
+                else
+                {
+                    AddPostSheetItem(PostSheetAction.Unpin, Loc.T(L.Social.UnpinFromProfile), false);
+                }
+
+                AddPostSheetItem(PostSheetAction.Archive, Loc.T(L.Social.ArchiveAction), false);
+            }
+
+            AddPostSheetItem(PostSheetAction.Delete, Loc.T(L.Aethergram.DeleteConfirm), true);
+        }
+        else
+        {
+            AddPostSheetItem(PostSheetAction.Follow,
+                Loc.T(post.IsFollowing ? L.Aethergram.Unfollow : L.Aethergram.Follow), false);
+            if (PhotoTagStates.MineFor(post.PhotoTags, store.Me?.Id) is not null)
+            {
+                AddPostSheetItem(PostSheetAction.RemoveTag, Loc.T(L.PhotoTag.RemoveMe), true);
+            }
+
+            AddPostSheetItem(PostSheetAction.Report, Loc.T(L.Report.Action), true);
+            AddPostSheetItem(PostSheetAction.Block, Loc.T(L.Social.BlockAction), true);
+        }
+
+        postSheet.Open();
+    }
+
+    private void AddPostSheetItem(PostSheetAction action, string label, bool danger)
+    {
+        postSheetActions[postSheetCount] = action;
+        postSheetItems[postSheetCount] = new ActionSheet.Item(label, string.Empty, danger);
+        postSheetCount++;
+    }
+
+    private void DrawPostSheet(Rect screen)
+    {
+        if (!postSheet.CapturesPointer)
+        {
+            return;
+        }
+
+        var picked = postSheet.Draw(screen, ActionSheetStyle.From(ui), postSheetItems.AsSpan(0, postSheetCount),
+            Loc.T(L.Common.Cancel), false, postSheetTitle);
+        if (picked < 0 || sheetPost is not { } post)
+        {
+            return;
+        }
+
+        switch (postSheetActions[picked])
+        {
+            case PostSheetAction.View:
+                OpenDetail(post);
+                break;
+            case PostSheetAction.Edit:
+                OpenEditPost(post);
+                break;
+            case PostSheetAction.Pin:
+                PinPost(post.Id);
+                break;
+            case PostSheetAction.Unpin:
+                UnpinPost(post.Id);
+                break;
+            case PostSheetAction.Archive:
+                ArchivePost(post.Id);
+                break;
+            case PostSheetAction.Restore:
+                RestorePost(post.Id);
+                break;
+            case PostSheetAction.Delete:
+                profile.AskDeletePost(post.Id, router.Current.Screen == AethergramScreen.Detail ? back : null);
+                break;
+            case PostSheetAction.Follow:
+                store.SetFollow(post.AuthorId, !post.IsFollowing);
+                break;
+            case PostSheetAction.RemoveTag:
+                if (PhotoTagStates.MineFor(post.PhotoTags, store.Me?.Id) is { } mine)
+                {
+                    AskRemoveTag(post, mine);
+                }
+
+                break;
+            case PostSheetAction.Report:
+                profile.OpenReport("post", post.Id, Loc.T(L.Report.PostTitle));
+                break;
+            case PostSheetAction.Block:
+                profile.AskBlock(post.AuthorDisplayName, post.AuthorHandle, post.AuthorId);
+                break;
+        }
+    }
+
+    private void AskRemoveTag(PostDto post, PhotoTagDto tag)
+    {
+        confirm.Ask(new ConfirmRequest
+        {
+            Title = Loc.T(L.PhotoTag.RemoveMeTitle),
+            Message = Loc.T(L.PhotoTag.RemoveMeMessage),
+            ConfirmLabel = Loc.T(L.PhotoTag.Remove),
+            CancelLabel = Loc.T(L.Common.Cancel),
+            Sheet = true,
+            BusyLabel = Loc.T(L.Aethergram.Saving),
+            FailedMessage = Loc.T(L.PhotoTag.RemoveFailed),
+            ConfirmAsync = done => store.RemoveTag(post.Id, tag, removed =>
+            {
+                if (removed)
+                {
+                    QueuePostNotice(PostNotice.TagRemoved, post.Id, false);
+                }
+
+                done(removed);
+            }),
+        });
+    }
+
+    private void PinPost(string postId)
+    {
+        store.PinPost(postId, false, outcome => QueuePostNotice(outcome switch
+        {
+            PinOutcome.Pinned => PostNotice.Pinned,
+            PinOutcome.LimitReached => PostNotice.Replace,
+            _ => PostNotice.PinFailed,
+        }, postId, false));
+    }
+
+    private void UnpinPost(string postId)
+    {
+        store.UnpinPost(postId, ok => QueuePostNotice(ok ? PostNotice.Unpinned : PostNotice.UnpinFailed, postId, false));
+    }
+
+    private void ArchivePost(string postId)
+    {
+        var fromDetail = router.Current.Screen == AethergramScreen.Detail;
+        store.ArchivePost(postId,
+            ok => QueuePostNotice(ok ? PostNotice.Archived : PostNotice.ArchiveFailed, postId, fromDetail));
+    }
+
+    private void RestorePost(string postId)
+    {
+        var fromDetail = router.Current.Screen == AethergramScreen.Detail;
+        store.UnarchivePost(postId,
+            ok => QueuePostNotice(ok ? PostNotice.Unarchived : PostNotice.UnarchiveFailed, postId, fromDetail));
+    }
+
+    private void QueuePostNotice(PostNotice notice, string postId, bool leavesDetail)
+    {
+        pendingNoticePostId = postId;
+        pendingNoticeLeavesDetail = leavesDetail;
+        pendingPostNotice = notice;
+    }
+
+    private void DrainPostNotices()
+    {
+        var notice = pendingPostNotice;
+        if (notice == PostNotice.None)
+        {
+            return;
+        }
+
+        pendingPostNotice = PostNotice.None;
+        switch (notice)
+        {
+            case PostNotice.Replace:
+                AskReplacePinnedPost(pendingNoticePostId);
+                break;
+            case PostNotice.PinFailed:
+                confirm.Alert(null, Loc.T(L.Social.PinFailed), Loc.T(L.Common.Close));
+                break;
+            case PostNotice.UnpinFailed:
+                confirm.Alert(null, Loc.T(L.Social.UnpinFailed), Loc.T(L.Common.Close));
+                break;
+            case PostNotice.Pinned:
+                toast.Show(Loc.T(L.Social.PinnedToast));
+                break;
+            case PostNotice.Unpinned:
+                toast.Show(Loc.T(L.Social.UnpinnedToast));
+                break;
+            case PostNotice.Archived:
+                toast.Show(Loc.T(L.Social.ArchivedToast));
+                LeaveDetailAfterNotice();
+                break;
+            case PostNotice.Unarchived:
+                toast.Show(Loc.T(L.Social.UnarchivedToast));
+                LeaveDetailAfterNotice();
+                break;
+            case PostNotice.ArchiveFailed:
+                confirm.Alert(null, Loc.T(L.Social.ArchiveFailed), Loc.T(L.Common.Close));
+                break;
+            case PostNotice.UnarchiveFailed:
+                confirm.Alert(null, Loc.T(L.Social.UnarchiveFailed), Loc.T(L.Common.Close));
+                break;
+            case PostNotice.TagApproved:
+                toast.Show(Loc.T(L.PhotoTag.ApprovedToast));
+                break;
+            case PostNotice.TagRemoved:
+                toast.Show(Loc.T(L.PhotoTag.RemovedToast));
+                break;
+            case PostNotice.TagApproveFailed:
+                confirm.Alert(null, Loc.T(L.PhotoTag.ApproveFailed), Loc.T(L.Common.Close));
+                break;
+            case PostNotice.TagRemoveFailed:
+                confirm.Alert(null, Loc.T(L.PhotoTag.RemoveFailed), Loc.T(L.Common.Close));
+                break;
+        }
+    }
+
+    private void DecideTag(PostDto post, PhotoTagDto tag, bool approve)
+    {
+        tagDecisionPostId = post.Id;
+        if (approve)
+        {
+            store.ApproveTag(post.Id, tag, succeeded =>
+            {
+                tagDecisionPostId = null;
+                QueuePostNotice(succeeded ? PostNotice.TagApproved : PostNotice.TagApproveFailed, post.Id, false);
+            });
+            return;
+        }
+
+        store.RemoveTag(post.Id, tag, succeeded =>
+        {
+            tagDecisionPostId = null;
+            QueuePostNotice(succeeded ? PostNotice.TagRemoved : PostNotice.TagRemoveFailed, post.Id, false);
+        });
+    }
+
+    private void LeaveDetailAfterNotice()
+    {
+        if (pendingNoticeLeavesDetail && router.Current.Screen == AethergramScreen.Detail)
+        {
+            back();
+        }
+    }
+
+    private void AskReplacePinnedPost(string postId)
+    {
+        confirm.Ask(new ConfirmRequest
+        {
+            Title = Loc.T(L.Social.PinReplaceTitle),
+            Message = Loc.T(L.Social.PinReplaceMessage, MaxPinnedPosts),
+            ConfirmLabel = Loc.T(L.Social.PinReplaceConfirm),
+            CancelLabel = Loc.T(L.Common.Cancel),
+            Danger = false,
+            Sheet = true,
+            BusyLabel = Loc.T(L.Aethergram.Saving),
+            FailedMessage = Loc.T(L.Social.PinFailed),
+            ConfirmAsync = done => store.PinPost(postId, true, outcome =>
+            {
+                var pinned = outcome == PinOutcome.Pinned;
+                if (pinned)
+                {
+                    QueuePostNotice(PostNotice.Pinned, postId, false);
+                }
+
+                done(pinned);
+            }),
+        });
+    }
+
+    private float DrawPinnedGlyph(ImDrawListPtr drawList, float left, float top, float lineHeight)
+    {
+        var scale = UiScale.Current;
+        var glyphSize = CardPinGlyphSize * scale;
+        PhoneIcon.Draw(drawList, new Vector2(left + glyphSize * 0.5f, top + lineHeight * 0.5f), PhoneIcons.PinFilled,
+            Ink.MutedInk, glyphSize);
+        return glyphSize + CardPinGlyphGap * scale;
+    }
+
+    private void DrawFeedList(Rect listRect, SocialFeedScope scope)
+    {
+        var snapshot = store.Feed(scope);
+        using (var surface = AppSurface.BeginEdgeToEdge(listRect))
+        {
+            if (feedScrollTopPending)
+            {
+                surface.JumpToTop();
+                feedScrollTopPending = false;
+            }
+
+            pullToRefresh[scope].Draw(listRect, surface.Pull, surface.Dragging,
+                store.IsLoading(scope), Ink.MutedInk, () => RefreshFeed(scope));
+            var trayTop = ImGui.GetCursorScreenPos().Y;
+            stories.DrawTray(theme, store.Me?.AvatarUrl, store.Me is { } me ? me.Name : string.Empty,
+                store.Me?.FrameId);
+            ReportStoryTray(listRect, trayTop, ImGui.GetCursorScreenPos().Y);
+            if (snapshot.Length == 0)
+            {
+                var failed = !store.IsLoading(scope) && store.FeedFailed(scope);
+                if (failed)
+                {
+                    feedFailure.Set(store.FeedFailure(scope));
+                }
+
+                if (store.IsLoading(scope))
+                {
+                    var skeletonTop = ImGui.GetCursorScreenPos().Y + 12f * UiScale.Current;
+                    Skeleton.Feed(ImGui.GetWindowDrawList(),
+                        new Rect(new Vector2(listRect.Min.X, skeletonTop), listRect.Max), UiScale.Current);
+                    return;
+                }
+
+                var message = failed ? feedFailure.Text() :
+                    scope == SocialFeedScope.Following ? Loc.T(L.Aethergram.FollowingEmpty) :
+                    Loc.T(L.Aethergram.ExploreEmpty);
+                var messageY = ImGui.GetCursorScreenPos().Y + 60f * UiScale.Current;
+                Typography.DrawCentered(new Vector2(listRect.Center.X, messageY), message, Ink.MutedInk);
+                if (failed)
+                {
+                    Typography.DrawCentered(new Vector2(listRect.Center.X, messageY + 28f * UiScale.Current),
+                        Loc.T(L.Failure.PullToRetry), Ink.MutedInk, TextStyles.Footnote);
+                }
+            }
+            else
+            {
+                ImGui.Dummy(new Vector2(0f, 4f * UiScale.Current));
+                feedVirtualizer.BeginFrame(store.FeedSource(scope), configuration);
+                var viewportTop = ImGui.GetWindowPos().Y;
+                store.BeginImpressions(viewportTop, viewportTop + ImGui.GetWindowSize().Y, ImGui.GetIO().DeltaTime);
+                var ranked = scope == SocialFeedScope.ForYou && store.ForYouRanked;
+                if (ranked && store.CaughtUpAtTop)
+                {
+                    DrawCaughtUpLine();
+                }
+
+                var caughtUpAfterId = ranked ? store.CaughtUpAfterId : null;
+                feedActionsAnchorPending = UiAnchors.Recording;
+                for (var index = 0; index < snapshot.Length; index++)
+                {
+                    var post = snapshot[index];
+                    if (HiddenByMediaPreference(post))
+                    {
+                        continue;
+                    }
+
+                    var revision = post.CommentCount > 0 ? 1 : 0;
+                    var closesRankedBlock = caughtUpAfterId is not null
+                        && string.Equals(post.Id, caughtUpAfterId, StringComparison.Ordinal);
+                    if (feedVirtualizer.Skip(post.Id, revision))
+                    {
+                        if (closesRankedBlock)
+                        {
+                            DrawCaughtUpLine();
+                        }
+
+                        continue;
+                    }
+
+                    var suggestion = ranked && !post.IsFollowing && store.TryGetFeedNote(post.Id, out var note)
+                        ? FeedNotes.SuggestionLabel(note)
+                        : null;
+                    var rowTop = ImGui.GetCursorScreenPos().Y;
+                    DrawGramCard(post, suggestion: suggestion);
+                    store.ObserveImpression(post.Id, rowTop, ImGui.GetCursorScreenPos().Y);
+                    feedVirtualizer.Record(post.Id, revision);
+                    if (closesRankedBlock)
+                    {
+                        DrawCaughtUpLine();
+                    }
+                }
+
+                feedActionsAnchorPending = false;
+                if (store.LoadingMore(scope))
+                {
+                    InfiniteScroll.DrawLoadingRow(listRect.Center.X, Ink.MutedInk);
+                }
+
+                ImGui.Dummy(new Vector2(0f, 16f * UiScale.Current));
+                if (InfiniteScroll.ReachedBottom() && store.HasMoreFeed(scope) && !store.LoadingMore(scope))
+                {
+                    store.LoadMoreFeed(scope);
+                }
+            }
+        }
+    }
+
+    private static void ReportStoryTray(Rect listRect, float trayTop, float trayBottom)
+    {
+        if (!UiAnchors.Recording || trayBottom <= trayTop || trayTop < listRect.Min.Y)
+        {
+            return;
+        }
+
+        UiAnchors.Report("aethergram.stories",
+            new Rect(new Vector2(listRect.Min.X, trayTop), new Vector2(listRect.Max.X, trayBottom)));
+    }
+
+    private void ReportFeedActions(float left, float right, float top, float bottom)
+    {
+        var visibleTop = ImGui.GetWindowPos().Y;
+        var visibleBottom = visibleTop + ImGui.GetWindowSize().Y - TabBar.ContentInset(UiScale.Current);
+        if (top < visibleTop || bottom > visibleBottom)
+        {
+            return;
+        }
+
+        feedActionsAnchorPending = false;
+        UiAnchors.Report("aethergram.card.actions", new Rect(new Vector2(left, top), new Vector2(right, bottom)));
+    }
+
+    private static void DrawSuggestionBanner(ImDrawListPtr drawList, float left, float top, float width, string label)
+    {
+        var scale = UiScale.Current;
+        var lineHeight = Typography.LineHeight(CardMetaStyle);
+        var iconSize = 13f * scale;
+        PhoneIcon.Draw(drawList, new Vector2(left + iconSize * 0.5f, top + lineHeight * 0.5f), PhoneIcons.Sparkles,
+            Ink.MutedInk, iconSize);
+        var textLeft = left + iconSize + 6f * scale;
+        Typography.Draw(drawList, new Vector2(textLeft, top),
+            Typography.FitText(label, MathF.Max(1f, width - iconSize - 6f * scale), CardMetaStyle), Ink.MutedInk, CardMetaStyle);
+    }
+
+    private static float TagPromptTextWidth(float innerWidth, float scale) =>
+        MathF.Max(1f, innerWidth - (TagPromptPad * 2f + TagPromptIconSize + TagPromptIconGap) * scale);
+
+    private static float TagPromptHeight(float innerWidth, float scale)
+    {
+        var hintHeight = Typography.MeasureWrapped(Loc.T(L.PhotoTag.PendingHint), TagPromptTextWidth(innerWidth, scale),
+            CardMetaStyle.Scale, CardMetaStyle.Weight);
+        return (TagPromptPad * 2f + TagPromptRowGap + TagPromptPillHeight + CardBannerGap) * scale
+            + Typography.LineHeight(CardNameStyle) + TagPromptTitleGap * scale + hintHeight;
+    }
+
+    private void DrawTagPrompt(ImDrawListPtr drawList, PostDto post, PhotoTagDto tag, Rect panel)
+    {
+        var scale = UiScale.Current;
+        ui.Card(drawList, panel.Min, panel.Max, Metrics.Radius.Grouped * scale);
+        var pad = TagPromptPad * scale;
+        var iconSize = TagPromptIconSize * scale;
+        var titleHeight = Typography.LineHeight(CardNameStyle);
+        var titleTop = panel.Min.Y + pad;
+        PhoneIcon.Draw(drawList, new Vector2(panel.Min.X + pad + iconSize * 0.5f, titleTop + titleHeight * 0.5f),
+            PhoneIcons.UserSquareRounded, Ink.AccentLink, iconSize);
+        var textLeft = panel.Min.X + pad + iconSize + TagPromptIconGap * scale;
+        var textWidth = TagPromptTextWidth(panel.Width, scale);
+        Typography.Draw(drawList, new Vector2(textLeft, titleTop),
+            Typography.FitText(Loc.T(L.PhotoTag.PendingTitle), textWidth, CardNameStyle), Ink.TitleInk, CardNameStyle);
+        ImGui.SetCursorScreenPos(new Vector2(textLeft, titleTop + titleHeight + TagPromptTitleGap * scale));
+        using (Typography.WrapAt(textLeft + textWidth))
+        using (ImRaii.PushColor(ImGuiCol.Text, Ink.MutedInk))
+        using (Plugin.Fonts.Push(CardMetaStyle.Scale, CardMetaStyle.Weight))
+        {
+            Typography.Wrapped(Loc.T(L.PhotoTag.PendingHint));
+        }
+
+        var pillHeight = TagPromptPillHeight * scale;
+        var pillWidth = TagPromptPillWidth * scale;
+        var pillTop = panel.Max.Y - pad - pillHeight;
+        var approveRect = new Rect(new Vector2(textLeft, pillTop), new Vector2(textLeft + pillWidth, pillTop + pillHeight));
+        var removeLeft = approveRect.Max.X + TagPromptPillGap * scale;
+        var removeRect = new Rect(new Vector2(removeLeft, pillTop), new Vector2(removeLeft + pillWidth, pillTop + pillHeight));
+        var busy = string.Equals(tagDecisionPostId, post.Id, StringComparison.Ordinal);
+        ImGui.PushID(post.Id);
+        if (DrawAccentPill(approveRect, Loc.T(L.PhotoTag.Approve), !busy))
+        {
+            DecideTag(post, tag, true);
+        }
+
+        if (DrawGrayPill(removeRect, Loc.T(L.PhotoTag.Remove)) && !busy)
+        {
+            DecideTag(post, tag, false);
+        }
+
+        ImGui.PopID();
+    }
+
+    private void DrawGramCard(PostDto post, bool detail = false, string? suggestion = null, bool showPinned = false)
+    {
+        var scale = UiScale.Current;
+        var drawList = ImGui.GetWindowDrawList();
+        var width = ScrollLayout.StableContentWidth();
+        var inset = CellPadX * scale;
+        var innerWidth = width - inset * 2f;
+        var displayName = SocialIdentity.Name(post.AuthorDisplayName, post.AuthorHandle);
+        var headerBlock = CardHeaderBlock * scale;
+        var avatarRadius = CardAvatarRadius * scale;
+        var photos = PostMedia.Photos(post.MediaUrls, post.MediaUrl);
+        var mediaHeight = CardMediaHeight(width, post, photos);
+        var actionsHeight = CardActionsHeight * scale;
+        RichTextLayout? captionLayout = null;
+        var translateKey = new TranslationKey(TranslationSurface.Post, post.Id);
+        var captionView = translation.View(translateKey, post.Text, post.Lang);
+        var captionText = captionView.Text;
+        var captionLineHeight = 0f;
+        if (captionText.Length > 0)
+        {
+            using (Plugin.Fonts.Push(CardCaptionScale))
+            {
+                captionLayout = bodyLayouts.LayoutFor(captionView.LayoutKey, captionText, post.Mentions, innerWidth);
+                captionLineHeight = captionLayout?.LineHeight ?? ImGui.GetTextLineHeight();
+            }
+        }
+
+        var fullCaptionHeight = captionText.Length == 0
+            ? 0f
+            : captionLayout?.Size.Y ?? Typography.MeasureWrapped(captionText, innerWidth, CardCaptionScale);
+        var captionFold = TextFold.Measure(fullCaptionHeight, captionLineHeight, FeedCaptionMaxLines,
+            detail || expandedCaptions.Contains(post.Id));
+        var captionTextHeight = captionFold.Height;
+        var translateHeight = TranslateLink.Height(translation, translateKey, post.Lang, scale);
+        var lineGap = CardLineGap * scale;
+        var captionHeight = captionText.Length == 0 ? 0f : captionTextHeight + translateHeight + lineGap;
+        var showCommentsLink = !detail && post.CommentCount > 0;
+        var commentsHeight = showCommentsLink ? Typography.LineHeight(CardLinkStyle) + lineGap : 0f;
+        var timeHeight = Typography.LineHeight(CardTimeStyle);
+        var bannerHeight = suggestion is null ? 0f : Typography.LineHeight(CardMetaStyle) + CardBannerGap * scale;
+        var pendingTag = PhotoTagStates.PendingFor(post.PhotoTags, store.Me?.Id);
+        var tagPromptHeight = pendingTag is null ? 0f : TagPromptHeight(innerWidth, scale);
+        var cellHeight = CardPadTop * scale + bannerHeight + tagPromptHeight + headerBlock + CardMediaGap * scale
+            + mediaHeight + actionsHeight + CardTextGap * scale + captionHeight + commentsHeight + timeHeight
+            + CardPadBottom * scale;
+        var cell = FeedCell.Begin(drawList, cellHeight, Ink.HoverTint, false);
+        var origin = cell.Bounds.Min;
+        var innerX = origin.X + inset;
+        if (suggestion is not null)
+        {
+            DrawSuggestionBanner(drawList, innerX, origin.Y + CardPadTop * scale, innerWidth, suggestion);
+        }
+
+        if (pendingTag is not null)
+        {
+            DrawTagPrompt(drawList, post, pendingTag,
+                new Rect(new Vector2(innerX, origin.Y + CardPadTop * scale + bannerHeight),
+                    new Vector2(innerX + innerWidth, origin.Y + CardPadTop * scale + bannerHeight + tagPromptHeight
+                        - CardBannerGap * scale)));
+        }
+
+        var headerTop = origin.Y + CardPadTop * scale + bannerHeight + tagPromptHeight;
+        var imageTop = headerTop + headerBlock + CardMediaGap * scale;
+        var imageBottom = imageTop + mediaHeight;
+        var actionsTop = imageBottom;
+        var textTop = actionsTop + actionsHeight + CardTextGap * scale;
+        var avatarCenter = new Vector2(innerX + avatarRadius, headerTop + headerBlock * 0.5f);
+        var ringRadius = avatarRadius + CardRingGap * scale;
+        var hasStory = stories.TryRing(post.AuthorId, out var authorRing);
+        if (hasStory)
+        {
+            AethergramArt.StoryRing(drawList, avatarCenter, ringRadius, scale, authorRing.HasUnseen);
+        }
+
+        DrawAvatar(avatarCenter, avatarRadius - 1f * scale, displayName, string.Empty, post.AuthorAvatarUrl, 0.85f, 32,
+            Frames.Of(post.AuthorFrameId));
+        var moreRadius = CardMoreRadius * scale;
+        var moreCenter = new Vector2(origin.X + width - inset - moreRadius + 6f * scale, avatarCenter.Y);
+        var nameLeft = avatarCenter.X + avatarRadius + CardNameGap * scale;
+        var headerTextRight = moreCenter.X - moreRadius - 4f * scale;
+        var headerTextMaxWidth = MathF.Max(1f, headerTextRight - nameLeft);
+        var nameHeight = Typography.LineHeight(CardNameStyle);
+        var metaHeight = Typography.LineHeight(CardMetaStyle);
+        var nameTop = avatarCenter.Y - (nameHeight + metaHeight + 1f * scale) * 0.5f;
+        var drawnNameWidth = UserName.DrawAuto(drawList, "aethergram.card." + post.Id, displayName, post.AuthorBadges,
+            post.AuthorBadgeIds, nameLeft, nameTop, headerTextMaxWidth, CardNameStyle, Ink.TitleInk, theme);
+        var nameMin = new Vector2(nameLeft, nameTop);
+        var nameMax = new Vector2(nameLeft + drawnNameWidth, nameTop + nameHeight);
+        if (UiInteract.Hover(nameMin, nameMax))
+        {
+            drawList.AddLine(new Vector2(nameMin.X, nameMax.Y - 1f * scale),
+                new Vector2(nameMax.X, nameMax.Y - 1f * scale), ImGui.GetColorU32(Ink.TitleInk), 1f);
+        }
+
+        var regionCode = SocialRegion.Resolve(null, post.AuthorWorld, gameData);
+        var meta = SocialIdentity.ProfileMeta(post.AuthorHandle, regionCode);
+        if (ContentModeration.IsInReview(post.ScanStatus))
+        {
+            meta = $"{meta} · {Loc.T(L.Moderation.InReview)}";
+        }
+
+        var metaTop = nameTop + nameHeight + 1f * scale;
+        var metaLeft = nameLeft;
+        if (showPinned && post.PinnedAtUnix is not null)
+        {
+            metaLeft += DrawPinnedGlyph(drawList, nameLeft, metaTop, metaHeight);
+            meta = $"{Loc.T(L.Social.PinnedLabel)} · {meta}";
+        }
+
+        Typography.Draw(drawList, new Vector2(metaLeft, metaTop),
+            Typography.FitText(meta, MathF.Max(1f, headerTextRight - metaLeft), CardMetaStyle), Ink.MutedInk,
+            CardMetaStyle);
+        var ringExtent = new Vector2(ringRadius, ringRadius);
+        var overRing = hasStory && UiInteract.Hover(avatarCenter - ringExtent, avatarCenter + ringExtent);
+        if (hasStory && UiInteract.HoverClickCircle(avatarCenter, ringRadius))
+        {
+            stories.OpenRing(authorRing);
+        }
+        else if (!overRing && UiInteract.HoverClick(new Vector2(innerX, headerTop),
+                     new Vector2(headerTextRight, headerTop + headerBlock)))
+        {
+            OpenProfileFromPost(post.AuthorId, post.Id);
+        }
+
+        var moreExtent = new Vector2(MathF.Max(moreRadius, Metrics.Size.TapTarget * 0.5f * scale));
+        var moreHovered = UiInteract.Hover(moreCenter - moreExtent, moreCenter + moreExtent);
+        if (moreHovered)
+        {
+            drawList.AddCircleFilled(moreCenter, moreRadius, ImGui.GetColorU32(Ink.FieldFill), 24);
+            ImGui.SetMouseCursor(ImGuiMouseCursor.Hand);
+        }
+
+        PhoneIcon.Draw(drawList, moreCenter, PhoneIcons.Dots, Ink.TitleInk, 20f * scale);
+        HoverTooltip.Show(new Rect(moreCenter - moreExtent, moreCenter + moreExtent), Loc.T(L.Aethergram.More),
+            HoverLabelSide.Above);
+        if (UiInteract.Click(moreCenter - moreExtent, moreCenter + moreExtent, moreHovered))
+        {
+            OpenPostSheet(post, !detail);
+        }
+
+        var imageRect = new Rect(new Vector2(origin.X, imageTop), new Vector2(origin.X + width, imageBottom));
+        var page = DrawGramCarousel(imageRect, post, photos, 0f);
+        var actionCenterY = actionsTop + actionsHeight * 0.5f;
+        var liked = post.MyReaction >= 0;
+        var actionX = innerX + CardActionInset * scale - CardActionIconSize * scale * 0.5f;
+        var likeTap = DrawCardAction(drawList, ref actionX, actionCenterY,
+            liked ? PhoneIcons.HeartFilled : PhoneIcons.Heart, liked ? Ink.LikeRed : Ink.TitleInk,
+            post.TotalReactions, Loc.T(L.Aethergram.Like), TapGlow.Key(post.Id, TapGlow.Like),
+            Loc.T(L.Social.LikedByTitle), liked ? UiSound.Tap : SocialSeason.Sound(UiSound.HalloweenHeartbeat));
+        if (likeTap == CardActionTap.Icon)
+        {
+            TapGlow.Toggle(TapGlow.Key(post.Id, TapGlow.Like), liked);
+            store.ToggleLike(post);
+        }
+        else if (likeTap == CardActionTap.Count)
+        {
+            OpenUserList(post.Id, UserListKind.Likers);
+        }
+
+        var commentKey = TapGlow.Key(post.Id, TapGlow.Comment);
+        if (DrawCardAction(drawList, ref actionX, actionCenterY, PhoneIcons.MessageCircle, Ink.TitleInk,
+                post.CommentCount, Loc.T(L.Aethergram.Comment), commentKey) != CardActionTap.None)
+        {
+            TapGlow.Bloom(commentKey);
+            OpenDetail(post, true);
+        }
+
+        var sendFrom = new Vector2(actionX + CardActionIconSize * scale * 0.5f, actionCenterY);
+        var shareKey = TapGlow.Key(post.Id, TapGlow.Share);
+        if (DrawCardAction(drawList, ref actionX, actionCenterY, PhoneIcons.Send, Ink.TitleInk, 0,
+                Loc.T(L.Aethergram.SendTo), shareKey, iconSound: SocialSeason.Sound(UiSound.HalloweenFlutter))
+            != CardActionTap.None)
+        {
+            TapGlow.Bloom(shareKey);
+            SendByBat(sendFrom);
+            OpenShare(post.Id);
+        }
+
+        var iconSize = CardActionIconSize * scale;
+        var bookmarkCenter = new Vector2(origin.X + width - inset - iconSize * 0.5f + 2f * scale, actionCenterY);
+        var bookmarkMin = new Vector2(bookmarkCenter.X - iconSize, actionsTop);
+        var bookmarkMax = new Vector2(bookmarkCenter.X + iconSize * 0.5f + 6f * scale, actionsTop + actionsHeight);
+        var bookmarkHovered = UiInteract.Hover(bookmarkMin, bookmarkMax);
+        if (feedActionsAnchorPending && !detail)
+        {
+            ReportFeedActions(innerX, bookmarkMax.X, actionsTop, actionsTop + actionsHeight);
+        }
+
+        if (bookmarkHovered)
+        {
+            ImGui.SetMouseCursor(ImGuiMouseCursor.Hand);
+        }
+
+        var saveKey = TapGlow.Key(post.Id, TapGlow.Save);
+        TapGlow.Draw(drawList, saveKey, bookmarkCenter, iconSize * 0.5f, bookmarkHovered);
+        PhoneIcon.Draw(drawList, bookmarkCenter, post.Saved ? PhoneIcons.BookmarkFilled : PhoneIcons.Bookmark,
+            Ink.TitleInk, iconSize);
+        HoverTooltip.Show(new Rect(bookmarkMin, bookmarkMax), Loc.T(L.Aethergram.Save), HoverLabelSide.Above);
+        if (UiInteract.Click(bookmarkMin, bookmarkMax, bookmarkHovered,
+                post.Saved ? UiSound.Tap : SocialSeason.Sound(UiSound.HalloweenCoffin)))
+        {
+            TapGlow.Toggle(saveKey, post.Saved);
+            if (!post.Saved)
+            {
+                SocialSeason.Toast(toast, L.Seasonal.SavedToCrypt);
+            }
+
+            store.SetSaved(post.Id, !post.Saved);
+        }
+
+        if (photos.Length > 1)
+        {
+            var dotsLeft = actionX;
+            var dotsRight = bookmarkMin.X - 6f * scale;
+            var dotsCenter = new Vector2((dotsLeft + dotsRight) * 0.5f, actionCenterY);
+            PhotoCarousel.DrawDots(drawList, dotsCenter, photos.Length, page, MathF.Max(0f, dotsRight - dotsLeft),
+                Ink.BodyInk);
+        }
+
+        var y = textTop;
+        if (captionText.Length > 0)
+        {
+            if (captionLayout is null && !captionFold.Folded)
+            {
+                ImGui.SetCursorScreenPos(new Vector2(innerX, y));
+                using (Typography.WrapAt(innerX + innerWidth))
+                using (ImRaii.PushColor(ImGuiCol.Text, Ink.BodyInk))
+                using (Plugin.Fonts.Push(CardCaptionScale))
+                {
+                    Typography.Wrapped(captionText);
+                }
+            }
+            else
+            {
+                using (Plugin.Fonts.Push(CardCaptionScale))
+                {
+                    var captionOrigin = new Vector2(innerX, y);
+                    if (captionLayout is null)
+                    {
+                        Typography.DrawWrappedLines(drawList, captionOrigin, captionText, Ink.BodyInk, innerWidth,
+                            captionLineHeight, captionFold.VisibleLines);
+                    }
+                    else
+                    {
+                        DrawRichBody(drawList, captionLayout, captionOrigin, captionFold.VisibleHeight);
+                    }
+
+                    if (captionFold.DrawReadMore(drawList, captionOrigin, Ink.MutedInk, Ink.TitleInk))
+                    {
+                        expandedCaptions.Add(post.Id);
+                    }
+                }
+            }
+
+            if (translateHeight > 0f)
+            {
+                TranslateLink.Draw(translation, confirm, translateKey, post.Lang, post.Text,
+                    new Vector2(innerX, y + captionTextHeight), innerWidth, Ink.MutedInk, Ink.AccentLink, scale);
+            }
+
+            y += captionHeight;
+        }
+
+        if (showCommentsLink)
+        {
+            var commentsLabel = Loc.T(L.Aethergram.ViewComments, post.CommentCount);
+            var labelPos = new Vector2(innerX, y);
+            var labelSize = Typography.Measure(commentsLabel, CardLinkStyle);
+            Typography.Draw(drawList, labelPos, commentsLabel, Ink.MutedInk, CardLinkStyle);
+            if (UiInteract.HoverClick(labelPos, labelPos + labelSize))
+            {
+                OpenDetail(post, false);
+            }
+
+            y += commentsHeight;
+        }
+
+        var time = detail ? CardTimestamp(post) : FeedTimestamp(post);
+        Typography.Draw(drawList, new Vector2(innerX, y), Typography.FitText(time, innerWidth, CardTimeStyle),
+            Ink.MutedInk, CardTimeStyle);
+        FeedCell.End(drawList, cell, Ink.Hairline);
+    }
+
+    private float CardMediaHeight(float width, PostDto post, string[] photos)
+    {
+        if (photos.Length > 0 && GifMedia.Texture(images, photos[0], ImGui.GetTime()) is { } texture)
+        {
+            return PostAspects.TallDisplayHeight(width, (int)texture.Size.X, (int)texture.Size.Y);
+        }
+
+        return PostAspects.TallDisplayHeight(width, post.MediaWidth, post.MediaHeight);
+    }
+
+    private enum CardActionTap
+    {
+        None,
+        Icon,
+        Count,
+    }
+
+    private static CardActionTap DrawCardAction(ImDrawListPtr drawList, ref float x, float centerY, string glyph,
+        Vector4 ink, int count, string tooltip, int glowKey, string? countTooltip = null,
+        UiSound iconSound = UiSound.Tap)
+    {
+        var scale = UiScale.Current;
+        var iconSize = CardActionIconSize * scale;
+        var halfHeight = CardActionsHeight * scale * 0.5f;
+        var label = count > 0 ? CountText.Compact(count) : string.Empty;
+        var labelWidth = label.Length > 0 ? Typography.Measure(label, CardCountStyle).X : 0f;
+        var contentWidth = iconSize + (label.Length > 0 ? CardCountGap * scale + labelWidth : 0f);
+        var min = new Vector2(x - 6f * scale, centerY - halfHeight);
+        var max = new Vector2(x + contentWidth + 6f * scale, centerY + halfHeight);
+        var splitCount = countTooltip is not null && label.Length > 0;
+        var iconMax = splitCount ? new Vector2(x + iconSize + CardCountGap * scale * 0.5f, max.Y) : max;
+        var countMin = new Vector2(iconMax.X, min.Y);
+        var iconHovered = UiInteract.Hover(min, iconMax);
+        var countHovered = splitCount && UiInteract.Hover(countMin, max);
+        if (iconHovered || countHovered)
+        {
+            ImGui.SetMouseCursor(ImGuiMouseCursor.Hand);
+        }
+
+        var iconCenter = new Vector2(x + iconSize * 0.5f, centerY);
+        TapGlow.Draw(drawList, glowKey, iconCenter, iconSize * 0.5f, iconHovered);
+        PhoneIcon.Draw(drawList, iconCenter, glyph, ink, iconSize);
+        if (label.Length > 0)
+        {
+            var labelSize = Typography.Measure(label, CardCountStyle);
+            Typography.Draw(drawList, new Vector2(x + iconSize + CardCountGap * scale, centerY - labelSize.Y * 0.5f),
+                label, Ink.TitleInk, CardCountStyle);
+        }
+
+        HoverTooltip.Show(new Rect(min, iconMax), tooltip, HoverLabelSide.Above);
+        if (splitCount)
+        {
+            HoverTooltip.Show(new Rect(countMin, max), countTooltip!, HoverLabelSide.Above);
+        }
+
+        x += contentWidth + CardActionGap * scale;
+        if (UiInteract.Click(min, iconMax, iconHovered, iconSound))
+        {
+            return CardActionTap.Icon;
+        }
+
+        if (splitCount && UiInteract.Click(countMin, max, countHovered))
+        {
+            return CardActionTap.Count;
+        }
+
+        return CardActionTap.None;
+    }
+
+    private string CardTimestamp(PostDto post)
+    {
+        if (!string.Equals(cardTimestampPostId, post.Id, StringComparison.Ordinal)
+            || cardTimestampEditedAt != post.EditedAtUnix)
+        {
+            var local = DateTimeOffset.FromUnixTimeSeconds(post.CreatedAtUnix).ToLocalTime();
+            cardTimestampPostId = post.Id;
+            cardTimestampEditedAt = post.EditedAtUnix;
+            var stamp = $"{TimeText.Clock(local)} · {local.ToString("d MMM yyyy", Loc.Culture)}";
+            cardTimestamp = post.EditedAtUnix is null ? stamp : Loc.T(L.Aethergram.EditedStamp, stamp);
+        }
+
+        return cardTimestamp;
+    }
+
+    private static string FeedTimestamp(PostDto post)
+    {
+        var time = TimeText.Short(post.CreatedAtUnix);
+        return post.EditedAtUnix is null ? time : Loc.T(L.Aethergram.EditedStamp, time);
+    }
+
+    private int DrawGramCarousel(Rect imageRect, PostDto post, string[] photos, float rounding)
+    {
+        var scanStatus = post.ScanStatus;
+        var veiled = SensitiveReveals.ShouldVeil(post.Sensitive, post.Id, configuration.ShowSensitiveContent);
+        var result = carousel.Draw(ImGui.GetWindowDrawList(), imageRect, post.Id, photos, rounding,
+            (list, min, max, radius, url) => DrawGramImage(list, new Rect(min, max), url, radius, scanStatus, veiled));
+        if (result.InputConsumed)
+        {
+            pendingPhotoTap.Cancel();
+        }
+        else if (veiled)
+        {
+            if (result.Tapped)
+            {
+                SensitiveReveals.Reveal(post.Id);
+            }
+
+            return result.Index;
+        }
+        else
+        {
+            HandleLikeGesture(imageRect, post, photos, result.Index);
+        }
+
+        var tags = tagOverlay.Draw(ImGui.GetWindowDrawList(), imageRect, post.Id, result.Index, post.PhotoTags,
+            theme, ImGui.GetIO().DeltaTime);
+        if (tags.InputConsumed)
+        {
+            pendingPhotoTap.Cancel();
+        }
+
+        if (tags.OpenUserId is { } taggedUserId)
+        {
+            OpenProfile(taggedUserId);
+        }
+
+        doubleTapLike.DrawBurst(ImGui.GetWindowDrawList(), imageRect, post.Id);
+        return result.Index;
+    }
+
+    private void HandleLikeGesture(Rect imageRect, PostDto post, string[] photos, int page)
+    {
+        if (!UiInteract.Hover(imageRect.Min, imageRect.Max))
+        {
+            return;
+        }
+
+        if (doubleTapLike.Tapped(imageRect, post.Id))
+        {
+            pendingPhotoTap.Cancel();
+            SocialSeason.Play(UiSound.HalloweenHeartbeat);
+            TapGlow.Bloom(TapGlow.Key(post.Id, TapGlow.Like));
+            if (post.MyReaction < 0)
+            {
+                store.ToggleLike(post);
+            }
+
+            return;
+        }
+
+        if (ImGui.IsMouseClicked(ImGuiMouseButton.Left) && page < photos.Length)
+        {
+            pendingPhotoTap.Arm(photos[page]);
+        }
+    }
+
+    private void AdvancePendingPhotoView()
+    {
+        if (pendingPhotoTap.Ready(out var url))
+        {
+            photoViewer.Open(this, () => GifMedia.Texture(images, url, ImGui.GetTime()));
+        }
+    }
+
+    private void DrawGramImage(Rect rect, string? url, float rounding, string? scanStatus = null) =>
+        DrawGramImage(ImGui.GetWindowDrawList(), rect, url, rounding, scanStatus);
+
+    private void DrawGramImage(ImDrawListPtr drawList, Rect rect, string? url, float rounding,
+        string? scanStatus = null, bool veiled = false)
+    {
+        if (veiled)
+        {
+            SensitiveVeil.Draw(drawList, rect.Min, rect.Max, rounding);
+            return;
+        }
+
+        var scale = UiScale.Current;
+        var texture = GifMedia.Texture(images, url, ImGui.GetTime());
+        if (texture is null)
+        {
+            Squircle.Fill(drawList, rect.Min, rect.Max, rounding, ImGui.GetColorU32(Ink.FieldFill));
+            Typography.DrawCentered(rect.Center,
+                Loc.T(images.Failed(url) ? L.Common.ImageFailed : L.Common.Loading), Ink.MutedInk,
+                TextStyles.Subheadline);
+
+        }
+        else
+        {
+            var (uv0, uv1) = ImageFit.Cover(texture.Size.X, texture.Size.Y, rect.Width, rect.Height);
+            drawList.AddImageRounded(texture.Handle, rect.Min, rect.Max, uv0, uv1, 0xFFFFFFFFu, rounding,
+                ImDrawFlags.RoundCornersAll);
+        }
+
+        if (GifMedia.IsGif(url))
+        {
+            GifBadge.Draw(drawList, rect);
+        }
+
+        ModerationOverlay.Draw(drawList, rect.Min, rect.Max, rounding, scanStatus);
+    }
+
+    private void DrawBottomNav(Rect area)
+    {
+        var hasAvatar = store.Me is not null;
+        if (!hasAvatar)
+        {
+            store.EnsureMe();
+        }
+
+        tabItems[(int)AethergramTab.Home] = new TabItem(Loc.T(L.Aethergram.Home), HomeGlyph, HomeActiveGlyph);
+        tabItems[(int)AethergramTab.Search] = new TabItem(Loc.T(L.Aethergram.Search), SearchGlyph,
+            SearchActiveGlyph);
+        tabItems[(int)AethergramTab.Messages] = new TabItem(Loc.T(L.Aethergram.InboxTitle), MessagesGlyph,
+            MessagesActiveGlyph, dmStore.UnreadCount, "aethergram.inbox");
+        tabItems[(int)AethergramTab.Profile] = new TabItem(Loc.T(L.Aethergram.Profile), PhoneIcons.User,
+            PhoneIcons.UserFilled, CustomIcon: hasAvatar);
+        var result = tabBar.Draw(area, ui, tabItems, (int)activeTab, null, this);
+        UiAnchors.Report("aethergram.tabbar", tabBar.Bounds);
+        if (result.Tapped < 0)
+        {
+            return;
+        }
+
+        if (result.Tapped == (int)AethergramTab.Messages)
+        {
+            OpenInbox();
+            return;
+        }
+
+        SelectTab((AethergramTab)result.Tapped);
+    }
+
+    void ITabIconDrawer.DrawTabIcon(ImDrawListPtr drawList, int index, TabItemPose pose, bool active)
+    {
+        if (store.Me is not { } me)
+        {
+            return;
+        }
+
+        var scale = UiScale.Current;
+        DrawAvatar(pose.IconCenter, pose.AvatarRadius(scale), me.Name, me.World, me.AvatarUrl, 0.85f, 28, Frames.Of(me.FrameId));
+        if (!active)
+        {
+            return;
+        }
+
+        drawList.AddCircle(pose.IconCenter, pose.AvatarRingRadius(scale), ImGui.GetColorU32(ui.Accent), 32,
+            1.6f * scale);
+    }
+
+    private void DrawAvatar(Vector2 center, float radius, string name, string world, string? avatarUrl,
+        float monogramScale, int segments, FrameStyle? frame = null)
+    {
+        AvatarView.DrawRemote(ImGui.GetWindowDrawList(), center, radius, theme, name, world, avatarUrl, images,
+            lodestone, monogramScale, segments, 1f, frame);
+    }
+
+    private void OpenProfile(string userId)
+    {
+        profileTab = 0;
+        store.OpenProfile(userId);
+        router.Push(AethergramRoute.Profile(userId));
+    }
+
+    private void OpenProfileFromPost(string userId, string postId)
+    {
+        store.ReportFeedSignal(postId, FeedSignalKinds.ProfileOpen);
+        OpenProfile(userId);
+    }
+
+    private void DrawRichBody(ImDrawListPtr drawList, RichTextLayout layout, Vector2 origin,
+        float visibleHeight = float.PositiveInfinity)
+    {
+        var ink = new RichTextInk(Ink.BodyInk, Ink.AccentLink, Ink.AccentLink);
+        RichText.Draw(drawList, layout, origin, ink, out var hit, visibleHeight);
+        if (hit.Kind == RichTextRunKind.Mention && hit.Clicked)
+        {
+            OpenProfile(layout.Mentions[hit.TargetIndex].UserId);
+        }
+
+        if (hit.Kind == RichTextRunKind.Hashtag && hit.Clicked)
+        {
+            OpenHashtag(layout.Tags[hit.TargetIndex]);
+        }
+
+        if (hit.Kind == RichTextRunKind.Link && hit.Clicked)
+        {
+            UrlActions.AskThenOpen(layout.Urls[hit.TargetIndex]);
+        }
+    }
+
+    private void OpenDetail(PostDto post, bool focusComment = false)
+    {
+        store.ReportFeedSignal(post.Id, FeedSignalKinds.DetailOpen);
+        store.OpenDetail(post);
+        commentDraft = string.Empty;
+        commentFocusPending = focusComment;
+        router.Push(AethergramRoute.Detail(post.Id));
+    }
+
+    private void OpenDetailFromLink(string postId)
+    {
+        store.OpenDetailById(postId);
+        commentDraft = string.Empty;
+        commentFocusPending = false;
+        router.Push(AethergramRoute.Detail(postId));
+    }
+
+    private void OpenUserList(string sourceId, UserListKind kind)
+    {
+        store.OpenUserList(sourceId, kind);
+        router.Push(AethergramRoute.UserList(sourceId, kind));
+    }
+
+    public void Dispose()
+    {
+        settingsCancellation.Cancel();
+        settingsCancellation.Dispose();
+        composeSession.Dispose();
+        threadView.Dispose();
+        dmStore.Dispose();
+        store.Dispose();
+        stories.Dispose();
+    }
+
+    private void DrawHomeTopBar(Rect area)
+    {
+        var scale = UiScale.Current;
+        var drawList = ImGui.GetWindowDrawList();
+        var rowCenterY = area.Min.Y + AppHeader.Height * scale * 0.5f;
+        var logoSize = LogoSize * scale;
+        var logoCenter = new Vector2(area.Min.X + CellPadX * scale + logoSize * 0.5f, rowCenterY);
+        var logoInk = LogoInk(drawList, logoCenter, logoSize);
+        if (!AppIconTile.TryDrawGlyph(drawList, Id, logoCenter, logoSize, logoInk))
+        {
+            PhoneIcon.Draw(drawList, logoCenter, PhoneIcons.Camera, logoInk, logoSize);
+        }
+
+        DrawLogoTap(logoCenter, logoSize, rowCenterY);
+
+        var titleLeft = logoCenter.X + logoSize * 0.5f + LogoGap * scale;
+        var titleRight = SocialChrome.HeaderSlot(area, 1).X - SocialChrome.HeaderIconRadius * scale - 8f * scale;
+        var titleHeight = Typography.LineHeight(WordmarkStyle);
+        var titleMaxWidth = MathF.Max(1f, titleRight - titleLeft);
+        var titleSize = SocialSeason.FitWordmark(DisplayName, titleMaxWidth, titleHeight, WordmarkStyle, out var title,
+            out var gothic);
+        var titleMin = new Vector2(titleLeft - 6f * scale, rowCenterY - titleHeight * 0.5f - 4f * scale);
+        var titleMax = new Vector2(titleLeft + titleSize.X + 6f * scale, rowCenterY + titleHeight * 0.5f + 4f * scale);
+        UiInteract.HoverHighlight(drawList, titleMin, titleMax, 8f * scale);
+        var titleTop = rowCenterY - (gothic ? titleSize.Y : titleHeight) * 0.5f;
+        SocialSeason.DrawWordmark(drawList, new Vector2(titleLeft, titleTop), title, Ink.TitleInk, titleHeight,
+            WordmarkStyle, gothic);
+        if (UiInteract.HoverClick(titleMin, titleMax, SocialSeason.Sound(UiSound.HalloweenOrgan)))
+        {
+            RefreshActiveFeed();
+        }
+
+        if (!store.IsSignedIn)
+        {
+            return;
+        }
+
+        if (store.IsLoading(activeScope))
+        {
+            LoadingPulse.Spinner(new Vector2(titleMax.X + 12f * scale, rowCenterY), 7f * scale, Ink.AccentLink);
+        }
+
+        var hitRadius = SocialChrome.HeaderIconRadius * scale;
+        var hitExtent = new Vector2(hitRadius, hitRadius);
+        if (DrawHeaderIcon(drawList, SocialChrome.HeaderSlot(area, 1), PhoneIcons.AdjustmentsHorizontal,
+                Loc.T(L.Aethergram.FeedFilters), FeedFiltersActive(), iconSize: TopBarIconSize))
+        {
+            filterSheet.Open();
+        }
+
+        var activityCenter = SocialChrome.HeaderSlot(area, 0);
+        UiAnchors.Report("aethergram.activity", new Rect(activityCenter - hitExtent, activityCenter + hitExtent));
+        if (DrawHeaderIcon(drawList, activityCenter, PhoneIcons.Heart, Loc.T(L.Social.ActivityTitle),
+                badge: social.UnseenCount(Id), iconSize: TopBarIconSize))
+        {
+            OpenActivity();
+        }
+    }
+
+    private bool FeedFiltersActive() =>
+        !configuration.AethergramShowGifPosts || !configuration.AethergramShowCommentMedia
+        || !configuration.AethergramShowSensitivePosts || configuration.AethergramFeedRegionMask != 0;
+
+    private void DrawFilterSheet(Rect screen)
+    {
+        if (!filterSheet.CapturesPointer)
+        {
+            return;
+        }
+
+        filterLabels[0] = Loc.T(L.Settings.AethergramShowGifs);
+        filterLabels[1] = Loc.T(L.Settings.AethergramShowCommentMedia);
+        filterLabels[2] = Loc.T(L.Settings.AethergramShowSensitive);
+        Span<bool> values = stackalloc bool[FilterToggleCount];
+        values[0] = configuration.AethergramShowGifPosts;
+        values[1] = configuration.AethergramShowCommentMedia;
+        values[2] = configuration.AethergramShowSensitivePosts;
+        var picked = filterSheet.Draw(screen, Ink, Loc.T(L.Aethergram.FeedFilters), filterLabels, values,
+            configuration.AethergramFeedRegionMask, Loc.T(L.Aethergram.Regions), Loc.T(L.Aethergram.Done));
+        switch (picked)
+        {
+            case 0:
+                configuration.AethergramShowGifPosts = !configuration.AethergramShowGifPosts;
+                break;
+            case 1:
+                configuration.AethergramShowCommentMedia = !configuration.AethergramShowCommentMedia;
+                break;
+            case 2:
+                configuration.AethergramShowSensitivePosts = !configuration.AethergramShowSensitivePosts;
+                store.SetFeedSensitive(configuration.AethergramShowSensitivePosts, activeScope);
+                break;
+            case >= FilterToggleCount:
+                configuration.AethergramFeedRegionMask =
+                    SocialRegion.ToggleMask(configuration.AethergramFeedRegionMask, picked - FilterToggleCount);
+                store.SetFeedRegions(SocialRegion.FilterCsv(configuration.AethergramFeedRegionMask));
+                break;
+            default:
+                return;
+        }
+
+        configuration.Save();
+    }
+
+    private void SelectScope(SocialFeedScope scope)
+    {
+        if (scope == activeScope)
+        {
+            return;
+        }
+
+        activeScope = scope;
+        if (scope != SocialFeedScope.ForYou)
+        {
+            latestScope = scope;
+        }
+
+        configuration.AethergramFeedScope = (int)scope;
+        configuration.Save();
+        feedScrollTopPending = true;
+        profile.EnsureLoaded(activeScope);
+    }
+
+    private void RestoreFeedScope()
+    {
+        var saved = (SocialFeedScope)Math.Clamp(configuration.AethergramFeedScope, 0, (int)SocialFeedScope.Following);
+        activeScope = saved;
+        latestScope = saved == SocialFeedScope.ForYou ? SocialFeedScope.Latest : saved;
+    }
+
+    private float DrawLatestScopeRow(Rect area, float top)
+    {
+        var scale = UiScale.Current;
+        var drawList = ImGui.GetWindowDrawList();
+        var rowHeight = LatestScopeRowHeight * scale;
+        var pillHeight = ChipRail.ChipHeight * scale;
+        var pillTop = top + (rowHeight - pillHeight) * 0.5f;
+        var left = area.Min.X + CellPadX * scale;
+        var everyoneLabel = Loc.T(L.Social.FeedEveryone);
+        var followingLabel = Loc.T(L.Aethergram.Following);
+        var everyoneWidth = Typography.Measure(everyoneLabel, ChipRail.LabelStyle).X + ChipRail.ChipPadX * 2f * scale;
+        var followingWidth = Typography.Measure(followingLabel, ChipRail.LabelStyle).X + ChipRail.ChipPadX * 2f * scale;
+        var everyoneRect = new Rect(new Vector2(left, pillTop), new Vector2(left + everyoneWidth, pillTop + pillHeight));
+        var followingLeft = everyoneRect.Max.X + LatestScopePillGap * scale;
+        var followingRect = new Rect(new Vector2(followingLeft, pillTop),
+            new Vector2(followingLeft + followingWidth, pillTop + pillHeight));
+        if (DrawLatestScopePill(drawList, everyoneRect, everyoneLabel, activeScope == SocialFeedScope.Latest))
+        {
+            SelectScope(SocialFeedScope.Latest);
+        }
+
+        if (DrawLatestScopePill(drawList, followingRect, followingLabel, activeScope == SocialFeedScope.Following))
+        {
+            SelectScope(SocialFeedScope.Following);
+        }
+
+        return top + rowHeight;
+    }
+
+    private bool DrawLatestScopePill(ImDrawListPtr drawList, Rect rect, string label, bool active)
+    {
+        var hovered = UiInteract.Hover(rect.Min, rect.Max);
+        ChipRail.PaintChip(drawList, rect, label, active, hovered, ui.Ink);
+        return UiInteract.Click(rect.Min, rect.Max, hovered);
+    }
+
+    private void DrawFeedExplainer(Rect screen)
+    {
+        if (!feedExplainer.CapturesPointer)
+        {
+            return;
+        }
+
+        feedExplainerParagraphs[0] = Loc.T(L.Social.FeedHowItWorksIntro);
+        feedExplainerParagraphs[1] = Loc.T(L.Social.FeedHowItWorksQuality);
+        feedExplainerParagraphs[2] = Loc.T(L.Social.FeedHowItWorksPeople);
+        feedExplainerParagraphs[3] = Loc.T(L.Social.FeedHowItWorksFair);
+        feedExplainer.Draw(screen, Ink, Loc.T(L.Social.FeedHowItWorks), feedExplainerParagraphs, Loc.T(L.Common.Close));
+    }
+
+    private void DrawCaughtUpLine()
+    {
+        if (CaughtUpDivider.Draw(Ink, Loc.T(CaughtUpTitle), Loc.T(CaughtUpHint),
+                Loc.T(L.Social.FeedHowItWorks)))
+        {
+            feedExplainer.Open();
+        }
+    }
+
+}

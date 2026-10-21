@@ -1,0 +1,128 @@
+using Aetherphone.Core.Aethernet.Contracts;
+using Aetherphone.Core.Localization;
+
+namespace Aetherphone.Core.Social;
+
+internal static class SocialActivity
+{
+    public const int TypeLike = 0;
+    public const int TypeComment = 1;
+    public const int TypeFollow = 2;
+    public const int TypeConnectRequest = 3;
+    public const int TypeConnectAccept = 4;
+    public const int TypePostRemoved = 5;
+    public const int TypeCommentLike = 6;
+    public const int TypeMention = 7;
+    public const int TypeCommentMention = 8;
+    public const int TypePhotoTag = 9;
+    public const int TypeWarning = 10;
+    public const int TypeReportUpdate = 11;
+    public const int TypeRepost = 12;
+    public const int TypeQuote = 13;
+    public const int TypeFollowRequest = 14;
+    public const int TypeFollowAccept = 15;
+    public const int TypeAdExpiring = 16;
+    public const int TypeAdHidden = 17;
+    public const int TypeAdOpened = 18;
+    public const int TypeAdInquiry = 19;
+    public const int TypeMissedCall = 20;
+    public const int TypeRadioLive = 21;
+    public const string ChirperApp = "chirper";
+    public const string AethergramApp = "aethergram";
+    public const string VelvetApp = "velvet";
+    public const string YellowPagesApp = "yellowpages";
+    public const string MessageApp = "message";
+    public const string MusicApp = "music";
+
+    public static bool IsModerationNotice(int type) =>
+        type is TypePostRemoved or TypeWarning or TypeReportUpdate;
+
+    public static bool OpensPost(NotificationDto item) =>
+        item.Type is TypeLike or TypeComment or TypeCommentLike or TypeMention or TypeCommentMention or TypePhotoTag
+            or TypeRepost or TypeQuote
+        && !string.IsNullOrEmpty(item.PostId);
+
+    public static string ActorLabel(NotificationDto item)
+    {
+        if (!string.IsNullOrEmpty(item.ActorDisplayName))
+        {
+            return item.ActorDisplayName;
+        }
+
+        return string.IsNullOrEmpty(item.ActorHandle) ? item.ActorName : item.ActorHandle;
+    }
+
+    public static string Body(NotificationDto item)
+    {
+        var isPhoto = item.App != ChirperApp;
+        switch (item.Type)
+        {
+            case TypeLike:
+                return Loc.T(isPhoto ? L.Social.LikedPhoto : L.Social.LikedChirp);
+            case TypeComment:
+                var action = Loc.T(isPhoto ? L.Social.CommentedPhoto : L.Social.CommentedChirp);
+                return string.IsNullOrEmpty(item.Preview) ? action : $"{action}: “{item.Preview}”";
+            case TypeCommentLike:
+                var likedAction = Loc.T(L.Social.LikedComment);
+                return string.IsNullOrEmpty(item.Preview) ? likedAction : $"{likedAction}: “{item.Preview}”";
+            case TypeMention:
+                var mentionAction = Loc.T(isPhoto ? L.Social.MentionedPhoto : L.Social.MentionedChirp);
+                return string.IsNullOrEmpty(item.Preview) ? mentionAction : $"{mentionAction}: “{item.Preview}”";
+            case TypeCommentMention:
+                var commentMentionAction = Loc.T(L.Social.MentionedComment);
+                return string.IsNullOrEmpty(item.Preview)
+                    ? commentMentionAction
+                    : $"{commentMentionAction}: “{item.Preview}”";
+            case TypePhotoTag:
+                return Loc.T(L.Social.TaggedPhoto);
+            case TypeRepost:
+                var repostAction = Loc.T(isPhoto ? L.Social.RepostedPhoto : L.Social.RepostedChirp);
+                return string.IsNullOrEmpty(item.Preview) ? repostAction : $"{repostAction}: “{item.Preview}”";
+            case TypeQuote:
+                var quoteAction = Loc.T(isPhoto ? L.Social.QuotedPhoto : L.Social.QuotedChirp);
+                return string.IsNullOrEmpty(item.Preview) ? quoteAction : $"{quoteAction}: “{item.Preview}”";
+            case TypeFollow:
+                return Loc.T(L.Social.Followed);
+            case TypeFollowRequest:
+                return Loc.T(L.Social.RequestedFollow);
+            case TypeFollowAccept:
+                return Loc.T(L.Social.AcceptedFollow);
+            case TypeConnectRequest:
+                return Loc.T(L.Social.ConnectionRequest);
+            case TypeConnectAccept:
+                return Loc.T(L.Social.ConnectionAccepted);
+            case TypePostRemoved:
+                return string.IsNullOrEmpty(item.CommentId)
+                    ? ContentModeration.RemovalMessage(item.Preview)
+                    : ContentModeration.CommentRemovalMessage(item.Preview);
+            case TypeWarning:
+                return string.IsNullOrEmpty(item.Preview) ? Loc.T(L.Moderation.WarningBody) : item.Preview;
+            case TypeReportUpdate:
+                return ContentModeration.ReportOutcomeMessage(item.Preview);
+            case TypeAdExpiring:
+                return string.IsNullOrEmpty(item.Preview)
+                    ? Loc.T(L.YellowPages.NotifExpiringGeneric)
+                    : Loc.T(L.YellowPages.NotifExpiringBody, item.Preview);
+            case TypeAdHidden:
+                return string.IsNullOrEmpty(item.Preview)
+                    ? Loc.T(L.YellowPages.NotifHiddenGeneric)
+                    : Loc.T(L.YellowPages.NotifHiddenBody, item.Preview);
+            case TypeAdOpened:
+                return string.IsNullOrEmpty(item.Preview)
+                    ? Loc.T(L.YellowPages.NotifOpenedGeneric)
+                    : Loc.T(L.YellowPages.NotifOpenedBody, item.Preview);
+            case TypeAdInquiry:
+                return string.IsNullOrEmpty(item.Preview)
+                    ? Loc.T(L.YellowPages.NotifInquiryGeneric)
+                    : Loc.T(L.YellowPages.NotifInquiryBody, item.Preview);
+            case TypeMissedCall:
+                return Loc.T(L.Phone.MissedCallBody);
+            case TypeRadioLive:
+                return string.IsNullOrEmpty(item.Preview)
+                    ? Loc.T(L.Music.NotifLiveGeneric)
+                    : Loc.T(L.Music.NotifLiveBody, item.Preview);
+            default:
+                return string.Empty;
+        }
+    }
+}

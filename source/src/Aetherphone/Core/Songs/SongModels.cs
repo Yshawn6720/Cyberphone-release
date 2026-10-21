@@ -1,0 +1,31 @@
+namespace Aetherphone.Core.Songs;
+
+internal enum SongSearchScope : byte
+{
+    Songs,
+    LongPlays,
+    All,
+}
+
+internal readonly struct Song
+{
+    public readonly string VideoId;
+    public readonly string Title;
+    public readonly string Author;
+    public readonly string ThumbnailUrl;
+    public readonly int DurationSeconds;
+    public readonly string ChannelId;
+
+    public Song(string videoId, string title, string author, string thumbnailUrl, int durationSeconds,
+        string channelId = "")
+    {
+        VideoId = videoId;
+        Title = title;
+        Author = author;
+        ThumbnailUrl = thumbnailUrl;
+        DurationSeconds = durationSeconds;
+        ChannelId = channelId ?? string.Empty;
+    }
+
+    public bool IsEmpty => string.IsNullOrEmpty(VideoId);
+}

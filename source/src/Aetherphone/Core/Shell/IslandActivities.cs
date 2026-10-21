@@ -1,0 +1,183 @@
+using Aetherphone.Core.Aethernet.Contracts;
+
+namespace Aetherphone.Core.Shell;
+
+internal enum IslandActivity : byte
+{
+    None,
+    Call,
+    Session,
+    Playback,
+    PcMedia,
+    Timer,
+    Muster,
+    Notice,
+    GameTimer,
+    Fishing,
+}
+
+internal enum IslandNotice : byte
+{
+    DoNotDisturb,
+    LockPosition,
+}
+
+internal readonly record struct IslandSignals(bool Call, bool Session, bool Playback, bool Timer, bool Muster,
+    bool PcMedia = false, bool GameTimer = false, bool Fishing = false);
+
+internal static class IslandActivities
+{
+    public const long MusterHorizonSeconds = 3600;
+    public const long MusterStartedGraceSeconds = 300;
+    public const float CardHeightUnits = 96f;
+    public const float PlaybackCardHeightUnits = 136f;
+    public const float ExpandedHalfWidthUnits = 150f;
+    public const float ExpandedSideInsetUnits = 14f;
+    public const float CardPadUnits = 18f;
+    public const float TransportStrideUnits = 44f;
+    public const float ModeStrideUnits = TransportStrideUnits * 2f;
+    public const float SideControlRadiusUnits = 15f;
+    public const float ModeRadiusUnits = SideControlRadiusUnits;
+    public const float SwipeDismissUnits = 48f;
+    public const float SwipeDismissVelocityUnits = 700f;
+
+    public static bool Swipeable(IslandActivity activity, bool playing) =>
+        !playing && activity is IslandActivity.Playback or IslandActivity.PcMedia;
+
+    public static bool SwipeDismisses(float offset, float velocity, float scale) =>
+        offset >= SwipeDismissUnits * scale || (offset > 0f && velocity >= SwipeDismissVelocityUnits * scale);
+
+    public static float ExpandedHeightUnits(IslandActivity activity) =>
+        activity is IslandActivity.Playback or IslandActivity.PcMedia or IslandActivity.Session
+            ? PlaybackCardHeightUnits
+            : CardHeightUnits;
+
+    public static bool VideoLive(bool inParty, bool videoLoaded, bool videoPlaying, bool musicPlaying) =>
+        inParty || (videoLoaded && (videoPlaying || !musicPlaying));
+
+    public static float CornerRadius(float height, float scale) =>
+        MathF.Min(height * 0.5f, CardHeightUnits * 0.5f * scale);
+
+    public static float ExpandedHalfWidth(float screenWidth, float scale) =>
+        MathF.Min(screenWidth * 0.5f - ExpandedSideInsetUnits * scale, ExpandedHalfWidthUnits * scale);
+
+    public static int RemainingSeconds(float positionSeconds, float durationSeconds)
+    {
+        var duration = (int)MathF.Ceiling(MathF.Max(0f, durationSeconds));
+        var elapsed = Math.Clamp((int)MathF.Max(0f, positionSeconds), 0, duration);
+        return duration - elapsed;
+    }
+
+    public static IslandActivity Select(in IslandSignals signals)
+    {
+        if (signals.Call)
+        {
+            return IslandActivity.Call;
+        }
+
+        if (signals.Session)
+        {
+            return IslandActivity.Session;
+        }
+
+        if (signals.Playback)
+        {
+            return IslandActivity.Playback;
+        }
+
+        if (signals.PcMedia)
+        {
+            return IslandActivity.PcMedia;
+        }
+
+        if (signals.Timer)
+        {
+            return IslandActivity.Timer;
+        }
+
+        if (signals.Muster)
+        {
+            return IslandActivity.Muster;
+        }
+
+        if (signals.GameTimer)
+        {
+            return IslandActivity.GameTimer;
+        }
+
+        return signals.Fishing ? IslandActivity.Fishing : IslandActivity.None;
+    }
+
+    public static bool HasOptionalActivity(string appId)
+    {
+        if (appId.Length == 0)
+        {
+            return false;
+        }
+
+        for (var activity = IslandActivity.Session; activity <= IslandActivity.Fishing; activity++)
+        {
+            if (string.Equals(OwnerAppId(activity), appId, StringComparison.Ordinal))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    public static string OwnerAppId(IslandActivity activity)
+    {
+        switch (activity)
+        {
+            case IslandActivity.Call:
+                return "message";
+            case IslandActivity.Session:
+                return "aetherstream";
+            case IslandActivity.Playback:
+            case IslandActivity.PcMedia:
+                return "music";
+            case IslandActivity.Timer:
+                return "clock";
+            case IslandActivity.Muster:
+                return "muster";
+            case IslandActivity.GameTimer:
+                return "timers";
+            case IslandActivity.Fishing:
+                return "fishing";
+            default:
+                return string.Empty;
+        }
+    }
+
+    public static bool MusterInWindow(long startsAtUnix, long nowUnix)
+    {
+        var untilStart = startsAtUnix - nowUnix;
+        return untilStart <= MusterHorizonSeconds && untilStart > -MusterStartedGraceSeconds;
+    }
+
+    public static MusterDto? SoonestMuster(MusterDto[] going, MusterDto? mine, long nowUnix)
+    {
+        MusterDto? soonest = null;
+        if (mine is not null && MusterInWindow(mine.StartsAtUnix, nowUnix))
+        {
+            soonest = mine;
+        }
+
+        for (var index = 0; index < going.Length; index++)
+        {
+            var candidate = going[index];
+            if (!MusterInWindow(candidate.StartsAtUnix, nowUnix))
+            {
+                continue;
+            }
+
+            if (soonest is null || candidate.StartsAtUnix < soonest.StartsAtUnix)
+            {
+                soonest = candidate;
+            }
+        }
+
+        return soonest;
+    }
+}

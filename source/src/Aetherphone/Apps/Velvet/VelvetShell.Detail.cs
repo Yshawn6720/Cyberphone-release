@@ -1,0 +1,586 @@
+using Aetherphone.Apps.Velvet.Kit;
+using Aetherphone.Core;
+using Aetherphone.Core.Aethernet.Contracts;
+using Aetherphone.Core.Apps;
+using Aetherphone.Core.Confirm;
+using Aetherphone.Core.Localization;
+using Aetherphone.Core.Media;
+using Aetherphone.Core.Social;
+using Aetherphone.Core.Translation;
+using Aetherphone.Windows.Components;
+using Dalamud.Bindings.ImGui;
+using Dalamud.Interface.Utility.Raii;
+
+namespace Aetherphone.Apps.Velvet;
+
+internal sealed partial class VelvetShell
+{
+
+    private static readonly TextStyle CommentBodyStyle = TextStyles.Subheadline;
+    private const float CommentHeadHeight = 18f;
+    private const float CommentPadY = 10f;
+    private const float CommentActionWidth = 40f;
+    private const float CommentHeartSize = 16f;
+    private const float CommentHeartHitRadius = 14f;
+    private const float CommentCountGap = 3f;
+
+    private static readonly TextStyle CommentCountStyle = TextStyles.Caption1;
+
+    private readonly ActionSheet commentSheet = new();
+    private readonly ActionSheet.Item[] commentSheetItems = new ActionSheet.Item[1];
+    private string commentSheetCommentId = string.Empty;
+    private bool commentSheetMine;
+
+    private string commentsPostId = string.Empty;
+    private string commentDraft = string.Empty;
+
+    private void DrawPostDetail(Rect area, string postId)
+    {
+        var scale = UiScale.Current;
+        if (VHeader.Push(area, Loc.T(L.Velvet.Post)))
+        {
+            router.Pop();
+            return;
+        }
+
+        var body = new Rect(new Vector2(area.Min.X, area.Min.Y + VHeader.Height * scale), area.Max);
+        var feed = store.Feed;
+        VelvetPostDto? found = null;
+        for (var index = 0; index < feed.Length; index++)
+        {
+            if (feed[index].Id == postId)
+            {
+                found = feed[index];
+                break;
+            }
+        }
+
+        if (found is null && store.FetchedPost is { } fetched && fetched.Id == postId)
+        {
+            found = fetched;
+        }
+
+        if (found is not { } post)
+        {
+            store.EnsurePost(postId);
+            if (!store.FetchPostFailed)
+            {
+                Typography.DrawCentered(body.Center, Loc.T(L.Common.Loading), VelvetTheme.MutedInk);
+            }
+            else if (EmptyState.Draw(body, ui, PhoneIcons.CloudDownload, Loc.T(L.Failure.CouldNotLoad),
+                         Loc.T(L.Common.LoadFailedHint), Loc.T(L.Common.Retry)))
+            {
+                store.RetryPost(postId);
+            }
+
+            return;
+        }
+
+        if (commentsPostId != postId)
+        {
+            commentsPostId = postId;
+            commentDraft = string.Empty;
+            store.OpenComments(postId);
+        }
+
+        var composerHeight = 52f * scale;
+        body = new Rect(body.Min, new Vector2(body.Max.X, body.Max.Y - composerHeight));
+        using (AppSurface.BeginEdgeToEdge(body))
+        {
+            var origin = ImGui.GetCursorScreenPos();
+            var width = ScrollLayout.StableContentWidth();
+            var pad = SocialChrome.CellPadX * scale;
+            var innerX = origin.X + pad;
+            var innerWidth = MathF.Max(1f, width - pad * 2f);
+            var drawList = ImGui.GetWindowDrawList();
+            var headerHeight = 52f * scale;
+            var avatarRadius = 18f * scale;
+            var avatarCenter = new Vector2(innerX + avatarRadius, origin.Y + headerHeight * 0.5f);
+            var authorName = DisplayNameOf(post.OwnerDisplayName, post.OwnerHandle);
+            VAvatar.Draw(drawList, avatarCenter, avatarRadius, theme, authorName, string.Empty, post.OwnerAvatarUrl,
+                images, lodestone, -1, null, Frames.Of(post.OwnerFrameId));
+            var nameLeft = avatarCenter.X + avatarRadius + 10f * scale;
+            var ownerSub = post.OwnerHandle.Length > 0 ? "@" + post.OwnerHandle : string.Empty;
+            var ownerTime = PostTimestamp(post);
+            if (ownerTime.Length > 0)
+            {
+                ownerSub = ownerSub.Length > 0 ? ownerSub + " · " + ownerTime : ownerTime;
+            }
+
+            var headerRect = new Rect(new Vector2(innerX, origin.Y),
+                new Vector2(innerX + width * 0.7f, origin.Y + headerHeight));
+            var nameMaxWidth = origin.X + width - pad - nameLeft;
+            var authorY = avatarCenter.Y - 13f * scale;
+            var authorSize = Typography.Measure(authorName, TextStyles.Headline);
+            var authorHovering = UiInteract.Hover(new Vector2(nameLeft, authorY),
+                new Vector2(nameLeft + nameMaxWidth, authorY + authorSize.Y));
+            UserName.Draw("velvet.detail.author." + post.Id, authorName, post.OwnerBadges, post.OwnerBadgeIds, nameLeft,
+                authorY, nameMaxWidth, TextStyles.Headline, VelvetTheme.TitleInk, authorHovering, false);
+            var ownerSubY = avatarCenter.Y + 3f * scale;
+            var ownerSubSize = Typography.Measure(ownerSub, TextStyles.Subheadline);
+            var ownerSubHovering = UiInteract.Hover(new Vector2(nameLeft, ownerSubY),
+                new Vector2(nameLeft + nameMaxWidth, ownerSubY + ownerSubSize.Y));
+            Marquee.DrawLeft(new MarqueeId("velvet.detail.ownersub.", post.Id), ownerSub, nameLeft, ownerSubY,
+                nameMaxWidth, TextStyles.Subheadline, VelvetTheme.MutedInk, ownerSubHovering);
+            if (UiInteract.HoverClick(headerRect.Min, headerRect.Max))
+            {
+                OpenProfile(post.OwnerId);
+            }
+
+            var imageHeight = PostAspects.TallDisplayHeight(width, post.MediaWidth, post.MediaHeight);
+            var imageRect = new Rect(new Vector2(origin.X, origin.Y + headerHeight),
+                new Vector2(origin.X + width, origin.Y + headerHeight + imageHeight));
+            var photos = PostMedia.Photos(post.MediaUrls, post.MediaUrl);
+            var result = DrawPostCarousel(drawList, imageRect, post, photos, 0f);
+            if (result.Tapped && !UiInteract.InputBlocked && result.Index < photos.Length)
+            {
+                pendingPhotoTap.Arm(photos[result.Index]);
+            }
+
+            var actionsY = imageRect.Max.Y + 22f * scale;
+            var liked = post.MyReaction >= 0;
+            var actionX = innerX + CardActionInset * scale - VIcon.CardAction * scale * 0.5f;
+            var likeTap = DrawCardAction(drawList, ref actionX, actionsY,
+                liked ? PhoneIcons.HeartFilled : PhoneIcons.Heart,
+                liked ? VelvetInk.Shared.LikeRed : VelvetTheme.TitleInk, post.TotalReactions, Loc.T(L.Velvet.Like),
+                TapGlow.Key(post.Id, TapGlow.Like), Loc.T(L.Velvet.LikesTitle), LikeSound(liked));
+            if (likeTap == CardActionTap.Icon)
+            {
+                TapGlow.Toggle(TapGlow.Key(post.Id, TapGlow.Like), liked);
+                store.ToggleReaction(post, 0);
+            }
+            else if (likeTap == CardActionTap.Count)
+            {
+                OpenLikers(post.Id);
+            }
+
+            var commentKey = TapGlow.Key(post.Id, TapGlow.Comment);
+            if (DrawCardAction(drawList, ref actionX, actionsY, PhoneIcons.MessageCircle, VelvetTheme.TitleInk,
+                    post.CommentCount, Loc.T(L.Velvet.Comments), commentKey) != CardActionTap.None)
+            {
+                TapGlow.Bloom(commentKey);
+            }
+            var actionsRight = actionX;
+
+            var trailingCenter = new Vector2(origin.X + width - pad - 4f * scale, actionsY);
+            if (photos.Length > 1)
+            {
+                var dotsCenter = new Vector2(origin.X + width * 0.5f, actionsY);
+                var available = MathF.Min((trailingCenter.X - 16f * scale - dotsCenter.X) * 2f,
+                    (dotsCenter.X - actionsRight - 10f * scale) * 2f);
+                PhotoCarousel.DrawDots(drawList, dotsCenter, photos.Length, result.Index, available,
+                    VelvetTheme.BodyInk);
+            }
+
+            var trailingRadius = 14f * scale;
+            if (VIcon.Plain(trailingCenter, trailingRadius, PhoneIcons.Dots, VIcon.Overflow,
+                    VelvetTheme.TitleInk, Loc.T(L.Velvet.More)))
+            {
+                OpenPostSheet(post, false);
+            }
+
+            ImGui.SetCursorScreenPos(new Vector2(innerX, actionsY + 20f * scale));
+            if (!string.IsNullOrWhiteSpace(post.Caption))
+            {
+                var captionOrigin = ImGui.GetCursorScreenPos();
+                var captionKey = new TranslationKey(TranslationSurface.Post, post.Id);
+                var captionView = translation.View(captionKey, post.Caption, post.Lang);
+                var captionText = captionView.Text;
+                var captionWidth = innerWidth;
+                RichTextLayout? captionLayout;
+                using (Plugin.Fonts.Push(TextStyles.Callout.Scale, TextStyles.Callout.Weight))
+                {
+                    captionLayout = detailBodyLayouts.LayoutFor(captionView.LayoutKey, captionText, post.Mentions,
+                        captionWidth);
+                }
+
+                if (captionLayout is null)
+                {
+                    var captionHeight = Typography.DrawWrappedLeft(captionOrigin, captionText, VelvetTheme.BodyInk,
+                        TextStyles.Callout, captionWidth);
+                    ImGui.Dummy(new Vector2(captionWidth, captionHeight));
+                }
+                else
+                {
+                    using (Plugin.Fonts.Push(TextStyles.Callout.Scale, TextStyles.Callout.Weight))
+                    {
+                        DrawRichBody(ImGui.GetWindowDrawList(), captionLayout, captionOrigin);
+                    }
+
+                    ImGui.SetCursorScreenPos(captionOrigin);
+                    ImGui.Dummy(captionLayout.Size);
+                }
+
+                var captionLinkHeight = TranslateLink.Height(translation, captionKey, post.Lang, scale);
+                if (captionLinkHeight > 0f)
+                {
+                    var linkTop = ImGui.GetCursorScreenPos().Y;
+                    TranslateLink.Draw(translation, confirm, captionKey, post.Lang, post.Caption,
+                        new Vector2(captionOrigin.X, linkTop), captionWidth, VelvetTheme.MutedInk, VelvetTheme.RoseGlow,
+                        scale);
+                    ImGui.SetCursorScreenPos(new Vector2(captionOrigin.X, linkTop + captionLinkHeight));
+                }
+
+                Gap(12f);
+            }
+
+            if (post.Tags.Length > 0)
+            {
+                ImGui.SetCursorScreenPos(new Vector2(innerX, ImGui.GetCursorScreenPos().Y));
+                var tappedTag = DrawDisplayTokens(post.Tags, VelvetTheme.Rose, innerWidth);
+                if (tappedTag >= 0)
+                {
+                    OpenTagPosts(post.Tags[tappedTag]);
+                }
+            }
+
+            var viewerOwnsPost = store.Me is { } viewer && viewer.UserId == post.OwnerId;
+            DrawComments(post.CommentCount, width, scale, viewerOwnsPost);
+            Gap(20f);
+        }
+
+        DrawCommentComposer(new Rect(new Vector2(area.Min.X, area.Max.Y - composerHeight), area.Max), area, postId);
+    }
+
+    private void DrawComments(int totalCount, float width, float scale, bool viewerOwnsPost)
+    {
+        Gap(14f);
+        var pad = SocialChrome.CellPadX * scale;
+        var count = store.HasMoreComments
+            ? Math.Max(totalCount, store.DetailComments.Length)
+            : store.DetailComments.Length;
+        var labelOrigin = ImGui.GetCursorScreenPos();
+        Typography.Draw(ImGui.GetWindowDrawList(), new Vector2(labelOrigin.X + pad, labelOrigin.Y),
+            Loc.Upper(count > 0 ? Loc.T(L.Velvet.CommentsCount, count) : Loc.T(L.Velvet.Comments)),
+            VelvetTheme.MutedInk, TextStyles.FootnoteEmphasized);
+        ImGui.SetCursorScreenPos(labelOrigin);
+        ImGui.Dummy(new Vector2(width, 26f * scale));
+
+        var comments = store.DetailComments;
+        if (store.LoadingComments || comments.Length == 0)
+        {
+            Typography.Draw(new Vector2(labelOrigin.X + pad, ImGui.GetCursorScreenPos().Y),
+                Loc.T(store.LoadingComments ? L.Common.Loading : L.Velvet.NoComments), VelvetTheme.MutedInk,
+                TextStyles.Footnote);
+            Gap(24f);
+            return;
+        }
+
+        for (var index = 0; index < comments.Length; index++)
+        {
+            DrawCommentRow(comments[index], scale, viewerOwnsPost);
+        }
+
+        if (store.CommentsLoadingMore)
+        {
+            InfiniteScroll.DrawLoadingRow(ImGui.GetCursorScreenPos().X + width * 0.5f, VelvetTheme.MutedInk);
+        }
+        else if (store.HasMoreComments && InfiniteScroll.ReachedBottom())
+        {
+            store.LoadMoreComments();
+        }
+    }
+
+    private void DrawCommentRow(VelvetCommentDto comment, float scale, bool viewerOwnsPost)
+    {
+        var width = ScrollLayout.StableContentWidth();
+        var pad = SocialChrome.CellPadX * scale;
+        var avatarRadius = 15f * scale;
+        var textLeft = pad + avatarRadius * 2f + 10f * scale;
+        var wrapWidth = MathF.Max(1f, width - pad - CommentActionWidth * scale - textLeft);
+        var authorName = DisplayNameOf(comment.AuthorDisplayName, comment.AuthorHandle);
+        var commentKey = new TranslationKey(TranslationSurface.Comment, comment.Id);
+        var commentView = translation.View(commentKey, comment.Text, comment.Lang);
+        var commentText = commentView.Text;
+        RichTextLayout? commentLayout;
+        using (Plugin.Fonts.Push(CommentBodyStyle.Scale, CommentBodyStyle.Weight))
+        {
+            commentLayout = commentLayouts.LayoutFor(commentView.LayoutKey, commentText, comment.Mentions, wrapWidth);
+        }
+
+        var textHeight = commentLayout?.Size.Y ?? Typography.MeasureWrapped(commentText, wrapWidth, CommentBodyStyle.Scale);
+        var linkHeight = TranslateLink.Height(translation, commentKey, comment.Lang, scale);
+        var bodyHeight = CommentHeadHeight * scale + textHeight + linkHeight;
+        var cellHeight = MathF.Max(avatarRadius * 2f, bodyHeight) + CommentPadY * 2f * scale;
+        var drawList = ImGui.GetWindowDrawList();
+        var cell = FeedCell.Begin(drawList, cellHeight, VelvetTheme.HoverWash, interactive: false);
+        var origin = new Vector2(cell.Bounds.Min.X, cell.Bounds.Min.Y + CommentPadY * scale);
+        var avatarCenter = new Vector2(cell.Bounds.Min.X + pad + avatarRadius, origin.Y + avatarRadius);
+        VAvatar.Draw(drawList, avatarCenter, avatarRadius, theme, authorName, string.Empty, comment.AuthorAvatarUrl,
+            images, lodestone, -1, null, Frames.Of(comment.AuthorFrameId));
+        var nameLeft = cell.Bounds.Min.X + textLeft;
+        var nameMaxWidth = wrapWidth * 0.55f;
+        var nameHovering = UiInteract.Hover(new Vector2(nameLeft, origin.Y),
+            new Vector2(nameLeft + nameMaxWidth, origin.Y + 16f * scale));
+        var nameWidth = UserName.Draw(drawList, "velvet.comment.author." + comment.Id, authorName,
+            comment.AuthorBadges, comment.AuthorBadgeIds, nameLeft, origin.Y, nameMaxWidth,
+            TextStyles.SubheadlineEmphasized, VelvetTheme.TitleInk, nameHovering, false);
+        var time = TimeText.Short(comment.CreatedAtUnix);
+        if (time.Length > 0)
+        {
+            var timeMaxWidth = MathF.Max(1f, wrapWidth - nameWidth - 40f * scale);
+            var timeWidth = Marquee.DrawLeftAuto(new MarqueeId("velvet.comment.time.", comment.Id), time,
+                nameLeft + nameWidth + 8f * scale, origin.Y + 1f * scale, timeMaxWidth, TextStyles.Footnote,
+                VelvetTheme.MutedInk);
+            CommentReviewTag.Draw(
+                new Vector2(nameLeft + nameWidth + 8f * scale + timeWidth + 8f * scale, origin.Y + 1f * scale),
+                nameLeft + wrapWidth, comment.ScanStatus, TextStyles.Footnote.Scale);
+        }
+
+        var textTop = origin.Y + CommentHeadHeight * scale;
+        if (commentLayout is null)
+        {
+            Typography.DrawWrappedLeft(new Vector2(nameLeft, textTop), commentText, VelvetTheme.BodyInk,
+                CommentBodyStyle, wrapWidth);
+        }
+        else
+        {
+            using (Plugin.Fonts.Push(CommentBodyStyle.Scale, CommentBodyStyle.Weight))
+            {
+                DrawRichBody(drawList, commentLayout, new Vector2(nameLeft, textTop));
+            }
+        }
+
+        if (linkHeight > 0f)
+        {
+            TranslateLink.Draw(translation, confirm, commentKey, comment.Lang, comment.Text,
+                new Vector2(nameLeft, textTop + textHeight), wrapWidth, VelvetTheme.MutedInk, VelvetTheme.RoseGlow,
+                scale);
+        }
+
+        if (UiInteract.HoverClick(new Vector2(nameLeft, origin.Y), new Vector2(nameLeft + nameWidth, textTop)))
+        {
+            OpenProfile(comment.AuthorId);
+        }
+
+        var heartCenter = new Vector2(cell.Bounds.Max.X - pad - CommentHeartSize * 0.5f * scale,
+            origin.Y + CommentHeadHeight * 0.5f * scale);
+        DrawCommentHeart(drawList, comment, heartCenter);
+        var mine = store.Me is { } me && me.UserId == comment.AuthorId;
+        if ((mine || viewerOwnsPost) && UiInteract.Hover(cell.Bounds.Min, cell.Bounds.Max)
+            && ImGui.IsMouseClicked(ImGuiMouseButton.Right))
+        {
+            OpenCommentSheet(comment.Id, mine);
+        }
+
+        FeedCell.End(drawList, cell, VelvetTheme.Hairline);
+    }
+
+    private void DrawCommentHeart(ImDrawListPtr drawList, VelvetCommentDto comment, Vector2 center)
+    {
+        var scale = UiScale.Current;
+        var hit = new Vector2(CommentHeartHitRadius * scale, CommentHeartHitRadius * scale);
+        var hovered = UiInteract.Hover(center - hit, center + hit);
+        var ink = comment.Liked ? VelvetInk.Shared.LikeRed : hovered ? VelvetTheme.TitleInk : VelvetTheme.MutedInk;
+        PhoneIcon.Draw(drawList, center, comment.Liked ? PhoneIcons.HeartFilled : PhoneIcons.Heart, ink,
+            CommentHeartSize * scale);
+        if (comment.LikeCount > 0)
+        {
+            var count = CountText.Compact(comment.LikeCount);
+            var size = Typography.Measure(count, CommentCountStyle);
+            Typography.Draw(drawList,
+                new Vector2(center.X - size.X * 0.5f, center.Y + CommentHeartSize * 0.5f * scale + CommentCountGap * scale),
+                count, VelvetTheme.MutedInk, CommentCountStyle);
+        }
+
+        HoverTooltip.Show(new Rect(center - hit, center + hit), Loc.T(L.Velvet.Like), HoverLabelSide.Above);
+        if (hovered)
+        {
+            ImGui.SetMouseCursor(ImGuiMouseCursor.Hand);
+        }
+
+        if (UiInteract.Click(center - hit, center + hit, hovered))
+        {
+            store.ToggleCommentLike(comment);
+        }
+    }
+
+    private void OpenCommentSheet(string commentId, bool mine)
+    {
+        commentSheetCommentId = commentId;
+        commentSheetMine = mine;
+        commentSheetItems[0] = new ActionSheet.Item(
+            Loc.T(mine ? L.Velvet.DeleteComment : L.Velvet.RemoveComment), string.Empty, true);
+        commentSheet.Open();
+    }
+
+    private void DrawCommentSheet(Rect screen)
+    {
+        if (!commentSheet.CapturesPointer)
+        {
+            return;
+        }
+
+        var picked = commentSheet.Draw(screen, ActionSheetStyle.From(ui), commentSheetItems, Loc.T(L.Common.Cancel),
+            false);
+        if (picked != 0 || commentSheetCommentId.Length == 0)
+        {
+            return;
+        }
+
+        if (commentSheetMine)
+        {
+            AskDeleteComment(commentsPostId, commentSheetCommentId);
+            return;
+        }
+
+        AskRemoveComment(commentsPostId, commentSheetCommentId);
+    }
+
+    private void DrawCommentComposer(Rect bar, Rect screen, string postId)
+    {
+        var style = new CommentComposerStyle(VelvetTheme.Hairline,
+            Surfaces.Fill(VelvetTheme.Ink, FillLevel.Tertiary), VelvetTheme.TitleInk, VelvetTheme.Rose,
+            Surfaces.Fill(VelvetTheme.Ink, FillLevel.Secondary), VelvetTheme.OnAccent, true, 9f, 54f, 0.85f);
+        var returned = Interlocked.Exchange(ref commentRestore, null);
+        if (returned is not null)
+        {
+            commentDraft = returned;
+        }
+
+        if (commentFailure.Failed)
+        {
+            Typography.DrawWrappedCentered(new Vector2(bar.Center.X, bar.Min.Y - 22f * UiScale.Current),
+                commentFailure.Text(), VelvetTheme.MutedInk, TextStyles.Footnote,
+                bar.Width - 28f * UiScale.Current);
+        }
+
+        var focusPending = false;
+        if (CommentComposerBar.Draw(bar, screen, ui, theme, style, "##velvetComment", Loc.T(L.Velvet.AddComment),
+                ref commentDraft, 500, commentMentions, mentionPopup, images, lodestone, store.Commenting,
+                ref focusPending, commentEmoji))
+        {
+            var text = commentDraft;
+            commentDraft = string.Empty;
+            commentFailure.Clear();
+            store.AddComment(postId, text, accepted =>
+            {
+                if (accepted)
+                {
+                    return;
+                }
+
+                commentRestore = text;
+            }, commentFailure.Set);
+        }
+    }
+
+    private void OpenLikers(string postId)
+    {
+        store.OpenLikers(postId);
+        router.Push(VelvetView.Likers(postId));
+    }
+
+    private void DrawLikers(Rect area, string postId)
+    {
+        var scale = UiScale.Current;
+        if (VHeader.Push(area, Loc.T(L.Velvet.LikesTitle)))
+        {
+            router.Pop();
+            return;
+        }
+
+        var body = new Rect(new Vector2(area.Min.X, area.Min.Y + VHeader.Height * scale), area.Max);
+        using (AppSurface.BeginEdgeToEdge(body))
+        {
+            if (store.LikersLoading)
+            {
+                DrawEmpty(body, Loc.T(L.Common.Loading), string.Empty);
+                return;
+            }
+
+            var likers = store.Likers;
+            if (likers.Length == 0)
+            {
+                DrawEmpty(body, Loc.T(L.Velvet.NoLikes), string.Empty);
+                return;
+            }
+
+            Gap(8f);
+            for (var index = 0; index < likers.Length; index++)
+            {
+                var user = likers[index];
+                var model = new VRowModel
+                {
+                    Title = DisplayNameOf(user.DisplayName, user.Handle),
+                    Subtitle = SocialIdentity.ProfileMeta(user.Handle, RegionCodeOf(user)),
+                    Height = 60f,
+                    Leading = VRowLeading.Avatar,
+                    AvatarRadius = 20f,
+                    Name = DisplayNameOf(user.DisplayName, user.Handle),
+                    World = string.Empty,
+                    AvatarUrl = user.AvatarUrl,
+                    FrameId = user.FrameId,
+                    RoleBadges = user.Badges,
+                    RoleBadgeIds = user.ProfileBadges,
+                    UserId = user.Id,
+                };
+                if (VRow.Cell(in model, theme, images, lodestone) == VRowHit.Body)
+                {
+                    OpenProfile(user.Id);
+                }
+            }
+
+            if (store.LikersLoadingMore)
+            {
+                InfiniteScroll.DrawLoadingRow(body.Center.X, VelvetTheme.MutedInk);
+            }
+            else if (store.HasMoreLikers && InfiniteScroll.ReachedBottom())
+            {
+                store.LoadMoreLikers();
+            }
+
+            Gap(40f);
+        }
+    }
+
+    private void AskDeletePost(string postId, Action? deleted = null)
+    {
+        confirm.Ask(new ConfirmRequest
+        {
+            Message = Loc.T(L.Velvet.DeleteConfirmMessage),
+            ConfirmLabel = Loc.T(L.Velvet.DeleteConfirm),
+            CancelLabel = Loc.T(L.Velvet.DeleteCancel),
+            Sheet = true,
+            BusyLabel = Loc.T(L.Velvet.Saving),
+            FailedMessage = Loc.T(L.Velvet.DeleteFailed),
+            ConfirmAsync = done => store.DeletePost(postId, ok =>
+            {
+                if (ok)
+                {
+                    deleted?.Invoke();
+                }
+
+                done(ok);
+            }),
+        });
+    }
+
+    private void AskDeleteComment(string postId, string commentId)
+    {
+        confirm.Ask(new ConfirmRequest
+        {
+            Message = Loc.T(L.Velvet.DeleteCommentConfirmMessage),
+            ConfirmLabel = Loc.T(L.Velvet.DeleteConfirm),
+            CancelLabel = Loc.T(L.Velvet.DeleteCancel),
+            Sheet = true,
+            BusyLabel = Loc.T(L.Velvet.Saving),
+            FailedMessage = Loc.T(L.Velvet.DeleteCommentFailed),
+            ConfirmAsync = done => store.DeleteComment(postId, commentId, done),
+        });
+    }
+
+    private void AskRemoveComment(string postId, string commentId)
+    {
+        confirm.Ask(new ConfirmRequest
+        {
+            Message = Loc.T(L.Velvet.RemoveCommentConfirmMessage),
+            ConfirmLabel = Loc.T(L.Velvet.DeleteConfirm),
+            CancelLabel = Loc.T(L.Velvet.DeleteCancel),
+            Sheet = true,
+            BusyLabel = Loc.T(L.Velvet.Saving),
+            FailedMessage = Loc.T(L.Velvet.DeleteCommentFailed),
+            ConfirmAsync = done => store.DeleteComment(postId, commentId, done),
+        });
+    }
+}

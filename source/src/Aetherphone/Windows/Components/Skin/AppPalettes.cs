@@ -1,0 +1,272 @@
+using Aetherphone.Core.Apps;
+using Aetherphone.Core.Theme;
+
+namespace Aetherphone.Windows.Components;
+
+internal static class AppPalettes
+{
+    private const float BackdropTopLuminance = 0.016f;
+    private const float BackdropBottomLuminance = 0.004f;
+
+    private static readonly Vector4 GlassFill = new(1f, 1f, 1f, 0.05f);
+    private static readonly Vector4 GlassStroke = new(1f, 1f, 1f, 0.06f);
+    private static readonly Vector4 GlassField = new(1f, 1f, 1f, 0.10f);
+    private static readonly Vector4 DefaultHover = new(1f, 1f, 1f, 0.06f);
+    private static readonly Vector4 DefaultHairline = new(1f, 1f, 1f, 0.065f);
+    private static readonly Vector4 DefaultHoverWash = new(1f, 1f, 1f, 0.025f);
+    private static readonly Vector4 White = new(1f, 1f, 1f, 1f);
+    private static readonly Vector4 MutedBase = new(0.78f, 0.78f, 0.78f, 1f);
+
+    public static AppPalette Tinted(Vector4 accent) => new()
+    {
+        Accent = accent,
+        TitleInk = Palette.Mix(White, accent, 0.05f),
+        BodyInk = Palette.WithAlpha(Palette.Mix(White, accent, 0.15f), 0.96f),
+        MutedInk = Palette.WithAlpha(Palette.Mix(MutedBase, accent, 0.22f), 0.85f),
+        HeaderInk = Palette.WithAlpha(Palette.Lighten(accent, 0.60f), 0.95f),
+        HeadingInk = Palette.Mix(White, accent, 0.09f),
+        BackdropTop = Palette.ShadeToLuminance(accent, BackdropTopLuminance),
+        BackdropBottom = Palette.ShadeToLuminance(accent, BackdropBottomLuminance),
+        BloomTop = Palette.WithAlpha(accent, 0.23f),
+        BloomBottom = Palette.WithAlpha(Palette.Darken(accent, 0.37f), 0f),
+        CardFill = GlassFill,
+        CardStroke = GlassStroke,
+        FieldSurface = GlassField,
+        HoverTint = DefaultHover,
+        Hairline = DefaultHairline,
+        HoverWash = DefaultHoverWash,
+    };
+
+    public static AppPalette Neutral(Vector4 accent) => new()
+    {
+        Accent = accent,
+        TitleInk = new(0.98f, 0.98f, 0.99f, 1f),
+        BodyInk = new(0.90f, 0.90f, 0.92f, 0.96f),
+        MutedInk = new(0.62f, 0.62f, 0.66f, 0.85f),
+        HeaderInk = new(0.78f, 0.78f, 0.83f, 0.95f),
+        HeadingInk = new(0.97f, 0.97f, 0.98f, 1f),
+        BackdropTop = new(0.062f, 0.062f, 0.075f, 1f),
+        BackdropBottom = new(0.015f, 0.015f, 0.020f, 1f),
+        BloomTop = Palette.WithAlpha(accent, 0.10f),
+        BloomBottom = Palette.WithAlpha(Palette.Darken(accent, 0.55f), 0f),
+        CardFill = GlassFill,
+        CardStroke = GlassStroke,
+        FieldSurface = GlassField,
+        HoverTint = DefaultHover,
+        Hairline = DefaultHairline,
+        HoverWash = DefaultHoverWash,
+    };
+
+    private static AppPalette For(string id) => Tinted(AppAccents.For(id));
+
+    private static AppPalette Night(Vector4 accent, Vector4 top, Vector4 bottom, Vector4 bloom) =>
+        Tinted(accent) with { BackdropTop = top, BackdropBottom = bottom, BloomTop = bloom, BloomBottom = bloom with { W = 0f } };
+
+    public static readonly AppPalette Health = Neutral(AppAccents.For("health"));
+    public static readonly AppPalette Chirper = For("chirper");
+    public static readonly AppPalette ChirperMoonlit = Night(new(0.498f, 0.596f, 0.918f, 1f),
+        new(0.039f, 0.063f, 0.188f, 1f), new(0.024f, 0.027f, 0.102f, 1f), new(0.80f, 0.85f, 1f, 0.08f));
+    public static readonly AppPalette Market = For("market");
+    public static readonly AppPalette Aethergram = For("aethergram");
+    public static readonly AppPalette AethergramBloodMoon = Night(new(0.878f, 0.149f, 0.243f, 1f),
+        new(0.110f, 0.016f, 0.031f, 1f), new(0.039f, 0.004f, 0.012f, 1f), new(0.878f, 0.149f, 0.243f, 0.14f));
+    public static readonly AppPalette Velvet = For("velvet");
+    public static readonly AppPalette Message = MessageChrome(AppAccents.For("message"));
+    public static readonly AppPalette Venues = For("venues");
+    public static readonly AppPalette Strats = For("strats");
+    public static readonly AppPalette Games = Neutral(AppAccents.For("games"));
+    public static readonly AppPalette Housing = HousingChrome(AppAccents.For("housing"));
+    public static readonly AppPalette Muster = For("muster");
+    public static readonly AppPalette YellowPages = For("yellowpages");
+    public static readonly AppPalette Feedback = For("feedback");
+    public static readonly AppPalette Polls = For("polls");
+    public static readonly AppPalette Activity = Neutral(AppAccents.For("character"));
+    public static readonly AppPalette Dailies = For("dailies");
+    public static readonly AppPalette Collections = For("collections");
+    public static readonly AppPalette Coin = For("coin");
+    public static readonly AppPalette Wallet = For("wallet");
+    public static readonly AppPalette Inventory = For("inventory");
+    public static readonly AppPalette AppStore = For("appstore");
+    public static readonly AppPalette Shortcuts = For("shortcuts");
+    public static readonly AppPalette Timers = For("timers");
+    public static readonly AppPalette Fishing = For("fishing");
+    public static readonly AppPalette AetherStream = For("aetherstream");
+    public static readonly AppPalette Hunts = For("hunts");
+    public static readonly AppPalette Notifications = For("notifications");
+
+    private static AppPalette MessageChrome(Vector4 accent) => new()
+    {
+        Accent = accent,
+        TitleInk = new(0.914f, 0.929f, 0.937f, 1f),
+        BodyInk = new(0.851f, 0.871f, 0.882f, 0.96f),
+        MutedInk = new(0.529f, 0.600f, 0.643f, 1f),
+        HeaderInk = Palette.WithAlpha(Palette.Lighten(accent, 0.55f), 0.95f),
+        HeadingInk = new(0.914f, 0.929f, 0.937f, 1f),
+        BackdropTop = new(0.043f, 0.078f, 0.102f, 1f),
+        BackdropBottom = new(0.043f, 0.078f, 0.102f, 1f),
+        BloomTop = Palette.WithAlpha(accent, 0.06f),
+        BloomBottom = new(0f, 0f, 0f, 0f),
+        CardFill = new(0.125f, 0.173f, 0.200f, 1f),
+        CardStroke = new(1f, 1f, 1f, 0.04f),
+        FieldSurface = new(0.125f, 0.173f, 0.200f, 1f),
+        HoverTint = DefaultHover,
+        Hairline = new(1f, 1f, 1f, 0.07f),
+        HoverWash = DefaultHoverWash,
+    };
+
+    private static AppPalette HousingChrome(Vector4 accent) => new()
+    {
+        Accent = accent,
+        TitleInk = new(0.976f, 0.980f, 0.988f, 1f),
+        BodyInk = new(0.898f, 0.918f, 0.949f, 0.96f),
+        MutedInk = new(0.682f, 0.725f, 0.800f, 1f),
+        HeaderInk = Palette.WithAlpha(Palette.Lighten(accent, 0.55f), 0.95f),
+        HeadingInk = new(0.976f, 0.980f, 0.988f, 1f),
+        BackdropTop = new(0.063f, 0.122f, 0.220f, 1f),
+        BackdropBottom = new(0.031f, 0.059f, 0.110f, 1f),
+        BloomTop = Palette.WithAlpha(accent, 0.04f),
+        BloomBottom = new(0f, 0f, 0f, 0f),
+        CardFill = new(0.082f, 0.133f, 0.227f, 1f),
+        CardStroke = new(1f, 1f, 1f, 0.10f),
+        FieldSurface = new(0.110f, 0.169f, 0.267f, 1f),
+        HoverTint = DefaultHover,
+        Hairline = new(1f, 1f, 1f, 0.07f),
+        HoverWash = DefaultHoverWash,
+    };
+
+    public static readonly AppPalette Gamba = new()
+    {
+        Accent = AppAccents.For("casino"),
+        TitleInk = new(0.957f, 0.937f, 0.894f, 1f),
+        BodyInk = new(0.851f, 0.839f, 0.800f, 0.96f),
+        MutedInk = new(0.557f, 0.541f, 0.612f, 1f),
+        HeaderInk = Palette.WithAlpha(Palette.Lighten(AppAccents.For("casino"), 0.60f), 0.95f),
+        HeadingInk = new(0.957f, 0.937f, 0.894f, 1f),
+        BackdropTop = new(0.039f, 0.027f, 0.086f, 1f),
+        BackdropBottom = new(0.016f, 0.012f, 0.035f, 1f),
+        BloomTop = Palette.WithAlpha(AppAccents.For("casino"), 0.14f),
+        BloomBottom = new(0.180f, 0.902f, 1f, 0.04f),
+        CardFill = new(0.078f, 0.058f, 0.125f, 0.92f),
+        CardStroke = GlassStroke,
+        FieldSurface = new(0.063f, 0.047f, 0.106f, 1f),
+        HoverTint = new(1f, 1f, 1f, 0.05f),
+        Hairline = DefaultHairline,
+        HoverWash = DefaultHoverWash,
+    };
+
+    public static readonly AppPalette News = Neutral(AppAccents.For("news"));
+    public static readonly AppPalette Music = Neutral(AppAccents.For("music"));
+    public static readonly AppPalette Calculator = Neutral(AppAccents.For("calculator"));
+    public static readonly AppPalette Clock = Neutral(AppAccents.For("clock"));
+
+    public static AppPalette JobsFor(Vector4 accent) => Tinted(accent);
+
+    public static readonly Vector4 HealthWater = AccentRing.Cyan;
+    public static readonly Vector4 HealthEnergy = AccentRing.Gold;
+    public static readonly Vector4 HealthTeleport = AccentRing.Violet;
+
+    public static readonly Vector4 HousingParchment = new(0.86f, 0.80f, 0.66f, 1f);
+    public static readonly Vector4 HousingBrass = AccentRing.Gold;
+    public static readonly Vector4 HousingResults = AccentRing.Orange;
+    public static readonly Vector4 HousingClosed = AccentRing.Slate;
+
+    public static AppPalette Notes(PhoneTheme theme) => new()
+    {
+        Accent = AppAccents.For("notes"),
+        TitleInk = theme.TextStrong,
+        BodyInk = theme.TextStrong,
+        MutedInk = theme.TextMuted,
+        HeaderInk = theme.TextMuted,
+        HeadingInk = theme.TextStrong,
+        BackdropTop = Palette.Mix(theme.AppBackground, theme.GroupedCard, 0.55f),
+        BackdropBottom = theme.AppBackground,
+        BloomTop = default,
+        BloomBottom = default,
+        CardFill = theme.GroupedCard,
+        CardStroke = theme.Separator,
+        FieldSurface = Surfaces.Fill(theme.TextStrong, FillLevel.Tertiary),
+        HoverTint = Palette.WithAlpha(theme.TextStrong, 0.06f),
+        Hairline = theme.Hairline,
+        HoverWash = theme.HoverWash,
+    };
+
+    public static AppPalette PhotosThemed(PhoneTheme theme) => new()
+    {
+        Accent = AppAccents.For("photos"),
+        TitleInk = theme.TextStrong,
+        BodyInk = theme.TextStrong,
+        MutedInk = theme.TextMuted,
+        HeaderInk = theme.TextMuted,
+        HeadingInk = theme.TextStrong,
+        BackdropTop = theme.AppBackground,
+        BackdropBottom = theme.AppBackground,
+        BloomTop = default,
+        BloomBottom = default,
+        CardFill = theme.GroupedCard,
+        CardStroke = theme.Separator,
+        FieldSurface = Surfaces.Fill(theme.TextStrong, FillLevel.Tertiary),
+        HoverTint = Palette.WithAlpha(theme.TextStrong, 0.06f),
+        Hairline = theme.Hairline,
+        HoverWash = theme.HoverWash,
+    };
+
+    public static AppPalette Linkpearl(PhoneTheme theme) => new()
+    {
+        Accent = theme.Accent,
+        TitleInk = theme.TextStrong,
+        BodyInk = theme.TextStrong,
+        MutedInk = theme.TextMuted,
+        HeaderInk = theme.TextMuted,
+        HeadingInk = theme.TextStrong,
+        BackdropTop = theme.AppBackground,
+        BackdropBottom = theme.AppBackground,
+        BloomTop = default,
+        BloomBottom = default,
+        CardFill = theme.GroupedCard,
+        CardStroke = theme.Separator,
+        FieldSurface = theme.GroupedCard,
+        HoverTint = Palette.WithAlpha(theme.TextStrong, 0.06f),
+        Hairline = theme.Hairline,
+        HoverWash = theme.HoverWash,
+    };
+
+    public static AppPalette Calendar(PhoneTheme theme) => new()
+    {
+        Accent = theme.Danger,
+        TitleInk = theme.TextStrong,
+        BodyInk = theme.TextStrong,
+        MutedInk = theme.TextMuted,
+        HeaderInk = theme.TextMuted,
+        HeadingInk = theme.TextStrong,
+        BackdropTop = Palette.Mix(theme.AppBackground, theme.GroupedCard, 0.55f),
+        BackdropBottom = theme.AppBackground,
+        BloomTop = default,
+        BloomBottom = default,
+        CardFill = theme.GroupedCard,
+        CardStroke = theme.Separator,
+        FieldSurface = Surfaces.Fill(theme.TextStrong, FillLevel.Tertiary),
+        HoverTint = Palette.WithAlpha(theme.TextStrong, 0.06f),
+        Hairline = theme.Hairline,
+        HoverWash = theme.HoverWash,
+    };
+
+    public static AppPalette Announcements(PhoneTheme theme) => new()
+    {
+        Accent = AppAccents.For("announcements"),
+        TitleInk = theme.TextStrong,
+        BodyInk = theme.TextStrong,
+        MutedInk = theme.TextMuted,
+        HeaderInk = theme.TextMuted,
+        HeadingInk = theme.TextStrong,
+        BackdropTop = theme.AppBackground,
+        BackdropBottom = theme.AppBackground,
+        BloomTop = default,
+        BloomBottom = default,
+        CardFill = theme.GroupedCard,
+        CardStroke = theme.Separator,
+        FieldSurface = Surfaces.Fill(theme.TextStrong, FillLevel.Tertiary),
+        HoverTint = Palette.WithAlpha(theme.TextStrong, 0.06f),
+        Hairline = theme.Separator,
+        HoverWash = theme.HoverWash,
+    };
+}

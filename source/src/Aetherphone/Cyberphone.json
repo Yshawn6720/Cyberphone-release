@@ -1,0 +1,19 @@
+{
+    "Author": "XeldarAlz; Cyberphone fork by Yshawn6720",
+    "Name": "Cyberphone",
+    "InternalName": "Cyberphone",
+    "Punchline": "A smartphone for the Traditional Chinese client.",
+    "Description": "An in-game smartphone for the Traditional Chinese client. Unofficial fork of Aetherphone by XeldarAlz (AGPL-3.0-or-later); it is not affiliated with Aetherphone and never connects to the official Aethernet service.",
+    "ApplicableVersion": "any",
+    "RepoUrl": "https://github.com/Yshawn6720/Cyberphone",
+    "IconUrl": "https://raw.githubusercontent.com/Yshawn6720/Cyberphone/main/src/Aetherphone/Images/Icon.png",
+    "Tags": [
+        "phone",
+        "cyberphone",
+        "messages",
+        "ui",
+        "quality of life",
+        "device",
+        "call"
+    ]
+}

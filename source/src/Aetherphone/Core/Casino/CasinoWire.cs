@@ -1,0 +1,64 @@
+using Aetherphone.Core.Aethernet.Contracts;
+
+namespace Aetherphone.Core.Casino;
+
+internal static class CasinoWire
+{
+    public static readonly CasinoSittingDto NoBankroll = new();
+
+    public const string SlotsKind = "casino.slots";
+
+    public const string SlotsGambleKind = "casino.slots.gamble";
+
+    public const string ScratchKind = "casino.scratch";
+
+    public const string BartenderKind = "casino.bartender";
+
+    public const string WheelKind = "casino.wheel";
+
+    public const string BingoKind = "casino.bingo";
+
+    public const string BlackjackKind = "casino.blackjack";
+
+    public const string RaceKind = "casino.race";
+
+    public const string BookKind = "casino.book";
+
+    public const string BlackjackHandEvent = "you.cards";
+
+    public const string DailySpinKind = "casino.dailyspin";
+
+    public const string MinesKind = "casino.mines";
+
+    public const string DiceKind = "casino.dice";
+
+    public const string LimboKind = "casino.limbo";
+
+    public const string KenoKind = "casino.keno";
+
+    public const string HiLoKind = "casino.hilo";
+
+    public const string PlinkoKind = "casino.plinko";
+
+    public const string DealerHoldemKind = DealerHoldemRules.Kind;
+
+    private const string KindPrefix = "casino.";
+
+    public static string Kind(string gameId)
+    {
+        return string.Concat(KindPrefix, gameId);
+    }
+
+    public static Aethernet.Contracts.CasinoSittingDto? SittingFor(
+        Aethernet.Contracts.CasinoStateDto? state, string wireKind)
+    {
+        if (state is null)
+        {
+            return null;
+        }
+
+        return string.Equals(wireKind, BlackjackKind, StringComparison.Ordinal)
+            ? state.TableSitting
+            : state.Sitting;
+    }
+}

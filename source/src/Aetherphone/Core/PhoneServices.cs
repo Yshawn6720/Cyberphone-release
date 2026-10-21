@@ -1,0 +1,767 @@
+using Aetherphone.Core.Activity;
+using Aetherphone.Core.Aethernet;
+using Aetherphone.Core.Announcements;
+using Aetherphone.Core.Apps;
+using Aetherphone.Core.Clock;
+using Aetherphone.Core.Collections;
+using Aetherphone.Core.Conduct;
+using Aetherphone.Core.Confirm;
+using Aetherphone.Core.Crypto;
+using Aetherphone.Core.Fishing;
+using Aetherphone.Core.Game;
+using Aetherphone.Core.GameChat;
+using Aetherphone.Core.Games;
+using Aetherphone.Core.Health;
+using Aetherphone.Core.Honorific;
+using Aetherphone.Core.Housing;
+using Aetherphone.Core.Hunts;
+using Aetherphone.Core.Inventory;
+using Aetherphone.Core.Jam;
+using Aetherphone.Core.Lodestone;
+using Aetherphone.Core.Lyrics;
+using Aetherphone.Core.Maps;
+using Aetherphone.Core.Market;
+using Aetherphone.Core.Media;
+using Aetherphone.Core.Moderation;
+using Aetherphone.Core.MoogleClicker;
+using Aetherphone.Core.Muster;
+using Aetherphone.Core.Net;
+using Aetherphone.Core.News;
+using Aetherphone.Core.Notifications;
+using Aetherphone.Core.Photos;
+using Aetherphone.Core.Playback;
+using Aetherphone.Core.Radio;
+using Aetherphone.Core.Report;
+using Aetherphone.Core.Rolladeck;
+using Aetherphone.Core.Runtime;
+using Aetherphone.Core.Sharing;
+using Aetherphone.Core.Shell;
+using Aetherphone.Core.Shortcuts;
+using Aetherphone.Core.Songs;
+using Aetherphone.Core.Strats;
+using Aetherphone.Core.SystemMedia;
+using Aetherphone.Core.Telephony;
+using Aetherphone.Core.Theme;
+using Aetherphone.Core.Translation;
+using Aetherphone.Core.Venues;
+using Aetherphone.Core.Video;
+using Aetherphone.Core.Wallpapers;
+using Aetherphone.Core.YellowPages;
+using Dalamud.Game.ClientState.Conditions;
+using Dalamud.Plugin.Services;
+using YoutubeExplode;
+using WalletService = Aetherphone.Core.Wallet.WalletService;
+
+namespace Aetherphone.Core;
+
+internal sealed class PhoneServices : IDisposable
+{
+    public required Home.AppInstaller Installer { get; init; }
+    public required Configuration Configuration { get; init; }
+    public required ThemeProvider Themes { get; init; }
+    public required Home.HomeLookService Looks { get; init; }
+    public required GameData GameData { get; init; }
+    public required CharacterWatch CharacterWatch { get; init; }
+    public required MapData Maps { get; init; }
+    public required HousingService Housing { get; init; }
+    public required HousingReminderService HousingReminders { get; init; }
+    public required FishingCatalog Fishing { get; init; }
+    public required FishingAlerts FishingAlerts { get; init; }
+    public required ITextureProvider Textures { get; init; }
+    public required Windows.Components.ArtworkCache Artwork { get; init; }
+    public required WeatherService Weather { get; init; }
+    public required WeatherControl WeatherControl { get; init; }
+    public required GameUiVisibility GameUiVisibility { get; init; }
+    public required NotificationService Notifications { get; init; }
+    public required SocialNotificationService SocialNotifications { get; init; }
+    public required ModerationNoticeService ModerationNotices { get; init; }
+
+    public required AccountStateService AccountState { get; init; }
+    public required ModerationNoticePresenter ModerationPresenter { get; init; }
+    public required ModerationNoticeArchive ModerationArchive { get; init; }
+    public required SafetyLauncher SafetyLauncher { get; init; }
+    public required SettingsLauncher SettingsLauncher { get; init; }
+    public required SoundService Sound { get; init; }
+    public required AlarmRinger AlarmRinger { get; init; }
+    public required UiSoundService UiSound { get; init; }
+    public required FrameworkTicker UiSoundTicker { get; init; }
+    public required LinkpearlLauncher LinkpearlLauncher { get; init; }
+    public required VelvetLauncher VelvetLauncher { get; init; }
+    public required DmLauncher DmLauncher { get; init; }
+    public required GramDmLauncher GramDmLauncher { get; init; }
+    public required SocialLauncher SocialLauncher { get; init; }
+    public required LinkpearlNotificationGate LinkpearlNotificationGate { get; init; }
+    public required GameChat.ChatLog ChatLog { get; init; }
+    public required GameChat.ChatSend ChatSend { get; init; }
+    public required GameChat.ChatCapture ChatCapture { get; init; }
+    public required GameChat.ChatArchive ChatArchive { get; init; }
+    public required GameChat.TabStore ChatTabs { get; init; }
+    public required GameChat.TellPreferences TellPreferences { get; init; }
+    public required GameChat.ChatInbox ChatInbox { get; init; }
+    public required GameChat.ChatNotifier ChatNotifier { get; init; }
+    public required HttpService Http { get; init; }
+    public required MediaCache Media { get; init; }
+    public required RemoteImageCache RemoteImages { get; init; }
+    public required CacheStorage CacheStorage { get; init; }
+
+    public required Social.BadgeCatalogStore BadgeCatalog { get; init; }
+
+    public required Social.FrameCatalogStore FrameCatalog { get; init; }
+
+    public required Social.LoadoutStore Loadout { get; init; }
+
+    public required Coins.CoinStore Coins { get; init; }
+
+    public required Coins.CoinCatalogStore CoinCatalog { get; init; }
+
+    public required Coins.CoinGameSessionTracker CoinSessions { get; init; }
+
+    public required Coins.CoinQuestStore CoinQuests { get; init; }
+    public required Coins.HalloweenBadgeStore HalloweenBadge { get; init; }
+
+    public required Coins.CoinRadioListenTracker CoinRadio { get; init; }
+
+    public required Coins.CoinEarnNotifier CoinEarnNotifier { get; init; }
+
+    public required Casino.CasinoStore Casino { get; init; }
+    public required Casino.CasinoPlayStore CasinoPlay { get; init; }
+    public required Casino.CasinoHistoryStore CasinoHistory { get; init; }
+    public required Casino.CasinoRoomsStore CasinoRooms { get; init; }
+    public required Casino.CasinoTablesStore CasinoTables { get; init; }
+    public required Casino.HoldemStore Holdem { get; init; }
+    public required Casino.CasinoSpinStore CasinoSpin { get; init; }
+    public required Casino.CasinoTurnNotifier CasinoTurns { get; init; }
+    public required Casino.CasinoKnockNotifier CasinoKnocks { get; init; }
+    public required Casino.CasinoVenueStore CasinoVenue { get; init; }
+    public required Casino.CasinoTradeSync CasinoTrade { get; init; }
+    public required Casino.CasinoLauncher CasinoLauncher { get; init; }
+    public required Casino.CasinoFloorStore CasinoFloor { get; init; }
+    public required Casino.CasinoFameChoiceStore CasinoFameChoice { get; init; }
+    public required Games.GameRoomsStore GameRooms { get; init; }
+    public required Games.LeaderboardStore Leaderboard { get; init; }
+    public required Video.AetherStreamLauncher AetherStreamLauncher { get; init; }
+    public required PluginCatalog PluginCatalog { get; init; }
+    public required ShortcutStore Shortcuts { get; init; }
+    public required ShortcutRunner ShortcutRunner { get; init; }
+    public required LodestoneService Lodestone { get; init; }
+    public required LookupService Lookup { get; init; }
+    public required AethernetSession AethernetSession { get; init; }
+    public required AppAvailability Availability { get; init; }
+    public required CharacterSessionManager CharacterSwitcher { get; init; }
+    public required AethernetApi Aethernet { get; init; }
+    public required KeyVault KeyVault { get; init; }
+
+    public required DeviceLinkWatcher DeviceLinks { get; init; }
+
+    public required EncryptionGuide EncryptionGuide { get; init; }
+
+    public required DecryptedHistoryStore ChatHistory { get; init; }
+
+    public required EncryptionHelpService EncryptionHelp { get; init; }
+    public required PeerKeyDirectory PeerKeys { get; init; }
+    public required ConversationKeyStore ConversationKeys { get; init; }
+    public required EncryptionSetupLauncher EncryptionSetup { get; init; }
+    public required MarketItemIndex MarketIndex { get; init; }
+    public required MarketboardService Market { get; init; }
+    public required TranslationService Translation { get; init; }
+    public required MarketLauncher MarketLauncher { get; init; }
+    public required CameraShutter CameraShutter { get; init; }
+    public required MarketAlertService MarketAlerts { get; init; }
+    public required MarketWatchlist MarketWatchlist { get; init; }
+    public required NewsService News { get; init; }
+    public required RadioService Radio { get; init; }
+    public required RadioPlayer RadioPlayer { get; init; }
+    public required SongSearchService SongSearch { get; init; }
+    public required VideoUrlResolver VideoMetadata { get; init; }
+    public required SongPlayer SongPlayer { get; init; }
+    public required SongLinkResolver SongResolver { get; init; }
+    public required PlaybackHub Playback { get; init; }
+    public required LibraryStore MusicLibrary { get; init; }
+    public required ListeningPresence Listening { get; init; }
+    public required DownloadStore MusicDownloads { get; init; }
+    public required WindowsMediaSessions WindowsMedia { get; init; }
+    public required PcMediaSource PcMedia { get; init; }
+    public required WindowsMediaPublisher WindowsMediaPublisher { get; init; }
+    public required PlaybackSystemBridge PlaybackBridge { get; init; }
+    public required LyricsService Lyrics { get; init; }
+    public required GameStatsStore GameStats { get; init; }
+    public required MoogleClickerService MoogleClicker { get; init; }
+    public required VenuesService Venues { get; init; }
+    public required RolladeckService Rolladeck { get; init; }
+    public required StratsManifestStore StratsManifest { get; init; }
+    public required StratsGuideStore StratsGuides { get; init; }
+    public required MusterStore Musters { get; init; }
+    public required MusterLauncher MusterLauncher { get; init; }
+
+    public required RadioLauncher RadioLauncher { get; init; }
+    public required JamSession Jam { get; init; }
+    public required MusicUninstallStop MusicUninstallStop { get; init; }
+    public required JamLauncher JamLauncher { get; init; }
+    public required YellowPagesStore YellowPages { get; init; }
+
+    public required AdInquiryStore AdInquiries { get; init; }
+    public required YellowPagesLauncher YellowPagesLauncher { get; init; }
+    public required AnnouncementsLauncher AnnouncementsLauncher { get; init; }
+    public required CollectionsCatalogService Collections { get; init; }
+    public required CollectionsJournal CollectionsJournal { get; init; }
+    public required InventoryCaptureService InventoryCapture { get; init; }
+    public required ActivityTracker Activity { get; init; }
+    public required ActivityRingNotifier RingNotifier { get; init; }
+    public required HealthTracker Health { get; init; }
+    public required ContactBook Contacts { get; init; }
+    public required CallHub Calls { get; init; }
+    public required StreamSignalRouter StreamSignals { get; init; }
+    public required RadioRoomRouter RadioRooms { get; init; }
+    public required PhoneVisibility Visibility { get; init; }
+    public required RealtimeSignalBus RealtimeSignals { get; init; }
+    public required LoadingScreen Loading { get; init; }
+    public required ConfirmService Confirm { get; init; }
+    public required ReportService Report { get; init; }
+    public required ShareService Share { get; init; }
+    public required ConductGateService Conduct { get; init; }
+    public required WallpaperLibrary Wallpapers { get; init; }
+    public required LiveBackdrop LiveBackdrop { get; init; }
+    public required WallpaperImageCache WallpaperImages { get; init; }
+    public required Hunts.HuntsService Hunts { get; init; }
+    public required Timers.GameTimers GameTimers { get; init; }
+    public required Dailies.DailiesTracker Dailies { get; init; }
+    public required WalletService Wallet { get; init; }
+    public required Hunts.HuntMobCatalog HuntMobCatalog { get; init; }
+    public required Hunts.HuntZoneCatalog HuntZoneCatalog { get; init; }
+    public required Maps.ZoneMapTextures ZoneMapTextures { get; init; }
+    public required Hunts.HuntMobRewardCatalog HuntMobRewardCatalog { get; init; }
+    public required Hunts.HuntCandidateCache HuntCandidateCache { get; init; }
+    public required Hunts.HuntsLauncher HuntsLauncher { get; init; }
+    public required Feedback.FeedbackLauncher FeedbackLauncher { get; init; }
+    public required Maps.HuntsMapMarkers HuntsMapMarkers { get; init; }
+    public required Shell.MinimizedLayoutService MinimizedLayout { get; init; }
+    public required Shell.MinimizedPreview MinimizedPreview { get; init; }
+    public required NameplateTitleService NameplateTitles { get; init; }
+
+    public static PhoneServices Build(Configuration configuration, IChatGui chatGui, IDataManager dataManager,
+        IObjectTable objectTable, IClientState clientState, IFramework framework, IDutyState dutyState,
+        ITextureProvider textures, DirectoryInfo configDirectory, IUnlockState unlockState, ICondition condition)
+    {
+        var installer = new Home.AppInstaller();
+        var builtInWallpaperDirectory = new DirectoryInfo(
+            Path.Combine(Plugin.PluginInterface.AssemblyLocation.DirectoryName ?? string.Empty, "Wallpapers"));
+        var customWallpaperDirectory = new DirectoryInfo(Path.Combine(configDirectory.FullName, "Wallpapers"));
+        var wallpapers = new WallpaperLibrary(textures, builtInWallpaperDirectory, customWallpaperDirectory,
+            configuration);
+        var liveBackdrop = new LiveBackdrop(textures, configuration);
+        var themes = new ThemeProvider(configuration, wallpapers);
+        var gameData = new GameData(dataManager, objectTable, framework);
+        var maps = new MapData(dataManager, clientState);
+        var weather = new WeatherService(dataManager, clientState);
+        var weatherControl = new WeatherControl(weather, framework, clientState, condition,
+            installer.Gate("skywatcher"));
+        var gameUiVisibility = new GameUiVisibility(framework, Plugin.PluginInterface);
+        var soundBundledRoot = Path.Combine(Plugin.PluginInterface.AssemblyLocation.DirectoryName ?? string.Empty,
+            "Sounds");
+        var soundUserRoot = Path.Combine(configDirectory.FullName, "Sounds");
+        var ringtoneLibrary = new SoundLibrary(new DirectoryInfo(Path.Combine(soundBundledRoot, "Ringtones")),
+            new DirectoryInfo(Path.Combine(soundUserRoot, "Ringtones")));
+        var notificationLibrary = new SoundLibrary(new DirectoryInfo(Path.Combine(soundBundledRoot, "Notifications")),
+            new DirectoryInfo(Path.Combine(soundUserRoot, "Notifications")));
+        var sound = new SoundService(configuration, ringtoneLibrary, notificationLibrary, new SoundEffectPlayer(),
+            new SoundEffectPlayer(), Path.Combine(soundBundledRoot, "Ui"));
+        var alarmRinger = new AlarmRinger(sound.StartAlarmTone, sound.StopAlarmTone);
+        var uiSound = new UiSoundService(configuration, new UiSoundPlayer(new DirectoryInfo(soundBundledRoot)));
+        var uiSoundTicker = new FrameworkTicker(framework, 1000, uiSound.Maintain);
+        UiFeedback.Bind(uiSound);
+        var notifications = new NotificationService(sound, configuration, installer, framework);
+        var characterWatch = new CharacterWatch(framework);
+        var looks = new Home.HomeLookService(configuration, themes, characterWatch);
+        var messageArchive = new MessageArchive(new DirectoryInfo(Path.Combine(configDirectory.FullName, "Messages")));
+        var linkpearlNotificationGate = new LinkpearlNotificationGate(configuration);
+        var linkpearlGate = installer.Gate("messages");
+        var linkpearlLauncher = new LinkpearlLauncher();
+        var velvetLauncher = new VelvetLauncher();
+        var dmLauncher = new DmLauncher();
+        var gramDmLauncher = new GramDmLauncher();
+        var socialLauncher = new SocialLauncher();
+        var chatLog = new GameChat.ChatLog();
+        var chatSend = new GameChat.ChatSend();
+        var chatCapture = new GameChat.ChatCapture(chatLog, chatSend, chatGui, gameData, linkpearlGate);
+        var chatArchive = new GameChat.ChatArchive(
+            new DirectoryInfo(Path.Combine(configDirectory.FullName, "GameChat")), configuration, chatLog,
+            messageArchive, characterWatch);
+        var chatTabs = new GameChat.TabStore(configuration, characterWatch);
+        var tellPreferences = new GameChat.TellPreferences(configuration);
+        var chatInbox = new GameChat.ChatInbox(chatLog, chatTabs, tellPreferences, configuration);
+        var chatNotifier = new GameChat.ChatNotifier(chatLog, chatTabs, chatInbox, tellPreferences,
+            linkpearlNotificationGate, notifications, linkpearlGate);
+        var cacheRoot = new DirectoryInfo(Path.Combine(configDirectory.FullName, "cache"));
+        cacheRoot.Create();
+        var mediaRoot = new DirectoryInfo(Path.Combine(cacheRoot.FullName, "media"));
+        var aethernetSession = new AethernetSession(configuration, framework);
+        var http = new HttpService(new AethernetClientIdentity(() => aethernetSession.BaseUrl, aethernetSession.ReportSourceStatus));
+        var disk = new DiskCache(mediaRoot, 64L * 1024 * 1024, protect: true);
+        var media = new MediaCache(textures, disk);
+        var imageRoot = new DirectoryInfo(Path.Combine(cacheRoot.FullName, "images"));
+        var imageDisk = new DiskCache(imageRoot, 128L * 1024 * 1024, protect: true);
+        var remoteImages = new RemoteImageCache(http, imageDisk);
+        var pluginCatalog = new PluginCatalog(remoteImages, http, imageDisk);
+        var wallpaperImages = new WallpaperImageCache();
+        var shortcutIconDirectory = new DirectoryInfo(Path.Combine(configDirectory.FullName, "ShortcutIcons"));
+        var shortcutIcons = new ShortcutIconLibrary(shortcutIconDirectory, configuration, wallpaperImages);
+        var lodestone = new LodestoneService(configuration, gameData, http, media, cacheRoot);
+        var lookup = new LookupService(lodestone);
+        var availability = new AppAvailability(http, aethernetSession, configuration, gameData);
+        var aethernet = new AethernetApi(http, aethernetSession);
+        var keyVault = new KeyVault(configuration, aethernetSession, aethernet.Keys);
+        var chatHistory = new DecryptedHistoryStore(configDirectory, aethernetSession);
+        var encryptionHelp = new EncryptionHelpService();
+        var badgeCatalog = new Social.BadgeCatalogStore(aethernetSession, aethernet.Account);
+        var frameCatalog = new Social.FrameCatalogStore(aethernetSession, aethernet.Account);
+        var loadoutStore = new Social.LoadoutStore(aethernetSession, aethernet.Account);
+        Social.Frames.Use(frameCatalog);
+        Windows.Components.UserName.Configure(badgeCatalog, remoteImages);
+        Windows.Components.NowPlayingArt.Configure(remoteImages);
+        Moderation.ModerationNoticeText.Configure(badgeCatalog, frameCatalog);
+        var coinApi = new AethernetApi(http, aethernetSession, "coin");
+        var coins = new Coins.CoinStore(aethernetSession, coinApi.Coins);
+        var coinCatalog = new Coins.CoinCatalogStore(aethernetSession, coinApi.Coins);
+        var coinSessions = new Coins.CoinGameSessionTracker(configuration, aethernetSession, coinApi.Coins);
+        var coinQuests = new Coins.CoinQuestStore(aethernetSession, coinApi.Coins, coins);
+        var halloweenBadge = new Coins.HalloweenBadgeStore(aethernetSession, coinApi.Coins, coinCatalog, loadoutStore);
+        Windows.Components.Treats.Configure(installer, aethernetSession, halloweenBadge);
+        var coinEarnNotifier = new Coins.CoinEarnNotifier(coins, notifications);
+        var casinoApi = new AethernetApi(http, aethernetSession, "casino");
+        var casino = new Casino.CasinoStore(configuration, aethernetSession, casinoApi.Casino, coins);
+        var casinoPlay = new Casino.CasinoPlayStore(configuration, aethernetSession, casinoApi.Casino, casino);
+        var casinoHistory = new Casino.CasinoHistoryStore(aethernetSession, casinoApi.Casino);
+        var casinoSpin = new Casino.CasinoSpinStore(aethernetSession, casinoApi.Casino, coins);
+        var realtimeSignals = new RealtimeSignalBus();
+        var peerKeys = new PeerKeyDirectory(configuration, aethernet.Keys);
+        var conversationKeys = new ConversationKeyStore(aethernet.Keys, keyVault, realtimeSignals);
+        var translation = new TranslationService(aethernetSession, aethernet.Translation, configuration);
+        var marketIndex = new MarketItemIndex(dataManager);
+        var market = new MarketboardService(http);
+        var marketLauncher = new MarketLauncher();
+        var marketAlerts = new MarketAlertService(market, notifications, configuration, installer.Gate("market"));
+        var marketWatchlist = new MarketWatchlist(market, configuration, gameData);
+        var news = new NewsService(http, aethernetSession);
+        var radio = new RadioService(http);
+        var radioPlayer = new RadioPlayer();
+        var youtube = new YoutubeClient(Aetherphone.Core.Net.OfficialHostGuard.CreateClient());
+        var audioRoot = new DirectoryInfo(Path.Combine(cacheRoot.FullName, "audio"));
+        var audioCache = new DiskCache(audioRoot, 256L * 1024 * 1024);
+        var songResolver = new SongLinkResolver(Path.Combine(audioRoot.FullName, "resolver"));
+        var songSearch = new SongSearchService(youtube, songResolver);
+        var videoMetadata = new VideoUrlResolver(youtube);
+        var songPlayer = new SongPlayer(youtube, audioCache, songResolver);
+        var musicLibrary = new LibraryStore(new DirectoryInfo(Path.Combine(configDirectory.FullName, "Music")),
+            configuration);
+        var musicDownloads = new DownloadStore(
+            new DirectoryInfo(Path.Combine(configDirectory.FullName, "Music", "downloads")), audioCache, songResolver,
+            musicLibrary, action => _ = framework.RunOnFrameworkThread(action));
+        songPlayer.OfflineSource = musicDownloads.TryRead;
+        var playback = new PlaybackHub(radioPlayer, songPlayer, musicLibrary, songResolver, configuration, framework);
+        var coinRadio = new Coins.CoinRadioListenTracker(aethernetSession, coinApi.Coins, radioPlayer, framework);
+        var lyricsDisk = new DiskCache(new DirectoryInfo(Path.Combine(cacheRoot.FullName, "lyrics")),
+            16L * 1024 * 1024);
+        var lyrics = new LyricsService(new LrcLibClient(http), lyricsDisk);
+        var mediaPublisher = new WindowsMediaPublisher(configuration, framework,
+            static () => Platform.GameWindowHandle.Current);
+        var gameStats = new GameStatsStore(configuration);
+        var moogleClicker = new MoogleClickerService(configuration, framework, installer.Gate("games"));
+        var rolladeck = new RolladeckService(http);
+        var venues = new VenuesService(http, notifications, configuration, gameData, rolladeck);
+        var stratsRoot = new DirectoryInfo(Path.Combine(cacheRoot.FullName, "strats"));
+        var stratsDisk = new DiskCache(stratsRoot, 24L * 1024 * 1024);
+        var stratsManifest = new StratsManifestStore(http, stratsDisk);
+        var stratsGuides = new StratsGuideStore(http, stratsDisk);
+        var collectionsRoot = new DirectoryInfo(Path.Combine(cacheRoot.FullName, "collections"));
+        var collectionsDisk = new DiskCache(collectionsRoot, 32L * 1024 * 1024);
+        var collections = new CollectionsCatalogService(http, collectionsDisk, dataManager, unlockState, framework);
+        var collectionsJournal = new CollectionsJournal(framework, unlockState, gameData, collections, notifications,
+            configDirectory, installer.Gate(CollectionsJournal.AppId));
+        var cacheStorage = new CacheStorage(new[] { imageDisk, disk, audioCache, stratsDisk, collectionsDisk, lyricsDisk });
+        var inventoryRoot = new DirectoryInfo(Path.Combine(cacheRoot.FullName, "inventory"));
+        var inventoryStore = new InventoryStore(inventoryRoot);
+        var inventoryCapture = new InventoryCaptureService(framework, inventoryStore, installer.Gate("inventory"));
+        var characterGate = installer.Gate("character");
+        var activity = new ActivityTracker(framework, clientState, dutyState, gameData, configDirectory, characterGate);
+        var ringNotifier = new ActivityRingNotifier(framework, activity, configuration, notifications, characterGate);
+        var health = new HealthTracker(framework, characterWatch, notifications, configDirectory);
+        var visibility = new PhoneVisibility();
+        var housingCacheRoot = new DirectoryInfo(Path.Combine(cacheRoot.FullName, "housing"));
+        var housingGate = installer.Gate(HousingService.AppId);
+        var housingGameMaps = new HousingGameMaps(dataManager, textures);
+        var housingArt = new HousingDistrictArt(dataManager, textures);
+        var housing = new HousingService(http, configuration, gameData, framework, housingGameMaps, housingArt,
+            visibility, housingCacheRoot, housingGate);
+        var fishing = new FishingCatalog(dataManager,
+            Plugin.PluginInterface.AssemblyLocation.DirectoryName ?? string.Empty);
+        var fishingAlerts = new FishingAlerts(configuration, fishing, notifications, clientState, framework,
+            installer.Gate(FishingCatalog.AppId));
+        var housingReminders = new HousingReminderService(configuration, framework, notifications, housing.Watch,
+            housingGate);
+        var confirm = new ConfirmService();
+        var deviceLinks = new DeviceLinkWatcher(keyVault, aethernetSession, confirm, realtimeSignals);
+        var encryptionGuide = new EncryptionGuide(keyVault, aethernetSession, notifications);
+        Windows.UrlActions.Configure(confirm);
+        var contacts = new ContactBook(aethernet.Contacts, aethernetSession);
+        var partyRelay = new PartyRelay(configuration, () => gameData.LocalPlayer is { } player
+            ? new PartyRelayIdentity(player.Name.TextValue, gameData.WorldName(gameData.LocalHomeWorldId))
+            : null);
+        var calls = new CallHub(configuration, aethernetSession, notifications, sound, playback, realtimeSignals,
+            confirm, installer.Gate("message"), contacts, partyRelay);
+        var streamSignals = new StreamSignalRouter(calls.Router);
+        var radioRooms = new RadioRoomRouter(realtimeSignals, aethernetSession, framework);
+        var jam = new JamSession(calls.Router, playback, aethernetSession, notifications, framework);
+        var musicUninstall = new MusicUninstallStop(installer, playback, jam);
+        var listening = new ListeningPresence(aethernet.MusicListening, aethernetSession, playback, jam, configuration,
+            framework);
+        var characterSwitcher = new CharacterSessionManager(framework, aethernetSession, aethernet.Account,
+            gameData, configuration, confirm);
+        var socialNotifications = new SocialNotificationService(aethernetSession, aethernet.Account, notifications, configuration, framework, visibility, realtimeSignals, installer);
+        var moderationNotices = new ModerationNoticeService(aethernetSession, aethernet.Account, framework,
+            visibility, realtimeSignals);
+        var accountState = new AccountStateService(aethernetSession, aethernet.Account, framework, visibility,
+            realtimeSignals);
+        var moderationPresenter = new ModerationNoticePresenter(moderationNotices, confirm, notifications,
+            accountState, coins, framework);
+        var moderationArchive = new ModerationNoticeArchive(aethernetSession, aethernet.Account);
+        var safetyLauncher = new SafetyLauncher();
+        var casinoRooms = new Casino.CasinoRoomsStore(aethernetSession, casinoApi.Casino, casino, visibility,
+            realtimeSignals);
+        var casinoTables = new Casino.CasinoTablesStore(aethernetSession, casinoApi.Casino, casino, visibility);
+        var holdem = new Casino.HoldemStore(aethernetSession, casinoApi.Casino, casino);
+        var casinoTurns = new Casino.CasinoTurnNotifier(aethernetSession, casinoRooms, notifications,
+            Apps.AppAccents.For("casino"));
+        var casinoKnocks = new Casino.CasinoKnockNotifier(aethernetSession, casinoApi.Casino, casinoTables,
+            notifications, Apps.AppAccents.For("casino"));
+        var casinoVenue = new Casino.CasinoVenueStore(aethernetSession, casinoApi.Casino, casinoApi.Safety, casinoRooms,
+            casinoTables, new Casino.HousingPositionReader());
+        var casinoTrade = new Casino.CasinoTradeSync(configuration, aethernetSession, casinoApi.Casino, casinoTables,
+            casinoVenue, notifications, Apps.AppAccents.For("casino"));
+        var casinoFloor = new Casino.CasinoFloorStore(aethernetSession, casinoApi.Casino, casino, realtimeSignals);
+        var gameRooms = new Games.GameRoomsStore(aethernetSession, aethernet.Games, visibility,
+            realtimeSignals);
+        var leaderboard = new Games.LeaderboardStore(configuration, aethernetSession, aethernet.Scores,
+            realtimeSignals);
+        var musters = new MusterStore(aethernetSession, aethernet.Musters, notifications, configuration,
+            visibility, realtimeSignals, installer.Gate(MusterStore.AppId));
+        var yellowPages = new YellowPagesStore(aethernetSession, aethernet.Ads, aethernet.Media, configuration,
+            visibility, realtimeSignals, installer.Gate(YellowPagesStore.AppId));
+        var adInquiries = new AdInquiryStore(aethernetSession, aethernet.Ads, aethernet.Safety, aethernet.Media,
+            notifications, keyVault, conversationKeys, chatHistory, visibility, realtimeSignals,
+            installer.Gate(YellowPagesStore.AppId));
+        var huntMobsFile = new FileInfo(Path.Combine(
+            Plugin.PluginInterface.AssemblyLocation.DirectoryName ?? string.Empty, "Hunts", "HuntMob.json"));
+        var huntMobCatalog = new HuntMobCatalog(huntMobsFile);
+        var huntZonesFile = new FileInfo(Path.Combine(
+            Plugin.PluginInterface.AssemblyLocation.DirectoryName ?? string.Empty, "Hunts", "HuntPOI.json"));
+        var huntZoneCatalog = new HuntZoneCatalog(huntZonesFile);
+        var zoneMapTextures = new ZoneMapTextures(dataManager, textures);
+        var huntMobDescriptionsFile = new FileInfo(Path.Combine(
+            Plugin.PluginInterface.AssemblyLocation.DirectoryName ?? string.Empty, "Hunts", "HuntMobDescriptions.json"));
+        var huntMobTipsFile = new FileInfo(Path.Combine(
+            Plugin.PluginInterface.AssemblyLocation.DirectoryName ?? string.Empty, "Hunts", "HuntMobTips.json"));
+        HuntMobLore.Initialize(new HuntMobTextCatalog(huntMobDescriptionsFile), new HuntMobTextCatalog(huntMobTipsFile));
+        var huntMobRewardsFile = new FileInfo(Path.Combine(
+            Plugin.PluginInterface.AssemblyLocation.DirectoryName ?? string.Empty, "Hunts", "HuntMobRewards.json"));
+        var huntMobRewardCatalog = new HuntMobRewardCatalog(huntMobRewardsFile);
+        var huntsAuthTokens = new HuntsAuthTokenStore(http, configuration);
+        var huntsClient = new HuntsClient(http, huntsAuthTokens);
+        var hunts = new HuntsService(huntsClient, huntsAuthTokens, huntMobCatalog, gameData, characterWatch,
+            notifications, configuration);
+        var gameTimers = new Timers.GameTimers(configuration, framework, characterWatch, gameData, dataManager,
+            installer.Gate("timers"));
+        var dailies = new Dailies.DailiesTracker(configuration, framework, gameData, characterWatch, notifications,
+            installer.Gate("dailies"));
+        var wallet = new WalletService(framework, gameData, characterWatch, clientState, configDirectory,
+            installer.Gate(WalletService.AppId));
+        var huntCandidateCache = new HuntCandidateCache(huntMobCatalog, huntZoneCatalog, hunts);
+        var huntsMapMarkers = new Maps.HuntsMapMarkers(configuration, hunts, huntMobCatalog, huntZoneCatalog,
+            huntCandidateCache);
+        var windowsMedia = new WindowsMediaSessions(configuration);
+        var pcMedia = new PcMediaSource(configuration, windowsMedia, installer.Gate(MusicUninstallStop.MusicAppId));
+        var nameplateTitles = new NameplateTitleService(configuration, framework, clientState, objectTable,
+            aethernetSession, playback, pcMedia, jam, radioRooms, musters, calls,
+            new HonorificBridge(Plugin.PluginInterface));
+
+
+        return new PhoneServices
+        {
+            Installer = installer,
+            Configuration = configuration,
+            MinimizedLayout = new Shell.MinimizedLayoutService(configuration),
+            MinimizedPreview = new Shell.MinimizedPreview(),
+            Themes = themes,
+            Looks = looks,
+            GameData = gameData,
+            CharacterWatch = characterWatch,
+            Maps = maps,
+            Housing = housing,
+            HousingReminders = housingReminders,
+            Fishing = fishing,
+            FishingAlerts = fishingAlerts,
+            Textures = textures,
+            Artwork = new Windows.Components.ArtworkCache(textures),
+            Weather = weather,
+            WeatherControl = weatherControl,
+            GameUiVisibility = gameUiVisibility,
+            Notifications = notifications,
+            SocialNotifications = socialNotifications,
+            ModerationNotices = moderationNotices,
+            AccountState = accountState,
+            ModerationPresenter = moderationPresenter,
+            ModerationArchive = moderationArchive,
+            SafetyLauncher = safetyLauncher,
+            SettingsLauncher = new SettingsLauncher(),
+            Sound = sound,
+            AlarmRinger = alarmRinger,
+            UiSound = uiSound,
+            UiSoundTicker = uiSoundTicker,
+            LinkpearlLauncher = linkpearlLauncher,
+            VelvetLauncher = velvetLauncher,
+            DmLauncher = dmLauncher,
+            GramDmLauncher = gramDmLauncher,
+            SocialLauncher = socialLauncher,
+            LinkpearlNotificationGate = linkpearlNotificationGate,
+            ChatLog = chatLog,
+            ChatSend = chatSend,
+            ChatCapture = chatCapture,
+            ChatArchive = chatArchive,
+            ChatTabs = chatTabs,
+            TellPreferences = tellPreferences,
+            ChatInbox = chatInbox,
+            ChatNotifier = chatNotifier,
+            Http = http,
+            Media = media,
+            RemoteImages = remoteImages,
+            CacheStorage = cacheStorage,
+            BadgeCatalog = badgeCatalog,
+            FrameCatalog = frameCatalog,
+            Loadout = loadoutStore,
+            Coins = coins,
+            CoinCatalog = coinCatalog,
+            CoinSessions = coinSessions,
+            CoinQuests = coinQuests,
+            HalloweenBadge = halloweenBadge,
+            CoinRadio = coinRadio,
+            CoinEarnNotifier = coinEarnNotifier,
+            Casino = casino,
+            CasinoPlay = casinoPlay,
+            CasinoHistory = casinoHistory,
+            CasinoRooms = casinoRooms,
+            CasinoTables = casinoTables,
+            Holdem = holdem,
+            CasinoSpin = casinoSpin,
+            CasinoTurns = casinoTurns,
+            CasinoKnocks = casinoKnocks,
+            CasinoVenue = casinoVenue,
+            CasinoTrade = casinoTrade,
+            CasinoLauncher = new Casino.CasinoLauncher(),
+            CasinoFloor = casinoFloor,
+            CasinoFameChoice = new Casino.CasinoFameChoiceStore(configuration, aethernetSession, casinoApi.Casino,
+                casino, casinoFloor),
+            GameRooms = gameRooms,
+            Leaderboard = leaderboard,
+            AetherStreamLauncher = new Video.AetherStreamLauncher(),
+            PluginCatalog = pluginCatalog,
+            Shortcuts = new ShortcutStore(configuration, pluginCatalog, shortcutIcons),
+            ShortcutRunner = new ShortcutRunner(clientState, condition),
+            Lodestone = lodestone,
+            Lookup = lookup,
+            AethernetSession = aethernetSession,
+            Availability = availability,
+            CharacterSwitcher = characterSwitcher,
+            Aethernet = aethernet,
+            KeyVault = keyVault,
+            DeviceLinks = deviceLinks,
+            EncryptionGuide = encryptionGuide,
+            ChatHistory = chatHistory,
+            EncryptionHelp = encryptionHelp,
+            PeerKeys = peerKeys,
+            ConversationKeys = conversationKeys,
+            EncryptionSetup = new EncryptionSetupLauncher(),
+            MarketIndex = marketIndex,
+            Market = market,
+            Translation = translation,
+            MarketLauncher = marketLauncher,
+            CameraShutter = new CameraShutter(),
+            MarketAlerts = marketAlerts,
+            MarketWatchlist = marketWatchlist,
+            News = news,
+            Radio = radio,
+            RadioPlayer = radioPlayer,
+            SongSearch = songSearch,
+            VideoMetadata = videoMetadata,
+            SongPlayer = songPlayer,
+            SongResolver = songResolver,
+            Playback = playback,
+            MusicLibrary = musicLibrary,
+            Listening = listening,
+            MusicDownloads = musicDownloads,
+            WindowsMedia = windowsMedia,
+            PcMedia = pcMedia,
+            WindowsMediaPublisher = mediaPublisher,
+            PlaybackBridge = new PlaybackSystemBridge(playback, mediaPublisher, remoteImages, configuration,
+                framework),
+            Lyrics = lyrics,
+            GameStats = gameStats,
+            MoogleClicker = moogleClicker,
+            Venues = venues,
+            Rolladeck = rolladeck,
+            StratsManifest = stratsManifest,
+            StratsGuides = stratsGuides,
+            Musters = musters,
+            MusterLauncher = new MusterLauncher(),
+            RadioLauncher = new RadioLauncher(),
+            Jam = jam,
+            MusicUninstallStop = musicUninstall,
+            JamLauncher = new JamLauncher(),
+            YellowPages = yellowPages,
+            AdInquiries = adInquiries,
+            YellowPagesLauncher = new YellowPagesLauncher(),
+            AnnouncementsLauncher = new AnnouncementsLauncher(),
+            Collections = collections,
+            CollectionsJournal = collectionsJournal,
+            InventoryCapture = inventoryCapture,
+            Activity = activity,
+            RingNotifier = ringNotifier,
+            Health = health,
+            Contacts = contacts,
+            Calls = calls,
+            StreamSignals = streamSignals,
+            RadioRooms = radioRooms,
+            Visibility = visibility,
+            RealtimeSignals = realtimeSignals,
+            Loading = new LoadingScreen(configuration),
+            Confirm = confirm,
+            Report = new ReportService(),
+            Share = new ShareService(installer),
+            Conduct = new ConductGateService(configuration),
+            Wallpapers = wallpapers,
+            LiveBackdrop = liveBackdrop,
+            WallpaperImages = wallpaperImages,
+            Hunts = hunts,
+            GameTimers = gameTimers,
+            Dailies = dailies,
+            Wallet = wallet,
+            HuntMobCatalog = huntMobCatalog,
+            HuntZoneCatalog = huntZoneCatalog,
+            ZoneMapTextures = zoneMapTextures,
+            HuntMobRewardCatalog = huntMobRewardCatalog,
+            HuntCandidateCache = huntCandidateCache,
+            HuntsLauncher = new Hunts.HuntsLauncher(),
+            FeedbackLauncher = new Feedback.FeedbackLauncher(),
+            HuntsMapMarkers = huntsMapMarkers,
+            NameplateTitles = nameplateTitles,
+        };
+    }
+
+    public void Dispose()
+    {
+        NameplateTitles.Dispose();
+        CharacterSwitcher.Dispose();
+        Looks.Dispose();
+        CharacterWatch.Dispose();
+        WeatherControl.Dispose();
+        GameUiVisibility.Dispose();
+        SocialNotifications.Dispose();
+        ModerationPresenter.Dispose();
+        ModerationNotices.Dispose();
+        AccountState.Dispose();
+        ChatHistory.Dispose();
+        DeviceLinks.Dispose();
+        KeyVault.Dispose();
+        RadioRooms.Dispose();
+        Listening.Dispose();
+        MusicUninstallStop.Dispose();
+        Jam.Dispose();
+        StreamSignals.Dispose();
+        Calls.Dispose();
+        Contacts.Dispose();
+        CollectionsJournal.Dispose();
+        Collections.Dispose();
+        InventoryCapture.Dispose();
+        RingNotifier.Dispose();
+        Health.Dispose();
+        Activity.Dispose();
+        HousingReminders.Dispose();
+        FishingAlerts.Dispose();
+        Housing.Dispose();
+        Venues.Dispose();
+        Hunts.Dispose();
+        GameTimers.Dispose();
+        Dailies.Dispose();
+        Wallet.Dispose();
+        StratsManifest.Dispose();
+        StratsGuides.Dispose();
+        Musters.Dispose();
+        YellowPages.Dispose();
+        AdInquiries.Dispose();
+        Lyrics.Dispose();
+        PlaybackBridge.Dispose();
+        Playback.Dispose();
+        WindowsMediaPublisher.Dispose();
+        PcMedia.Dispose();
+        WindowsMedia.Dispose();
+        SongPlayer.Dispose();
+        MusicDownloads.Dispose();
+        MusicLibrary.Dispose();
+        SongSearch.Dispose();
+        VideoMetadata.Dispose();
+        RadioPlayer.Dispose();
+        Radio.Dispose();
+        ChatNotifier.Dispose();
+        ChatCapture.Dispose();
+        ChatInbox.Dispose();
+        ChatArchive.Dispose();
+        Lookup.Dispose();
+        Lodestone.Dispose();
+        MarketAlerts.Dispose();
+        Market.Dispose();
+        Translation.Dispose();
+        News.Dispose();
+        Notifications.Dispose();
+        Sound.Dispose();
+        UiFeedback.Unbind();
+        UiSoundTicker.Dispose();
+        UiSound.Dispose();
+        Media.Dispose();
+        Artwork.Dispose();
+        ShortcutRunner.Dispose();
+        RemoteImages.Dispose();
+        Windows.Components.UserName.Reset();
+        Windows.Components.Treats.Reset();
+        Moderation.ModerationNoticeText.Reset();
+        MoogleClicker.Dispose();
+        Leaderboard.Dispose();
+        GameRooms.Dispose();
+        CasinoFameChoice.Dispose();
+        CasinoFloor.Dispose();
+        CasinoTrade.Dispose();
+        CasinoVenue.Dispose();
+        CasinoKnocks.Dispose();
+        CasinoTurns.Dispose();
+        Holdem.Dispose();
+        CasinoTables.Dispose();
+        CasinoRooms.Dispose();
+        CasinoSpin.Dispose();
+        CasinoHistory.Dispose();
+        CasinoPlay.Dispose();
+        Casino.Dispose();
+        CoinEarnNotifier.Dispose();
+        CoinRadio.Dispose();
+        CoinQuests.Dispose();
+        HalloweenBadge.Dispose();
+        CoinSessions.Dispose();
+        CoinCatalog.Dispose();
+        Coins.Dispose();
+        BadgeCatalog.Dispose();
+        FrameCatalog.Dispose();
+        Loadout.Dispose();
+        Availability.Dispose();
+        Http.Dispose();
+        LiveBackdrop.Dispose();
+        Wallpapers.Dispose();
+        WallpaperImages.Dispose();
+        HuntsMapMarkers.Dispose();
+    }
+}

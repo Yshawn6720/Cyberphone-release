@@ -1,0 +1,60 @@
+using Aetherphone.Core.Localization;
+using Aetherphone.Core.Media;
+using Aetherphone.Windows.Components;
+using Dalamud.Bindings.ImGui;
+
+namespace Aetherphone.Apps.Velvet.Kit;
+
+internal static class VMediaTile
+{
+    public static void Placeholder(ImDrawListPtr drawList, Vector2 min, Vector2 max, float radius)
+    {
+        Squircle.Fill(drawList, min, max, radius, VelvetTheme.Sunken.Packed());
+    }
+
+    public static void DrawPhoto(ImDrawListPtr drawList, Vector2 min, Vector2 max, string url, float radius,
+        RemoteImageCache images)
+    {
+        var texture = images.Get(url);
+        if (texture is null)
+        {
+            Placeholder(drawList, min, max, radius);
+            Typography.DrawCentered(drawList, new Vector2((min.X + max.X) * 0.5f, (min.Y + max.Y) * 0.5f),
+                images.Failed(url) ? Loc.T(L.Velvet.ImageUnavailable) : Loc.T(L.Common.Loading), VelvetTheme.MutedInk,
+                TextStyles.Footnote);
+            return;
+        }
+
+        var (uv0, uv1) = ImageFit.Cover(texture.Size.X, texture.Size.Y, max.X - min.X, max.Y - min.Y);
+        drawList.AddImageRounded(texture.Handle, min, max, uv0, uv1, 0xFFFFFFFFu, radius,
+            ImDrawFlags.RoundCornersAll);
+    }
+
+    public static void Conceal(ImDrawListPtr drawList, Vector2 min, Vector2 max, float radius, string label,
+        float reveal)
+    {
+        var alpha = 1f - Math.Clamp(reveal, 0f, 1f);
+        if (alpha <= 0.001f)
+        {
+            return;
+        }
+
+        var scale = UiScale.Current;
+        Squircle.Fill(drawList, min, max, radius, VelvetTheme.Alpha(VelvetTheme.PlumWell, alpha).Packed());
+        Squircle.Stroke(drawList, min, max, radius, VelvetTheme.Alpha(VelvetTheme.Rose, 0.5f * alpha).Packed(),
+            Metrics.Stroke.Hairline * scale);
+        var center = new Vector2((min.X + max.X) * 0.5f, (min.Y + max.Y) * 0.5f - 8f * scale);
+        ProgressRing.Glow(center, 24f * scale, VelvetTheme.Alpha(VelvetTheme.Rose, 0.5f * alpha), 0.6f);
+        VelvetArt.Moon(drawList, center, 11f * scale, VelvetTheme.Alpha(VelvetTheme.Moonlight, alpha),
+            VelvetTheme.PlumWell, glow: false);
+        Typography.DrawCentered(drawList, new Vector2(center.X, max.Y - 24f * scale), label,
+            VelvetTheme.Alpha(VelvetTheme.GoldInk, alpha), TextStyles.Footnote);
+    }
+
+    public static void InReview(ImDrawListPtr drawList, Vector2 min, Vector2 max, float radius)
+    {
+        Squircle.Fill(drawList, min, max, radius, VelvetTheme.Scrim.Packed());
+        Typography.DrawCentered(drawList, new Vector2((min.X + max.X) * 0.5f, (min.Y + max.Y) * 0.5f),
+            Loc.T(L.Moderation.InReview), VelvetTheme.TitleInk, TextStyles.FootnoteEmphasized);
+    }
+}

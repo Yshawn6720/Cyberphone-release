@@ -1,0 +1,164 @@
+using System.Text.Json.Serialization;
+
+namespace Aetherphone.Core.Radio;
+
+internal enum RadioOrder : byte
+{
+    Popular,
+    Trending,
+    TopVoted,
+    Name,
+    Bitrate,
+}
+
+internal readonly struct RadioFilter
+{
+    public static readonly RadioFilter Default = new(string.Empty, string.Empty, RadioOrder.Popular);
+
+    public readonly string CountryCode;
+    public readonly string Language;
+    public readonly RadioOrder Order;
+
+    public RadioFilter(string countryCode, string language, RadioOrder order)
+    {
+        CountryCode = countryCode;
+        Language = language;
+        Order = order;
+    }
+
+    public bool IsDefault => CountryCode.Length == 0 && Language.Length == 0 && Order == RadioOrder.Popular;
+}
+
+internal readonly struct RadioFacet
+{
+    public readonly string Display;
+    public readonly string Value;
+    public readonly int Count;
+
+    public RadioFacet(string display, string value, int count)
+    {
+        Display = display;
+        Value = value;
+        Count = count;
+    }
+}
+
+internal readonly struct RadioStation : IEquatable<RadioStation>
+{
+    public readonly string Name;
+    public readonly string StreamUrl;
+    public readonly string Codec;
+    public readonly int Bitrate;
+    public readonly string Country;
+    public readonly string Uuid;
+    public readonly string CommunityId;
+    public readonly string ArtworkUrl;
+    public readonly string Tags;
+    public readonly string CountryCode;
+    public readonly string Language;
+    public readonly int Votes;
+    public readonly int ClickCount;
+
+    public RadioStation(string name, string streamUrl, string codec, int bitrate, string country, string uuid)
+        : this(name, streamUrl, codec, bitrate, country, uuid, string.Empty, string.Empty)
+    {
+    }
+
+    public RadioStation(string name, string streamUrl, string codec, int bitrate, string country, string uuid,
+        string communityId, string artworkUrl)
+        : this(name, streamUrl, codec, bitrate, country, uuid, communityId, artworkUrl, string.Empty, string.Empty,
+            string.Empty, 0, 0)
+    {
+    }
+
+    public RadioStation(string name, string streamUrl, string codec, int bitrate, string country, string uuid,
+        string communityId, string artworkUrl, string tags, string countryCode, string language, int votes,
+        int clickCount)
+    {
+        Name = name;
+        StreamUrl = streamUrl;
+        Codec = codec;
+        Bitrate = bitrate;
+        Country = country;
+        Uuid = uuid;
+        CommunityId = communityId;
+        ArtworkUrl = artworkUrl;
+        Tags = tags;
+        CountryCode = countryCode;
+        Language = language;
+        Votes = votes;
+        ClickCount = clickCount;
+    }
+
+    public bool IsCommunity => !string.IsNullOrEmpty(CommunityId);
+
+    // Community stations keep their identity across a listen token or host change, so they compare
+    // by station id; directory stations have no id and the stream url is all they ever had.
+    public bool Equals(RadioStation other)
+    {
+        if (IsCommunity || other.IsCommunity)
+        {
+            return string.Equals(CommunityId, other.CommunityId, StringComparison.Ordinal);
+        }
+
+        return other.StreamUrl == StreamUrl;
+    }
+
+    public override bool Equals(object? obj) => obj is RadioStation station && Equals(station);
+
+    public override int GetHashCode() =>
+        IsCommunity ? HashCode.Combine(CommunityId) : HashCode.Combine(StreamUrl);
+}
+
+internal readonly struct RadioPage
+{
+    public static readonly RadioPage Empty = new(Array.Empty<RadioStation>(), false);
+
+    public readonly RadioStation[] Stations;
+    public readonly bool HasMore;
+
+    public RadioPage(RadioStation[] stations, bool hasMore)
+    {
+        Stations = stations;
+        HasMore = hasMore;
+    }
+}
+
+internal sealed class RadioStationDto
+{
+    [JsonPropertyName("stationuuid")] public string? StationUuid { get; set; }
+    [JsonPropertyName("name")] public string? Name { get; set; }
+    [JsonPropertyName("url")] public string? Url { get; set; }
+    [JsonPropertyName("url_resolved")] public string? UrlResolved { get; set; }
+    [JsonPropertyName("codec")] public string? Codec { get; set; }
+    [JsonPropertyName("bitrate")] public int Bitrate { get; set; }
+    [JsonPropertyName("country")] public string? Country { get; set; }
+    [JsonPropertyName("countrycode")] public string? CountryCode { get; set; }
+    [JsonPropertyName("language")] public string? Language { get; set; }
+    [JsonPropertyName("tags")] public string? Tags { get; set; }
+    [JsonPropertyName("favicon")] public string? Favicon { get; set; }
+    [JsonPropertyName("votes")] public int Votes { get; set; }
+    [JsonPropertyName("clickcount")] public int ClickCount { get; set; }
+    [JsonPropertyName("hls")] public int Hls { get; set; }
+}
+
+internal sealed class RadioCountryDto
+{
+    [JsonPropertyName("name")] public string? Name { get; set; }
+    [JsonPropertyName("iso_3166_1")] public string? IsoCode { get; set; }
+    [JsonPropertyName("stationcount")] public int StationCount { get; set; }
+}
+
+internal sealed class RadioNamedCountDto
+{
+    [JsonPropertyName("name")] public string? Name { get; set; }
+    [JsonPropertyName("stationcount")] public int StationCount { get; set; }
+}
+
+[JsonSourceGenerationOptions(PropertyNameCaseInsensitive = true)]
+[JsonSerializable(typeof(RadioStationDto[]))]
+[JsonSerializable(typeof(RadioCountryDto[]))]
+[JsonSerializable(typeof(RadioNamedCountDto[]))]
+internal sealed partial class RadioJsonContext : JsonSerializerContext
+{
+}

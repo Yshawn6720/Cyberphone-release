@@ -1,0 +1,213 @@
+using Aetherphone.Core;
+using Aetherphone.Core.Aethernet;
+using Aetherphone.Core.Aethernet.Contracts;
+using Aetherphone.Core.Animation;
+using Aetherphone.Core.Localization;
+using Aetherphone.Core.Moderation;
+using Aetherphone.Core.Theme;
+using Dalamud.Bindings.ImGui;
+using Dalamud.Interface;
+using Dalamud.Interface.Utility.Raii;
+
+namespace Aetherphone.Windows.Components;
+
+internal sealed class BanOverlay
+{
+    private const ImGuiWindowFlags OverlayFlags = ImGuiWindowFlags.NoScrollbar | ImGuiWindowFlags.NoScrollWithMouse |
+                                                  ImGuiWindowFlags.NoBackground;
+
+    private const float DismissBottomMargin = 30f;
+    private const float DismissHeight = 50f;
+    private const float BodyTopInset = 48f;
+    private const float BodyBottomGap = 12f;
+    private const float BodyPadding = 16f;
+    private readonly AethernetSession session;
+    private Spring presence;
+    private bool visible;
+    private bool wasBanned;
+    private float contentHeight;
+
+    public BanOverlay(AethernetSession session)
+    {
+        this.session = session;
+    }
+
+    public bool IsActive => session.IsBanned && visible;
+
+    public static bool IsTemporary(SuspensionDto? suspension)
+    {
+        return suspension is { Permanent: false, UntilUnix: not null };
+    }
+
+    public void Present()
+    {
+        visible = session.IsBanned;
+    }
+
+    public void Draw(Rect screen, PhoneTheme theme)
+    {
+        var banned = session.IsBanned;
+        if (banned && !wasBanned)
+        {
+            visible = true;
+        }
+        else if (!banned)
+        {
+            visible = false;
+        }
+
+        wasBanned = banned;
+
+        var active = IsActive;
+        var delta = MathF.Min(ImGui.GetIO().DeltaTime, TransitionTiming.MaxFrameSeconds);
+        presence.Step(active ? 1f : 0f, Motion.Appear, delta);
+        if (presence.Value <= 0.01f)
+        {
+            if (!active)
+            {
+                presence.SnapTo(0f);
+            }
+
+            return;
+        }
+
+        ImGui.SetCursorScreenPos(screen.Min);
+        using (ImRaii.Child("##banOverlay", screen.Size, false, OverlayFlags))
+        {
+            DrawContent(screen, theme, Math.Clamp(presence.Value, 0f, 1f), active);
+        }
+    }
+
+    private void DrawContent(Rect screen, PhoneTheme theme, float reveal, bool interactive)
+    {
+        var scale = UiScale.Current;
+        var alpha = Math.Clamp(reveal * 1.4f, 0f, 1f);
+        ImGui.GetWindowDrawList().AddRectFilled(screen.Min, screen.Max,
+            ImGui.GetColorU32(new Vector4(0.03f, 0.03f, 0.05f, alpha)));
+
+        var body = new Rect(new Vector2(screen.Min.X, screen.Min.Y + BodyTopInset * scale),
+            new Vector2(screen.Max.X, DismissTop(screen) - BodyBottomGap * scale));
+        if (body.Height > 0f)
+        {
+            var scrollKey = ImGui.GetID("##banBody");
+            ImGui.SetCursorScreenPos(body.Min);
+            using (ImRaii.Child("##banBody", body.Size, false,
+                       DragScrollHost.ScrollFlags(ImGuiWindowFlags.NoBackground)))
+            {
+                DragScrollHost.Begin(scrollKey);
+                DrawBody(body, theme, alpha);
+            }
+        }
+
+        DrawDismiss(screen, theme, alpha, interactive);
+    }
+
+    private void DrawBody(Rect body, PhoneTheme theme, float alpha)
+    {
+        var scale = UiScale.Current;
+        var drawList = ImGui.GetWindowDrawList();
+        var top = ImGui.GetCursorScreenPos().Y;
+        var padding = BodyPadding * scale;
+        var contentTop = top + MathF.Max(padding, (body.Height - contentHeight) * 0.5f);
+
+        var centerX = body.Center.X;
+        var maxWidth = MathF.Min(body.Width - 56f * scale, 320f * scale);
+
+        var iconRadius = 40f * scale;
+        var iconCenter = new Vector2(centerX, contentTop + iconRadius);
+        drawList.AddCircleFilled(iconCenter, iconRadius,
+            ImGui.GetColorU32(Palette.WithAlpha(theme.Danger, 0.16f * alpha)), 48);
+        using (ImRaii.PushFont(UiBuilder.IconFont))
+        {
+            var glyph = IconGlyph.Of(FontAwesomeIcon.Ban);
+            var size = ImGui.CalcTextSize(glyph);
+            drawList.AddText(ImGui.GetFont(), ImGui.GetFontSize(), iconCenter - size * 0.5f,
+                ImGui.GetColorU32(Palette.WithAlpha(theme.Danger, alpha)), glyph);
+        }
+
+        var suspension = session.Suspension;
+        var temporary = IsTemporary(suspension);
+        var left = centerX - maxWidth * 0.5f;
+
+        var y = iconCenter.Y + iconRadius + 28f * scale;
+        y += Typography.DrawWrappedCentered(new Vector2(centerX, y),
+            Loc.T(temporary ? L.Account.BanScreenTimeoutTitle : L.Account.BanScreenTitle),
+            Palette.WithAlpha(theme.TextStrong, alpha), new TextStyle(1.5f, FontWeight.SemiBold), maxWidth);
+
+        y += 14f * scale;
+        y += Typography.DrawWrappedCentered(new Vector2(centerX, y),
+            temporary
+                ? Loc.T(L.Account.BanScreenLifts, ModerationNoticeText.LiftMoment(suspension!.UntilUnix!.Value))
+                : Loc.T(L.Account.BanScreenBody),
+            Palette.WithAlpha(theme.TextMuted, alpha), new TextStyle(1f, FontWeight.Regular), maxWidth);
+
+        var rule = suspension is null ? string.Empty : suspension.RuleTitle;
+        var reason = rule.Length > 0 ? rule : session.BanReason;
+        if (!string.IsNullOrWhiteSpace(reason))
+        {
+            y = DrawSeparator(drawList, left, maxWidth, y, scale, alpha);
+            y += Typography.DrawWrappedLeft(new Vector2(left, y), Loc.T(L.Account.BanScreenReason),
+                Palette.WithAlpha(theme.TextStrong, alpha), new TextStyle(0.95f, FontWeight.SemiBold), maxWidth);
+            y += 4f * scale;
+            y += Typography.DrawWrappedLeft(new Vector2(left, y), reason,
+                Palette.WithAlpha(theme.TextStrong, 0.9f * alpha), new TextStyle(0.95f, FontWeight.Medium), maxWidth);
+            if (suspension is not null && suspension.RuleSummary.Length > 0)
+            {
+                y += 4f * scale;
+                y += Typography.DrawWrappedLeft(new Vector2(left, y), suspension.RuleSummary,
+                    Palette.WithAlpha(theme.TextMuted, 0.9f * alpha), new TextStyle(0.9f, FontWeight.Regular),
+                    maxWidth);
+            }
+        }
+
+        if (suspension is not null && suspension.Note.Length > 0)
+        {
+            y = DrawSeparator(drawList, left, maxWidth, y, scale, alpha);
+            y += Typography.DrawWrappedLeft(new Vector2(left, y), Loc.T(L.Moderation.NoticeModeratorNoteLabel),
+                Palette.WithAlpha(theme.TextStrong, alpha), new TextStyle(0.95f, FontWeight.SemiBold), maxWidth);
+            y += 4f * scale;
+            y += Typography.DrawWrappedLeft(new Vector2(left, y), suspension.Note,
+                Palette.WithAlpha(theme.TextStrong, 0.85f * alpha), new TextStyle(0.9f, FontWeight.Regular), maxWidth);
+        }
+
+        y = DrawSeparator(drawList, left, maxWidth, y, scale, alpha);
+        y += Typography.DrawWrappedCentered(new Vector2(centerX, y), Loc.T(L.Account.BanScreenSocialLocked),
+            Palette.WithAlpha(theme.TextStrong, 0.9f * alpha), new TextStyle(0.95f, FontWeight.Medium), maxWidth);
+
+        y += 12f * scale;
+        y += Typography.DrawWrappedCentered(new Vector2(centerX, y), Loc.T(L.Account.BanScreenContact),
+            Palette.WithAlpha(theme.TextMuted, 0.8f * alpha), new TextStyle(0.9f, FontWeight.Regular), maxWidth);
+
+        contentHeight = y - contentTop;
+        ImGui.Dummy(new Vector2(1f, y + padding - top));
+    }
+
+    private static float DrawSeparator(ImDrawListPtr drawList, float left, float width, float y, float scale,
+        float alpha)
+    {
+        var lineY = y + 14f * scale;
+        drawList.AddRectFilled(new Vector2(left, lineY), new Vector2(left + width, lineY + Metrics.Stroke.Hairline),
+            ImGui.GetColorU32(new Vector4(1f, 1f, 1f, 0.10f * alpha)));
+        return lineY + Metrics.Stroke.Hairline + 14f * scale;
+    }
+
+    private static float DismissTop(Rect screen)
+    {
+        return screen.Max.Y - (DismissBottomMargin + DismissHeight) * UiScale.Current;
+    }
+
+    private void DrawDismiss(Rect screen, PhoneTheme theme, float alpha, bool interactive)
+    {
+        var scale = UiScale.Current;
+        var centerX = screen.Center.X;
+        var width = MathF.Min(screen.Size.X - 56f * scale, 240f * scale);
+        var rect = new Rect(new Vector2(centerX - width * 0.5f, DismissTop(screen)),
+            new Vector2(centerX + width * 0.5f, screen.Max.Y - DismissBottomMargin * scale));
+        var enabled = interactive && alpha > 0.5f;
+        if (ConfirmDialog.DrawPillButton(rect, Loc.T(L.Account.FailDismiss), enabled, theme, 1f, alpha,
+                ConfirmButtonTone.Primary) && enabled)
+        {
+            visible = false;
+        }
+    }
+}

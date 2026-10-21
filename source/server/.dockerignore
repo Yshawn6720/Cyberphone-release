@@ -1,0 +1,8 @@
+node_modules
+.wrangler
+dist
+test
+scripts
+.env
+relay.env
+.dev.vars

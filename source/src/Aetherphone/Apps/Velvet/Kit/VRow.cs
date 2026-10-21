@@ -1,0 +1,264 @@
+using Aetherphone.Core;
+using Aetherphone.Core.Lodestone;
+using Aetherphone.Core.Media;
+using Aetherphone.Core.Theme;
+using Aetherphone.Windows.Components;
+using Dalamud.Bindings.ImGui;
+using Aetherphone.Core.Social;
+
+namespace Aetherphone.Apps.Velvet.Kit;
+
+internal enum VRowLeading
+{
+    Avatar,
+    IconTile,
+    None,
+}
+
+internal enum VRowHit
+{
+    None,
+    Body,
+    Pill,
+    Overflow,
+}
+
+internal struct VRowModel
+{
+    public string Title;
+    public string Subtitle;
+    public float Height;
+    public VRowLeading Leading;
+    public float AvatarRadius;
+    public string Name;
+    public string World;
+    public string? AvatarUrl;
+    public int Presence;
+    public string TileIcon;
+    public Vector4 TileTint;
+    public string? Value;
+    public string? Pill;
+    public bool PillFilled;
+    public bool PillEnabled;
+    public int Badge;
+    public int RoleBadges;
+    public string[]? RoleBadgeIds;
+
+    public string? FrameId;
+    public string? UserId;
+    public string Time;
+    public bool Chevron;
+    public bool Pinned;
+    public string? SubtitleGlyph;
+    public Vector4 SubtitleGlyphTint;
+}
+
+internal static class VRow
+{
+    private const float DefaultHeight = 64f;
+    private const float PinGlyph = 12f;
+    private const float PinGap = 4f;
+    private const float SubtitleGlyphUnits = 14f;
+    private const float SubtitleGlyphGap = 4f;
+
+    public static VRowHit Cell(in VRowModel model, PhoneTheme theme, RemoteImageCache images,
+        LodestoneService lodestone)
+    {
+        var drawList = ImGui.GetWindowDrawList();
+        var cell = FeedCell.Begin(drawList, HeightOf(model), VelvetTheme.HoverWash);
+        var hit = Paint(model, theme, images, lodestone, cell.Bounds, cell.Hovered, out var overControl);
+        if (hit == VRowHit.None && !overControl)
+        {
+            if (cell.Hovered && ImGui.IsMouseClicked(ImGuiMouseButton.Right))
+            {
+                hit = VRowHit.Overflow;
+            }
+            else if (cell.Tapped)
+            {
+                hit = VRowHit.Body;
+            }
+        }
+
+        FeedCell.End(drawList, cell, VelvetTheme.Hairline);
+        return hit;
+    }
+
+    public static VRowHit Draw(in VRowModel model, PhoneTheme theme, RemoteImageCache images,
+        LodestoneService lodestone)
+    {
+        var scale = UiScale.Current;
+        var drawList = ImGui.GetWindowDrawList();
+        var origin = ImGui.GetCursorScreenPos();
+        var width = ImGui.GetContentRegionAvail().X;
+        var height = HeightOf(model);
+        var bounds = new Rect(origin, new Vector2(origin.X + width, origin.Y + height));
+        var hovered = UiInteract.Hover(bounds.Min, bounds.Max);
+        if (hovered)
+        {
+            Squircle.Fill(drawList, bounds.Min, bounds.Max, Metrics.Radius.Md * scale,
+                Surfaces.Fill(VelvetTheme.Ink, FillLevel.Quaternary).Packed());
+            ImGui.SetMouseCursor(ImGuiMouseCursor.Hand);
+        }
+
+        var hit = Paint(model, theme, images, lodestone, bounds, hovered, out var overControl);
+        if (hit == VRowHit.None && !overControl)
+        {
+            if (hovered && ImGui.IsMouseClicked(ImGuiMouseButton.Right))
+            {
+                hit = VRowHit.Overflow;
+            }
+            else if (UiInteract.Click(bounds.Min, bounds.Max, hovered))
+            {
+                hit = VRowHit.Body;
+            }
+        }
+
+        ImGui.SetCursorScreenPos(origin);
+        ImGui.Dummy(new Vector2(width, height));
+        return hit;
+    }
+
+    private static float HeightOf(in VRowModel model) =>
+        (model.Height <= 0f ? DefaultHeight : model.Height) * UiScale.Current;
+
+    private static VRowHit Paint(in VRowModel model, PhoneTheme theme, RemoteImageCache images,
+        LodestoneService lodestone, Rect bounds, bool hovered, out bool overControl)
+    {
+        var scale = UiScale.Current;
+        var drawList = ImGui.GetWindowDrawList();
+        var min = bounds.Min;
+        var max = bounds.Max;
+        var centerY = bounds.Center.Y;
+        var hit = VRowHit.None;
+        var titleText = model.Title ?? string.Empty;
+        var subtitleText = model.Subtitle ?? string.Empty;
+        var nameText = model.Name ?? string.Empty;
+        var worldText = model.World ?? string.Empty;
+        var timeText = model.Time ?? string.Empty;
+        overControl = false;
+
+        var leftPad = FeedCell.PadX * scale;
+        float textLeft;
+        if (model.Leading == VRowLeading.Avatar)
+        {
+            var radius = (model.AvatarRadius <= 0f ? 20f : model.AvatarRadius) * scale;
+            var avatarCenter = new Vector2(min.X + leftPad + radius, centerY);
+            VAvatar.Draw(drawList, avatarCenter, radius, theme, nameText, worldText, model.AvatarUrl, images,
+                lodestone, model.Presence, null, Frames.Of(model.FrameId));
+            textLeft = avatarCenter.X + radius + Metrics.Space.Md * scale;
+        }
+        else if (model.Leading == VRowLeading.IconTile)
+        {
+            var tile = Metrics.Size.IconTile * scale;
+            var tileMin = new Vector2(min.X + leftPad, centerY - tile * 0.5f);
+            var tileMax = new Vector2(tileMin.X + tile, centerY + tile * 0.5f);
+            Squircle.Fill(drawList, tileMin, tileMax, Metrics.Radius.Sm * scale,
+                VelvetTheme.Alpha(model.TileTint, 0.20f).Packed());
+            PhoneIcon.Draw(drawList, new Vector2((tileMin.X + tileMax.X) * 0.5f, centerY), model.TileIcon,
+                model.TileTint, VIcon.Row * scale);
+            textLeft = tileMax.X + Metrics.Space.Md * scale;
+        }
+        else
+        {
+            textLeft = min.X + leftPad;
+        }
+
+        var rightEdge = max.X - leftPad;
+        if (model.Chevron)
+        {
+            PhoneIcon.Draw(drawList, new Vector2(rightEdge - 8f * scale, centerY), PhoneIcons.ChevronRight,
+                VelvetTheme.MutedInk, VIcon.Row * scale);
+            rightEdge -= 22f * scale;
+        }
+
+        if (model.Value is { Length: > 0 } valueText)
+        {
+            var valueSize = Typography.Measure(valueText, TextStyles.Subheadline);
+            var valueWidth = MathF.Min(valueSize.X, (max.X - min.X) * 0.42f);
+            Typography.Draw(drawList, new Vector2(rightEdge - valueWidth, centerY - valueSize.Y * 0.5f),
+                Typography.FitText(valueText, valueWidth, TextStyles.Subheadline), VelvetTheme.MutedInk,
+                TextStyles.Subheadline);
+            rightEdge -= valueWidth + Metrics.Space.Sm * scale;
+        }
+
+        if (model.Pill != null)
+        {
+            var pillHeight = Button.SmallHeight * scale;
+            var pillWidth = Button.WidthFor(model.Pill, ButtonSize.Small);
+            var pillRect = new Rect(new Vector2(rightEdge - pillWidth, centerY - pillHeight * 0.5f),
+                new Vector2(rightEdge, centerY + pillHeight * 0.5f));
+            overControl |= model.PillEnabled && UiInteract.Hover(pillRect.Min, pillRect.Max);
+            ImGui.PushID(model.UserId ?? model.Title);
+            if (Button.Draw(drawList, pillRect, model.Pill, VelvetTheme.Ink,
+                    model.PillFilled ? ButtonStyle.Prominent : ButtonStyle.Gray, enabled: model.PillEnabled))
+            {
+                hit = VRowHit.Pill;
+            }
+
+            ImGui.PopID();
+
+            rightEdge -= pillWidth + Metrics.Space.Sm * scale;
+        }
+
+        var timeTop = min.Y + 12f * scale;
+        var timeLeft = rightEdge;
+        if (timeText.Length > 0)
+        {
+            var timeSize = Typography.Measure(timeText, TextStyles.Caption1);
+            timeLeft = rightEdge - timeSize.X;
+            Typography.Draw(drawList, new Vector2(timeLeft, timeTop), timeText, VelvetTheme.MutedInk,
+                TextStyles.Caption1);
+        }
+
+        if (model.Pinned)
+        {
+            var glyph = PinGlyph * scale;
+            var glyphRight = timeText.Length > 0 ? timeLeft - PinGap * scale : rightEdge;
+            PhoneIcon.Draw(drawList,
+                new Vector2(glyphRight - glyph * 0.5f, timeTop + Typography.LineHeight(TextStyles.Caption1) * 0.5f),
+                PhoneIcons.PinFilled, VelvetTheme.MutedInk, glyph);
+        }
+
+        if (model.Badge > 0)
+        {
+            SocialChrome.DrawCountBadge(drawList, new Vector2(rightEdge - 10f * scale, max.Y - 16f * scale),
+                model.Badge, VelvetInk.Shared);
+        }
+
+        var textRight = rightEdge - Metrics.Space.Sm * scale;
+        var innerWidth = MathF.Max(10f * scale, textRight - textLeft);
+        var titleKey = "vrow.title." + (model.UserId ?? titleText);
+        if (subtitleText.Length == 0)
+        {
+            var titleSize = Typography.Measure(titleText, TextStyles.Headline);
+            UserName.Draw(drawList, titleKey, titleText, model.RoleBadges, model.RoleBadgeIds, textLeft,
+                centerY - titleSize.Y * 0.5f, innerWidth, TextStyles.Headline, VelvetTheme.TitleInk, hovered, false);
+            return hit;
+        }
+
+        var titleY = centerY - 15f * scale;
+        var headlineSize = Typography.Measure(titleText, TextStyles.Headline);
+        var titleHovering = UiInteract.Hover(new Vector2(textLeft, titleY),
+            new Vector2(textLeft + innerWidth, titleY + headlineSize.Y));
+        UserName.Draw(drawList, titleKey, titleText, model.RoleBadges, model.RoleBadgeIds, textLeft, titleY,
+            innerWidth, TextStyles.Headline, VelvetTheme.TitleInk, titleHovering, false);
+        var subtitleY = centerY + 3f * scale;
+        var subtitleSize = Typography.Measure(subtitleText, TextStyles.Subheadline);
+        var subtitleLeft = textLeft;
+        var subtitleWidth = innerWidth;
+        if (model.SubtitleGlyph is { Length: > 0 } subtitleGlyph)
+        {
+            var glyph = SubtitleGlyphUnits * scale;
+            PhoneIcon.Draw(drawList, new Vector2(subtitleLeft + glyph * 0.5f, subtitleY + subtitleSize.Y * 0.5f),
+                subtitleGlyph, model.SubtitleGlyphTint, glyph);
+            subtitleLeft += glyph + SubtitleGlyphGap * scale;
+            subtitleWidth = MathF.Max(10f * scale, textRight - subtitleLeft);
+        }
+
+        var subtitleHovering = UiInteract.Hover(new Vector2(subtitleLeft, subtitleY),
+            new Vector2(subtitleLeft + subtitleWidth, subtitleY + subtitleSize.Y));
+        Marquee.DrawLeft(new MarqueeId("vrow.subtitle.", subtitleText), subtitleText, subtitleLeft, subtitleY,
+            subtitleWidth, TextStyles.Subheadline, VelvetTheme.MutedInk, subtitleHovering);
+        return hit;
+    }
+}

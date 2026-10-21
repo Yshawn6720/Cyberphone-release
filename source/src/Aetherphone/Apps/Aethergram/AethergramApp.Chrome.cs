@@ -1,0 +1,259 @@
+using Aetherphone.Core;
+using Aetherphone.Core.Aethernet.Contracts;
+using Aetherphone.Core.Animation;
+using Aetherphone.Core.Localization;
+using Aetherphone.Core.Media;
+using Aetherphone.Core.Social;
+using Aetherphone.Windows.Components;
+using Dalamud.Bindings.ImGui;
+using Dalamud.Interface.Utility.Raii;
+
+namespace Aetherphone.Apps.Aethergram;
+
+internal readonly record struct PostGridStyle(float Aspect, bool ShowLikes);
+
+internal sealed partial class AethergramApp
+{
+    private const float CellPadX = SocialChrome.CellPadX;
+    private const float HeaderIconSize = 24f;
+    private const float PillHeight = Button.RegularHeight;
+    private const float SmallButtonCeiling = 31f;
+    private const float RegularButtonCeiling = 39f;
+    private const float IconTabHeight = 44f;
+    private const float IconTabUnderline = 1.5f;
+    private const float IconTabIconSize = 22f;
+    private const float GridGap = 1.5f;
+    private const float GridThumbnailOversample = 2f;
+    private const float GridBadgeInset = 12f;
+    private const float GridBadgeSize = 16f;
+    private const float GridBadgeGap = 18f;
+    private const float UserRowHeight = 64f;
+    private const float UserRowAvatarRadius = 22f;
+    private const float FollowPillWidth = 96f;
+    private const float EmptyStateTop = 72f;
+
+    private static SocialInk Ink => AethergramInk.Shared;
+    private static readonly TextStyle ScreenTitleStyle = TextStyles.Headline;
+
+    private static readonly TextStyle GridOverlayStyle = TextStyles.FootnoteEmphasized;
+    private static readonly TextStyle EmptyTitleStyle = TextStyles.Title2;
+    private static readonly TextStyle EmptyBodyStyle = TextStyles.Callout;
+    private static readonly PostGridStyle SquareGrid = new(1f, false);
+    private static readonly PostGridStyle ExploreGrid = new(1.3333f, true);
+    private static readonly SocialUserRowStyle UserRowStyle = new(UserRowHeight, UserRowAvatarRadius, CellPadX, 12f,
+        PillHeight, TextStyles.Headline, TextStyles.Subheadline, AethergramInk.Shared.HoverTint);
+
+    private Rect screenRect;
+
+    private void PaintBarBackdrop(ImDrawListPtr drawList, Rect bar) =>
+        SocialChrome.PaintBarBackdrop(ui, drawList, bar, screenRect);
+
+    private static void DrawHairline(ImDrawListPtr drawList, float left, float right, float y) =>
+        FeedCell.Hairline(drawList, left, right, y, Ink.Hairline);
+
+    private void DrawScreenHeader(Rect area, string title, int trailingSlots = 0, bool showBack = true,
+        bool centered = true, string subtitle = "") =>
+        SocialChrome.DrawScreenHeader(area, title, Ink, back, ScreenTitleStyle,
+            SocialChrome.HeaderReserve(trailingSlots), subtitle, showBack, centered);
+
+    private static bool DrawHeaderIcon(ImDrawListPtr drawList, Vector2 center, string glyph, string tooltip,
+        bool highlighted = false, int badge = 0, float iconSize = HeaderIconSize) =>
+        SocialChrome.DrawHeaderIcon(drawList, center, SocialChrome.HeaderIconRadius * UiScale.Current, glyph,
+            iconSize, tooltip, Ink, Ink.TitleInk, highlighted, badge);
+
+    private static int DrawIconTabs(Rect row, ReadOnlySpan<string> glyphs, ReadOnlySpan<string> labels, int active,
+        ref Spring slide) =>
+        UnderlineTabs.DrawIcons(row, glyphs, labels, active, ref slide, Ink, IconTabIconSize, IconTabUnderline,
+            Motion.Release);
+
+    private bool DrawAccentPill(Rect rect, string label, bool enabled = true) =>
+        Button.Draw(SnapButton(rect), label, ui.Ink, ButtonStyle.Prominent, enabled: enabled);
+
+    private bool DrawGrayPill(Rect rect, string label) =>
+        Button.Draw(SnapButton(rect), label, ui.Ink, ButtonStyle.Gray);
+
+    private bool DrawGrayIconButton(Rect rect, string glyph, string tooltip) =>
+        RoundButton.Icon(ImGui.GetWindowDrawList(), rect.Center, RoundButton.RegularRadius * UiScale.Current, glyph,
+            ui.Ink, ButtonStyle.Gray, tooltip, HoverLabelSide.Below);
+
+    private static Rect SnapButton(Rect rect)
+    {
+        var scale = UiScale.Current;
+        var units = rect.Height / scale;
+        var height = units <= SmallButtonCeiling ? Button.SmallHeight
+            : units <= RegularButtonCeiling ? Button.RegularHeight
+            : Button.LargeHeight;
+        var half = height * scale * 0.5f;
+        return new Rect(new Vector2(rect.Min.X, rect.Center.Y - half), new Vector2(rect.Max.X, rect.Center.Y + half));
+    }
+
+    private void DrawFollowPill(Rect rect, UserDto user)
+    {
+        var state = SocialFeedStore.FollowStateOf(user);
+        ImGui.PushID(user.Id);
+        var clicked = state switch
+        {
+            FollowState.Following => DrawGrayPill(rect, Loc.T(L.Aethergram.Following)),
+            FollowState.Requested => DrawGrayPill(rect, Loc.T(L.Social.Requested)),
+            _ => DrawAccentPill(rect, Loc.T(L.Aethergram.Follow)),
+        };
+        ImGui.PopID();
+        if (clicked)
+        {
+            store.ToggleFollow(user);
+        }
+    }
+
+    private void DrawPostGrid(PostDto[] posts, LocString emptyMessage, bool hasMore, bool loadingMore,
+        in PostGridStyle style, PostSource source)
+    {
+        var scale = UiScale.Current;
+        if (posts.Length == 0)
+        {
+            Typography.DrawCentered(
+                new Vector2(ImGui.GetCursorScreenPos().X + ImGui.GetContentRegionAvail().X * 0.5f,
+                    ImGui.GetCursorScreenPos().Y + 40f * scale), Loc.T(emptyMessage), Ink.MutedInk);
+            return;
+        }
+
+        var width = ScrollLayout.StableContentWidth();
+        var gridCenterX = ImGui.GetCursorScreenPos().X + width * 0.5f;
+        var gap = GridGap * scale;
+        var cellWidth = (width - gap * (GridColumns - 1)) / GridColumns;
+        var cellHeight = cellWidth * style.Aspect;
+        using (ImRaii.PushStyle(ImGuiStyleVar.ItemSpacing, new Vector2(gap, gap)))
+        {
+            for (var index = 0; index < posts.Length; index++)
+            {
+                ImGui.Dummy(new Vector2(cellWidth, cellHeight));
+                var min = ImGui.GetItemRectMin();
+                var max = ImGui.GetItemRectMax();
+                if (ImGui.IsRectVisible(min, max))
+                {
+                    DrawGridTile(posts[index], min, max, style, source == PostSource.Profile);
+                    if (UiInteract.Click(min, max, UiInteract.Hover(min, max)))
+                    {
+                        OpenPosts(posts[index].Id, source);
+                    }
+                }
+
+                if (index % GridColumns != GridColumns - 1)
+                {
+                    ImGui.SameLine();
+                }
+            }
+        }
+
+        ImGui.NewLine();
+        if (loadingMore)
+        {
+            InfiniteScroll.DrawLoadingRow(gridCenterX, Ink.MutedInk);
+        }
+        else if (hasMore && InfiniteScroll.ReachedBottom())
+        {
+            LoadMorePosts(source);
+        }
+
+        ImGui.Dummy(new Vector2(0f, 24f * scale));
+    }
+
+    private void DrawGridTile(PostDto post, Vector2 min, Vector2 max, in PostGridStyle style, bool showPin)
+    {
+        var scale = UiScale.Current;
+        var drawList = ImGui.GetWindowDrawList();
+        var photos = PostMedia.Photos(post.MediaUrls, post.MediaUrl);
+        var pinned = showPin && post.PinnedAtUnix is not null;
+        var badgeCenter = new Vector2(max.X - GridBadgeInset * scale, min.Y + GridBadgeInset * scale);
+        if (SensitiveReveals.ShouldVeil(post.Sensitive, post.Id, configuration.ShowSensitiveContent))
+        {
+            SensitiveVeil.Draw(drawList, min, max, 0f);
+        }
+        else
+        {
+            var texture = images.Sized(photos.Length > 0 ? photos[0] : null,
+                MathF.Max(max.X - min.X, max.Y - min.Y) * GridThumbnailOversample);
+            if (texture is null)
+            {
+                drawList.AddRectFilled(min, max, ImGui.GetColorU32(Ink.ThumbFill));
+                return;
+            }
+
+            var (uv0, uv1) = ImageFit.Cover(texture.Size.X, texture.Size.Y, max.X - min.X, max.Y - min.Y);
+            drawList.AddImage(texture.Handle, min, max, uv0, uv1);
+            if (photos.Length > 1)
+            {
+                var carouselCenter = pinned ? badgeCenter - new Vector2(GridBadgeGap * scale, 0f) : badgeCenter;
+                PhoneIcon.Draw(drawList, carouselCenter, PhoneIcons.Copy, Ink.White, GridBadgeSize * scale);
+            }
+        }
+
+        if (pinned)
+        {
+            PhoneIcon.Draw(drawList, badgeCenter, PhoneIcons.PinFilled, Ink.White, GridBadgeSize * scale);
+        }
+
+        if (style.ShowLikes)
+        {
+            DrawGridOverlayCount(drawList, min, max, post.TotalReactions);
+        }
+
+        if (UiInteract.Hover(min, max))
+        {
+            drawList.AddRectFilled(min, max, ImGui.GetColorU32(new Vector4(1f, 1f, 1f, 0.08f)));
+            ImGui.SetMouseCursor(ImGuiMouseCursor.Hand);
+        }
+    }
+
+    private static void DrawGridOverlayCount(ImDrawListPtr drawList, Vector2 min, Vector2 max, int likes)
+    {
+        var scale = UiScale.Current;
+        var scrimTop = max.Y - 34f * scale;
+        drawList.AddRectFilledMultiColor(new Vector2(min.X, scrimTop), max, 0u, 0u, ImGui.GetColorU32(Ink.Scrim),
+            ImGui.GetColorU32(Ink.Scrim));
+        var iconCenter = new Vector2(min.X + 14f * scale, max.Y - 12f * scale);
+        PhoneIcon.Draw(drawList, iconCenter, PhoneIcons.HeartFilled, Ink.White, 13f * scale);
+        var label = CountText.Compact(likes);
+        var size = Typography.Measure(label, GridOverlayStyle);
+        Typography.Draw(drawList, new Vector2(iconCenter.X + 10f * scale, iconCenter.Y - size.Y * 0.5f), label,
+            Ink.White, GridOverlayStyle);
+    }
+
+    private SocialUserRowResult DrawUserRow(UserDto user, float trailingWidth)
+    {
+        var regionCode = SocialRegion.Resolve(user.Region, user.World, gameData);
+        return SocialUserRow.Draw("aethergram.row.", user, SocialIdentity.ProfileMeta(user.Handle, regionCode),
+            trailingWidth, UserRowStyle, Ink, theme, images, lodestone);
+    }
+
+    private void DrawUserRowWithFollow(UserDto user)
+    {
+        var isMe = store.Me is { } me && me.Id == user.Id;
+        var row = DrawUserRow(user, isMe ? 0f : FollowPillWidth);
+        if (!isMe)
+        {
+            DrawFollowPill(row.Trailing, user);
+        }
+
+        if (row.Tapped)
+        {
+            OpenProfile(user.Id);
+        }
+    }
+
+    private static void DrawEmptyState(Rect area, string title, string body)
+    {
+        var scale = UiScale.Current;
+        var drawList = ImGui.GetWindowDrawList();
+        var maxWidth = MathF.Max(1f, area.Width - CellPadX * 2f * scale);
+        var top = area.Min.Y + EmptyStateTop * scale;
+        var titleBottom = Typography.DrawWrappedCentered(drawList, title, EmptyTitleStyle, Ink.TitleInk,
+            new Vector2(area.Center.X, top), maxWidth);
+        if (body.Length == 0)
+        {
+            return;
+        }
+
+        Typography.DrawWrappedCentered(drawList, body, EmptyBodyStyle, Ink.MutedInk,
+            new Vector2(area.Center.X, titleBottom + 8f * scale), maxWidth);
+    }
+}

@@ -1,0 +1,610 @@
+using Aetherphone.Core;
+using Aetherphone.Core.Apps;
+using Aetherphone.Core.Config;
+using Aetherphone.Core.Device;
+using Aetherphone.Core.Emoji;
+using Aetherphone.Core.Game;
+using Aetherphone.Core.GameChat;
+using Aetherphone.Core.Home;
+using Aetherphone.Core.Localization;
+using Aetherphone.Core.Message;
+using Aetherphone.Core.Notifications;
+using Aetherphone.Core.Photos;
+using Aetherphone.Core.Platform;
+using Aetherphone.Core.Shell;
+using Aetherphone.Core.Theme;
+using Aetherphone.Core.Updates;
+using Aetherphone.Core.Video;
+using Aetherphone.Core.Wallpapers;
+using Aetherphone.Windows;
+using Dalamud.Game.ClientState.Conditions;
+using Dalamud.Game.ClientState.GamePad;
+using Dalamud.Game.ClientState.Keys;
+using Dalamud.Game.ClientState.Objects.SubKinds;
+using Dalamud.Game.Command;
+using Dalamud.Game.Config;
+using Dalamud.Game.Gui.ContextMenu;
+using Dalamud.IoC;
+using Dalamud.Interface.DragDrop;
+using Dalamud.Interface.Windowing;
+using Dalamud.Plugin;
+using Dalamud.Plugin.Services;
+
+namespace Aetherphone;
+
+public sealed class Plugin : IDalamudPlugin
+{
+    [PluginService] internal static IDalamudPluginInterface PluginInterface { get; private set; } = null!;
+    [PluginService] internal static ICommandManager CommandManager { get; private set; } = null!;
+    [PluginService] internal static IDtrBar DtrBar { get; private set; } = null!;
+    [PluginService] internal static IChatGui ChatGui { get; private set; } = null!;
+    [PluginService] internal static IDataManager DataManager { get; private set; } = null!;
+    [PluginService] internal static IObjectTable ObjectTable { get; private set; } = null!;
+    [PluginService] internal static IClientState ClientState { get; private set; } = null!;
+    [PluginService] internal static IFramework Framework { get; private set; } = null!;
+    [PluginService] internal static ICondition Condition { get; private set; } = null!;
+    [PluginService] internal static IDutyState DutyState { get; private set; } = null!;
+    [PluginService] internal static ITextureProvider TextureProvider { get; private set; } = null!;
+    [PluginService] internal static ITextureSubstitutionProvider TextureSubstitution { get; private set; } = null!;
+    [PluginService] internal static IGameGui GameGui { get; private set; } = null!;
+    [PluginService] internal static INamePlateGui NamePlateGui { get; private set; } = null!;
+    [PluginService] internal static IContextMenu ContextMenu { get; private set; } = null!;
+    [PluginService] internal static IPluginLog Log { get; private set; } = null!;
+    [PluginService] internal static IGameConfig GameConfig { get; private set; } = null!;
+    [PluginService] internal static IUnlockState UnlockState { get; private set; } = null!;
+    [PluginService] internal static IKeyState KeyState { get; private set; } = null!;
+    [PluginService] internal static IGamepadState GamepadState { get; private set; } = null!;
+    [PluginService] internal static IAetheryteList AetheryteList { get; private set; } = null!;
+    [PluginService] internal static IAddonLifecycle AddonLifecycle { get; private set; } = null!;
+    [PluginService] internal static IDragDropManager DragDrop { get; private set; } = null!;
+    internal static Plugin Instance { get; private set; } = null!;
+    internal static Configuration Cfg { get; private set; } = null!;
+    internal static FontService Fonts { get; private set; } = null!;
+    internal static WallpaperLibrary Wallpapers { get; private set; } = null!;
+    internal static LiveBackdrop LiveBackdrop { get; private set; } = null!;
+    internal static DeviceStatus Device { get; private set; } = null!;
+    internal static UpdateCheckService Updates { get; private set; } = null!;
+    internal static PhotoWindow PhotoWindow { get; private set; } = null!;
+    private readonly WindowSystem windowSystem = new(AepConstants.Name);
+    private readonly PhoneServices services;
+    private readonly PhoneShell shell;
+    private readonly PhoneWindow phoneWindow;
+    private readonly VideoSuite videoSuite;
+    private readonly VideoWorldOverlay videoWorldOverlay;
+    private readonly VideoDebugWindow videoDebugWindow;
+    private readonly AetherStreamScreenWindow screenWindow;
+    private readonly UpdateChipWindow updateChipWindow;
+    private readonly HuntsMapMarkersIndicatorWindow huntsMapMarkersIndicatorWindow;
+    private readonly LinkpearlPopouts linkpearlPopouts;
+    private readonly IMessagePopouts messagePopouts;
+    private readonly PopoutPresence linkpearlPresence;
+    private readonly LinkpearlHotkey linkpearlHotkey;
+    private readonly AppGate linkpearlGate;
+    private readonly PhoneEmoteController phoneEmote;
+    private readonly TimerNotifier timerNotifier;
+    private readonly CalendarReminderService calendarReminders;
+    private readonly ClockAlarmService clockAlarms;
+    private readonly ReminderService reminders;
+    private readonly ScreenshotImportService screenshotImport;
+    private readonly ServerBarEntry serverBar;
+    private readonly PhoneCommands commands;
+    private static CommandInfo? primaryCommand;
+    private bool autoOpenPending;
+
+    public Plugin()
+    {
+        try
+        {
+            Instance = this;
+            var freshInstall = !PluginInterface.ConfigFile.Exists;
+            ConfigMigrations.Run(PluginInterface.ConfigFile);
+            Cfg = PluginInterface.GetPluginConfig() as Configuration ?? new Configuration();
+            Cfg.NormalizeAethernetBaseUrl();
+            Cfg.MigrateSoundSettings();
+            Cfg.MigrateRetiredSounds();
+            Cfg.MigrateUiSoundDefaults(freshInstall);
+            Cfg.MigrateChangelogSeen();
+            Cfg.MigrateBadgeSettings();
+            Cfg.MigrateMessage();
+            Cfg.MigrateMessagesMerge();
+            Cfg.MigrateSetupCompleted();
+            Cfg.MigrateChirperMediaFilters();
+            Cfg.MigratePhoneWidth();
+            Cfg.MigrateControlPanelRepack();
+            Cfg.MigrateCharacterSessions();
+            Cfg.MigrateEncryptionKeyStore();
+            Cfg.MigrateHousingRefreshFloor();
+            Cfg.MigrateHomeLooks();
+            Cfg.MigrateRetiredWallpapers();
+            Cfg.MigrateWindowsMediaOptIn();
+            Cfg.MigrateSeasonalThemeOptIn();
+            InitializeLocalization();
+            HiddenApps.ApplyClient(ClientState.ClientLanguage);
+            InstallSource.Initialize(PluginInterface);
+            Device = new DeviceStatus(ClientState, ObjectTable, DataManager);
+            services = PhoneServices.Build(Cfg, ChatGui, DataManager, ObjectTable, ClientState, Framework, DutyState,
+                TextureProvider, PluginInterface.ConfigDirectory, UnlockState, Condition);
+            FilePicker.ProblemReporter = message =>
+                services.Confirm.Alert(null, message, Loc.T(L.Common.Close));
+            Fonts = new FontService(PluginInterface, Cfg, services.Loading, Cfg.TextZoom,
+                PhoneSizeCatalog.ZoomFor(Cfg.PhoneWidth));
+            EmojiCatalog.Load();
+            Wallpapers = services.Wallpapers;
+            LiveBackdrop = services.LiveBackdrop;
+            videoSuite = new VideoSuite(services, Cfg, ChatGui);
+            services.SongResolver.Attach(videoSuite.Screen.Engine.Dependencies);
+            Framework.Update += OnVideoFrameworkUpdate;
+            Framework.Update += OnDeviceLinkTick;
+            Framework.Update += OnCallsTick;
+            Framework.Update += OnSeasonTick;
+            videoDebugWindow = new VideoDebugWindow(videoSuite.Player, videoSuite.Screen);
+            screenWindow = new AetherStreamScreenWindow(videoSuite);
+            videoWorldOverlay = new VideoWorldOverlay(videoSuite, Cfg);
+            linkpearlGate = services.Installer.Gate("messages");
+            linkpearlPopouts = new LinkpearlPopouts(Cfg, services.ChatInbox, services.ChatLog, services.ChatSend,
+                services.ChatTabs, services.TellPreferences, services.LinkpearlNotificationGate, services.Visibility,
+                linkpearlGate, services.GameData, services.Themes, services.Lodestone,
+                services.Notifications, services.Confirm, services.WallpaperImages);
+            linkpearlPresence = new PopoutPresence(Cfg, linkpearlPopouts, services.ChatLog, services.ChatInbox);
+            linkpearlHotkey = new LinkpearlHotkey(Cfg, services.ChatInbox, linkpearlPopouts);
+            var bundle = AppRegistry.BuildDefault(services, videoSuite, screenWindow, linkpearlPopouts);
+            shell = new PhoneShell(services, bundle);
+            services.NameplateTitles.Bind(videoSuite.WatchAlong, () => shell.ForegroundApp, bundle.Apps);
+            screenshotImport = new ScreenshotImportService(bundle.Photos, Cfg);
+            phoneWindow = new PhoneWindow(shell, Cfg);
+            commands = new PhoneCommands(services, phoneWindow, bundle.Apps, videoDebugWindow, ChatGui);
+            Updates = new UpdateCheckService(services.Http, PluginInterface);
+            updateChipWindow = new UpdateChipWindow(phoneWindow, Updates, services.Themes);
+            huntsMapMarkersIndicatorWindow =
+                new HuntsMapMarkersIndicatorWindow(services.HuntsMapMarkers, services.Themes);
+            PhotoWindow = new PhotoWindow(services.Themes);
+            windowSystem.AddWindow(phoneWindow);
+            windowSystem.AddWindow(updateChipWindow);
+            windowSystem.AddWindow(huntsMapMarkersIndicatorWindow);
+            windowSystem.AddWindow(PhotoWindow);
+            windowSystem.AddWindow(videoDebugWindow);
+            windowSystem.AddWindow(screenWindow);
+            for (var index = 0; index < linkpearlPopouts.Windows.Count; index++)
+            {
+                windowSystem.AddWindow(linkpearlPopouts.Windows[index]);
+            }
+
+            messagePopouts = bundle.MessagePopouts;
+            for (var index = 0; index < messagePopouts.Windows.Count; index++)
+            {
+                windowSystem.AddWindow(messagePopouts.Windows[index]);
+            }
+
+            messagePopouts.OpenInPhone = OpenMessageConversation;
+            messagePopouts.Restore();
+
+            linkpearlPopouts.OpenInPhone = OpenLinkpearlConversation;
+            linkpearlPopouts.LookUpInPhone = OpenLinkpearlLookup;
+            linkpearlPopouts.OpenMarketInPhone = OpenMarketItem;
+            linkpearlPopouts.Restore();
+            Framework.Update += OnLinkpearlPresenceTick;
+            services.Visibility.Bind(() => phoneWindow is { IsOpen: true, IsMinimized: false },
+                () => phoneWindow is { IsOpen: true }
+                    ? new Rect(phoneWindow.LastPosition, phoneWindow.LastPosition + phoneWindow.LastSize)
+                    : default);
+            phoneEmote = new PhoneEmoteController(Cfg, Framework, ObjectTable, Condition, DataManager,
+                () => services.Visibility.IsVisible);
+            timerNotifier = new TimerNotifier(Cfg, Framework, services.Notifications, services.GameTimers,
+                services.Installer.Gate("timers"));
+            calendarReminders = new CalendarReminderService(Cfg, Framework, services.Notifications,
+                services.Installer.Gate("calendar"));
+            clockAlarms = new ClockAlarmService(Cfg, Framework, services.Notifications, services.AlarmRinger,
+                services.Installer.Gate("clock"));
+            reminders = new ReminderService(Cfg, Framework, services.Notifications, services.Installer.Gate("notes"));
+            services.CharacterSwitcher.Start();
+            services.CharacterWatch.Start();
+            services.Calls.IncomingCallPresented += BringPhoneForward;
+            services.AlarmRinger.Presented += BringPhoneForward;
+            services.Calls.Start();
+            serverBar = new ServerBarEntry(DtrBar, Cfg, services.Notifications, phoneWindow.ToggleShell);
+            services.MarketIndex.EnsureBuilt();
+            ContextMenu.OnMenuOpened += OnMenuOpened;
+            primaryCommand = new CommandInfo(OnCommand)
+            {
+                HelpMessage = Loc.T(L.Plugin.CommandHelp, AepConstants.PrimaryCommand),
+            };
+            CommandManager.AddHandler(AepConstants.PrimaryCommand, primaryCommand);
+            CommandManager.AddHandler(AepConstants.AliasCommand, new CommandInfo(OnCommand) { ShowInHelp = false });
+            PluginInterface.UiBuilder.Draw += windowSystem.Draw;
+            PluginInterface.UiBuilder.Draw += FilePicker.Draw;
+            PluginInterface.UiBuilder.Draw += linkpearlHotkey.Tick;
+            PluginInterface.UiBuilder.Draw += videoWorldOverlay.Draw;
+            PluginInterface.UiBuilder.OpenMainUi += phoneWindow.ToggleShell;
+            PluginInterface.UiBuilder.OpenConfigUi += phoneWindow.OpenSettings;
+            PluginInterface.UiBuilder.DisableGposeUiHide = Cfg.ShowInGpose;
+            PluginInterface.UiBuilder.DisableCutsceneUiHide = Cfg.ShowInCutscenes;
+            ClientState.Login += OnLogin;
+
+            if (Cfg.OpenOnStartup && ClientState.IsLoggedIn)
+            {
+                QueueAutoOpen();
+            }
+        }
+        catch
+        {
+            try
+            {
+                TearDownPartialConstruction();
+            }
+            catch (Exception cleanupException)
+            {
+                Log.Error(cleanupException, "Partial construction teardown failed.");
+            }
+
+            throw;
+        }
+    }
+
+    private void TearDownPartialConstruction()
+    {
+        PluginInterface.UiBuilder.Draw -= windowSystem.Draw;
+        PluginInterface.UiBuilder.Draw -= FilePicker.Draw;
+        if (linkpearlHotkey is not null)
+        {
+            PluginInterface.UiBuilder.Draw -= linkpearlHotkey.Tick;
+        }
+
+        if (videoWorldOverlay is not null)
+        {
+            PluginInterface.UiBuilder.Draw -= videoWorldOverlay.Draw;
+        }
+
+        if (phoneWindow is not null)
+        {
+            PluginInterface.UiBuilder.OpenMainUi -= phoneWindow.ToggleShell;
+            PluginInterface.UiBuilder.OpenConfigUi -= phoneWindow.OpenSettings;
+        }
+
+        ClientState.Login -= OnLogin;
+        Framework.Update -= OnAutoOpenTick;
+        Framework.Update -= OnVideoFrameworkUpdate;
+        Framework.Update -= OnDeviceLinkTick;
+        Framework.Update -= OnCallsTick;
+        Framework.Update -= OnSeasonTick;
+        Framework.Update -= OnLinkpearlPresenceTick;
+        ContextMenu.OnMenuOpened -= OnMenuOpened;
+        CommandManager.RemoveHandler(AepConstants.PrimaryCommand);
+        CommandManager.RemoveHandler(AepConstants.AliasCommand);
+        if (services is not null)
+        {
+            services.Calls.IncomingCallPresented -= BringPhoneForward;
+            services.AlarmRinger.Presented -= BringPhoneForward;
+        }
+
+        serverBar?.Dispose();
+        linkpearlPresence?.Dispose();
+        windowSystem.RemoveAllWindows();
+        videoDebugWindow?.Dispose();
+        videoSuite?.Dispose();
+        DxHandler.Dispose();
+        phoneEmote?.Dispose();
+        timerNotifier?.Dispose();
+        calendarReminders?.Dispose();
+        clockAlarms?.Dispose();
+        reminders?.Dispose();
+        Updates?.Dispose();
+        shell?.Dispose();
+        screenshotImport?.Dispose();
+        services?.Dispose();
+        Device?.Dispose();
+        Windows.Components.AppIconCache.Dispose();
+        Windows.Components.BrandMark.Dispose();
+        Apps.Skywatcher.Sky.SkyTextures.Dispose();
+        Fonts?.Dispose();
+    }
+
+    private void OnLogin()
+    {
+        if (!Cfg.OpenOnStartup)
+        {
+            return;
+        }
+
+        QueueAutoOpen();
+    }
+
+    private void QueueAutoOpen()
+    {
+        if (phoneWindow.IsOpen)
+        {
+            return;
+        }
+
+        autoOpenPending = true;
+        Framework.Update -= OnAutoOpenTick;
+        Framework.Update += OnAutoOpenTick;
+    }
+
+    private void OpenMessageConversation(string conversationId)
+    {
+        services.DmLauncher.RequestConversation(conversationId);
+        ShowPhoneApp("message");
+    }
+
+    private void OpenLinkpearlConversation(string conversationKey)
+    {
+        services.LinkpearlLauncher.Request(conversationKey);
+        ShowPhoneApp("messages");
+    }
+
+    private void OpenLinkpearlLookup(string name, string world)
+    {
+        services.LinkpearlLauncher.RequestLookup(name, world);
+        ShowPhoneApp("messages");
+    }
+
+    private void OpenMarketItem(uint itemId)
+    {
+        services.MarketLauncher.RequestItem(itemId);
+        ShowPhoneApp("market");
+    }
+
+    private void ShowPhoneApp(string appId) => phoneWindow.OpenApp(appId);
+
+    private void OnVideoFrameworkUpdate(IFramework framework)
+    {
+        videoSuite.OnFrameworkUpdate((float)framework.UpdateDelta.TotalSeconds);
+    }
+
+    private void OnLinkpearlPresenceTick(IFramework framework) =>
+        linkpearlPresence.Tick((float)framework.UpdateDelta.TotalSeconds);
+
+    private void OnCallsTick(IFramework framework) =>
+        services.Calls.Advance((float)framework.UpdateDelta.TotalSeconds);
+
+    private static void OnSeasonTick(IFramework framework)
+    {
+        SeasonalTheme.Update(Cfg, DateTime.Now);
+        Fonts.SyncDisplay(SeasonalTheme.Halloween);
+    }
+
+    private void OnDeviceLinkTick(IFramework framework)
+    {
+        services.DeviceLinks.Tick((float)framework.UpdateDelta.TotalSeconds);
+        services.EncryptionGuide.Tick((float)framework.UpdateDelta.TotalSeconds);
+        services.ChatHistory.Tick((float)framework.UpdateDelta.TotalSeconds);
+    }
+
+    private void OnAutoOpenTick(IFramework framework)
+    {
+        if (!autoOpenPending)
+        {
+            Framework.Update -= OnAutoOpenTick;
+            return;
+        }
+
+        if (ObjectTable.LocalPlayer is null || Condition[ConditionFlag.BetweenAreas] ||
+            Condition[ConditionFlag.BetweenAreas51])
+        {
+            return;
+        }
+
+        autoOpenPending = false;
+        Framework.Update -= OnAutoOpenTick;
+        if (phoneWindow.IsOpen)
+        {
+            return;
+        }
+
+        if (Cfg.OpenMinimizedOnStartup)
+        {
+            phoneWindow.StartMinimized();
+        }
+        else
+        {
+            phoneWindow.Maximize();
+        }
+
+        phoneWindow.IsOpen = true;
+    }
+
+    public void Dispose()
+    {
+        PluginInterface.UiBuilder.Draw -= windowSystem.Draw;
+        PluginInterface.UiBuilder.Draw -= FilePicker.Draw;
+        PluginInterface.UiBuilder.Draw -= linkpearlHotkey.Tick;
+        PluginInterface.UiBuilder.Draw -= videoWorldOverlay.Draw;
+        PluginInterface.UiBuilder.OpenMainUi -= phoneWindow.ToggleShell;
+        PluginInterface.UiBuilder.OpenConfigUi -= phoneWindow.OpenSettings;
+        ClientState.Login -= OnLogin;
+        Framework.Update -= OnAutoOpenTick;
+        Framework.Update -= OnVideoFrameworkUpdate;
+        Framework.Update -= OnDeviceLinkTick;
+        Framework.Update -= OnCallsTick;
+        Framework.Update -= OnSeasonTick;
+        Framework.Update -= OnLinkpearlPresenceTick;
+        services.Calls.IncomingCallPresented -= BringPhoneForward;
+        services.AlarmRinger.Presented -= BringPhoneForward;
+        ContextMenu.OnMenuOpened -= OnMenuOpened;
+        serverBar.Dispose();
+        phoneWindow.PersistPositions();
+        linkpearlPresence.Dispose();
+        linkpearlPopouts.Dispose();
+        messagePopouts.Dispose();
+        windowSystem.RemoveAllWindows();
+        videoDebugWindow.Dispose();
+        videoSuite.Dispose();
+        DxHandler.Dispose();
+        phoneEmote.Dispose();
+        timerNotifier.Dispose();
+        calendarReminders.Dispose();
+        clockAlarms.Dispose();
+        reminders.Dispose();
+        screenshotImport.Dispose();
+        Updates.Dispose();
+        shell.Dispose();
+        services.Dispose();
+        Device.Dispose();
+        Windows.Components.AppIconCache.Dispose();
+        Windows.Components.BrandMark.Dispose();
+        Apps.Skywatcher.Sky.SkyTextures.Dispose();
+        Fonts.Dispose();
+        CommandManager.RemoveHandler(AepConstants.PrimaryCommand);
+        CommandManager.RemoveHandler(AepConstants.AliasCommand);
+        Cfg.SaveNow();
+    }
+
+    public static void OnLanguageChanged()
+    {
+        TimeText.ApplyClockPreference(Cfg.Use24HourClock);
+        if (primaryCommand is not null)
+        {
+            primaryCommand.HelpMessage = Loc.T(L.Plugin.CommandHelp, AepConstants.PrimaryCommand);
+        }
+
+        RefreshServerBar();
+    }
+
+    public static void RefreshServerBar()
+    {
+        Instance?.serverBar?.Refresh();
+    }
+
+    private static void InitializeLocalization()
+    {
+        var directory = Path.Combine(PluginInterface.AssemblyLocation.DirectoryName ?? string.Empty, "Localization");
+        if (string.IsNullOrEmpty(Cfg.Language))
+        {
+            Cfg.Language = DetectLanguage();
+            Cfg.Save();
+        }
+
+        Loc.Initialize(Cfg.Language, directory);
+        TimeText.ApplyClockPreference(Cfg.Use24HourClock);
+    }
+
+    private static string DetectLanguage()
+    {
+        switch (ClientState.ClientLanguage)
+        {
+            case Dalamud.Game.ClientLanguage.TraditionalChinese:
+            case Dalamud.Game.ClientLanguage.ChineseTraditional:
+                return Languages.TraditionalChinese.Code;
+            case Dalamud.Game.ClientLanguage.ChineseSimplified:
+                return Languages.Chinese.Code;
+            case Dalamud.Game.ClientLanguage.German:
+                return "de";
+            case Dalamud.Game.ClientLanguage.French:
+                return "fr";
+            case Dalamud.Game.ClientLanguage.Japanese:
+                return "ja";
+        }
+
+        // Dalamud reports its own Traditional Chinese UI as "tw" (and "tc"), Simplified as "zh".
+        var dalamudLanguage = PluginInterface.UiLanguage;
+        if (string.Equals(dalamudLanguage, "tw", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(dalamudLanguage, "tc", StringComparison.OrdinalIgnoreCase))
+        {
+            return Languages.TraditionalChinese.Code;
+        }
+
+        if (string.Equals(dalamudLanguage, "zh", StringComparison.OrdinalIgnoreCase))
+        {
+            return Languages.Chinese.Code;
+        }
+
+        var osCulture = System.Globalization.CultureInfo.InstalledUICulture;
+        if (IsTraditionalChinese(osCulture))
+        {
+            return Languages.TraditionalChinese.Code;
+        }
+
+        var osLanguage = osCulture.TwoLetterISOLanguageName;
+        for (var index = 0; index < Languages.All.Length; index++)
+        {
+            if (string.Equals(Languages.All[index].Code, osLanguage, StringComparison.OrdinalIgnoreCase))
+            {
+                return Languages.All[index].Code;
+            }
+        }
+
+        return "en";
+    }
+
+    private static bool IsTraditionalChinese(System.Globalization.CultureInfo culture)
+    {
+        for (var current = culture; !string.IsNullOrEmpty(current.Name); current = current.Parent)
+        {
+            if (current.Name is "zh-Hant" or "zh-TW" or "zh-HK" or "zh-MO")
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private void OnCommand(string command, string arguments) => commands.Run(arguments);
+
+    private void BringPhoneForward()
+    {
+        phoneWindow.Maximize();
+        phoneWindow.IsOpen = true;
+    }
+
+    private void OnMenuOpened(IMenuOpenedArgs args)
+    {
+        AddMarketMenuItem(args);
+        AddLinkpearlMenuItem(args);
+    }
+
+    private void AddMarketMenuItem(IMenuOpenedArgs args)
+    {
+        if (!Cfg.MarketContextMenu)
+        {
+            return;
+        }
+
+        var itemId = ResolveContextItem(args);
+        if (itemId == 0 || !services.MarketIndex.TryGet(itemId, out _))
+        {
+            return;
+        }
+
+        args.AddMenuItem(
+            new MenuItem { Name = Loc.T(L.Plugin.SearchTheMarket), OnClicked = _ => OpenMarketItem(itemId), });
+    }
+
+    private void AddLinkpearlMenuItem(IMenuOpenedArgs args)
+    {
+        if (!Cfg.LinkpearlContextMenu || !linkpearlGate.Open)
+        {
+            return;
+        }
+
+        if (args.Target is not MenuTargetDefault target || target.TargetName.Length == 0 ||
+            target.TargetObject is not (null or IPlayerCharacter))
+        {
+            return;
+        }
+
+        var name = target.TargetName;
+        var world = services.GameData.WorldName(target.TargetHomeWorld.RowId);
+        if (world.Length == 0 || services.GameData.IsLocalPlayer(name, world))
+        {
+            return;
+        }
+
+        args.AddMenuItem(new MenuItem
+        {
+            Name = Loc.T(L.Linkpearl.ContextMenuEntry),
+            OnClicked = _ => linkpearlPopouts.OpenTell(name, world),
+        });
+    }
+
+    private static uint ResolveContextItem(IMenuOpenedArgs args)
+    {
+        if (args.Target is MenuTargetInventory inventory && inventory.TargetItem is { } targetItem)
+        {
+            return targetItem.ItemId;
+        }
+
+        var hovered = GameGui.HoveredItem;
+        return hovered == 0 ? 0u : (uint)(hovered % 1_000_000);
+    }
+}

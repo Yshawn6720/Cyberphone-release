@@ -1,0 +1,143 @@
+using Aetherphone.Apps.Casino.Tables;
+using Aetherphone.Core.Aethernet.Contracts;
+using Aetherphone.Core.Casino;
+using Aetherphone.Core.Localization;
+using Xunit;
+
+namespace Aetherphone.Tests;
+
+public sealed class CasinoHostedBlackjackTests
+{
+    [Fact]
+    public void TheHostAndCoDealersHoldTheDealerControlsOnlyAtSeatBankedTables()
+    {
+        var practice = new CasinoBlackjackRoomStateDto(Practice: true, Currency: CasinoCurrencies.Practice,
+            DealerMode: CasinoDealerModes.Host, DealerUserId: "host", CoDealers: new[] { "co" });
+
+        Assert.True(BlackjackHosting.DealerPowers(practice, "host", "host"));
+        Assert.True(BlackjackHosting.DealerPowers(practice, "co", "host"));
+        Assert.False(BlackjackHosting.DealerPowers(practice, "player", "host"));
+        Assert.False(BlackjackHosting.DealerPowers(practice, string.Empty, "host"));
+
+        var houseMode = practice with { DealerMode = CasinoDealerModes.House, DealerUserId = string.Empty };
+        Assert.True(BlackjackHosting.DealerPowers(houseMode, "host", "host"));
+
+        var chips = new CasinoBlackjackRoomStateDto(CoDealers: new[] { "co" });
+        Assert.False(BlackjackHosting.DealerPowers(chips, "co", "host"));
+    }
+
+    [Fact]
+    public void AHostDealtTableWaitsForTheDealTap()
+    {
+        var waiting = new CasinoBlackjackRoomStateDto(Currency: CasinoCurrencies.Gil, DealerMode: CasinoDealerModes.Host,
+            Phase: BlackjackPhases.Betting, DeadlineUnixMs: 0, AutoDeal: false);
+
+        Assert.True(BlackjackHosting.HostDeals(waiting));
+        Assert.True(BlackjackHosting.AwaitsDeal(waiting));
+        Assert.False(BlackjackHosting.AwaitsDeal(waiting with { AutoDeal = true }));
+        Assert.False(BlackjackHosting.AwaitsDeal(waiting with { DeadlineUnixMs = 1 }));
+        Assert.False(BlackjackHosting.AwaitsDeal(waiting with { Paused = true }));
+        Assert.False(BlackjackHosting.AwaitsDeal(waiting with { Phase = BlackjackPhases.PlayerTurns }));
+        Assert.False(BlackjackHosting.AwaitsDeal(waiting with { DealerMode = CasinoDealerModes.House }));
+    }
+
+    [Fact]
+    public void AnAutoDealtTableOffersDealNowAndSaysTheClockDeals()
+    {
+        var hostDealt = new CasinoBlackjackRoomStateDto(Currency: CasinoCurrencies.Practice, Practice: true,
+            DealerMode: CasinoDealerModes.Host, Phase: BlackjackPhases.Betting, AutoDeal: false,
+            Seats: new[] { new CasinoBlackjackSeatDto(SeatIndex: 0, UserId: "player", Committed: 500) });
+        var autoDealt = hostDealt with { AutoDeal = true };
+
+        Assert.Equal(L.Tables.Deal.Key, BlackjackHosting.DealLabel(hostDealt).Key);
+        Assert.Equal(L.Tables.DealNow.Key, BlackjackHosting.DealLabel(autoDealt).Key);
+
+        Assert.True(BlackjackHosting.TryDealerStatus(autoDealt, DealerDeck.Deal, out var clock));
+        Assert.Equal(L.Tables.DealerClockDeals.Key, clock.Key);
+        Assert.False(BlackjackHosting.TryDealerStatus(hostDealt, DealerDeck.Deal, out _));
+
+        Assert.True(BlackjackHosting.TryDealerStatus(autoDealt, DealerDeck.WaitingBets, out var waiting));
+        Assert.Equal(L.Tables.DealerWaitingBets.Key, waiting.Key);
+        Assert.True(BlackjackHosting.TryDealerStatus(hostDealt, DealerDeck.WaitingBets, out var stillWaiting));
+        Assert.Equal(L.Tables.DealerWaitingBets.Key, stillWaiting.Key);
+
+        Assert.False(BlackjackHosting.TryDealerStatus(autoDealt, DealerDeck.HandLive, out _));
+        Assert.False(BlackjackHosting.TryDealerStatus(autoDealt, DealerDeck.HandOver, out _));
+        Assert.False(BlackjackHosting.TryDealerStatus(autoDealt, DealerDeck.Paused, out _));
+    }
+
+    [Fact]
+    public void PracticeRebuysOpenOnlyWhenTheStackCannotCoverTheMinimum()
+    {
+        var board = new CasinoBlackjackRoomStateDto(Practice: true, Currency: CasinoCurrencies.Practice,
+            PracticeRebuy: true, MinBet: 500, Phase: BlackjackPhases.Betting, PracticeStack: 100_000);
+
+        Assert.True(BlackjackHosting.CanRebuy(board, 400, 0));
+        Assert.False(BlackjackHosting.CanRebuy(board, 500, 0));
+        Assert.False(BlackjackHosting.CanRebuy(board with { PracticeRebuy = false }, 0, 0));
+        Assert.False(BlackjackHosting.CanRebuy(board with { Phase = BlackjackPhases.PlayerTurns }, 0, 0));
+        Assert.False(BlackjackHosting.CanRebuy(board with { Currency = CasinoCurrencies.Gil, Practice = false }, 0, 0));
+    }
+
+    [Fact]
+    public void ABrokeSeatIsToldWhyItCannotRebuy()
+    {
+        var board = new CasinoBlackjackRoomStateDto(Practice: true, Currency: CasinoCurrencies.Practice,
+            PracticeRebuy: false, MinBet: 500, Phase: BlackjackPhases.Betting, PracticeStack: 100_000);
+
+        Assert.True(BlackjackHosting.Broke(board, 400, 0));
+        Assert.False(BlackjackHosting.Broke(board, 500, 0));
+        Assert.False(BlackjackHosting.Broke(board, 400, 100));
+        Assert.True(BlackjackHosting.Broke(board with { Currency = CasinoCurrencies.Gil, Practice = false }, 0, 0));
+        Assert.False(BlackjackHosting.Broke(board with { Currency = CasinoCurrencies.Chips, Practice = false }, 0, 0));
+        Assert.Equal(L.Tables.ReasonRebuyOff.Key, BlackjackHosting.BrokeStatus(board, "me").Key);
+
+        var standings = new[] { new CasinoBlackjackStandingDto("me", "Mira", 0, true, 2) };
+        var tournament = board with
+        {
+            PracticeRebuy = true,
+            Tournament = new CasinoBlackjackTournamentDto(Live: true, Standings: standings),
+        };
+        Assert.Equal(L.Venue.TournamentYouAreOut.Key, BlackjackHosting.BrokeStatus(tournament, "me").Key);
+        Assert.Equal(L.Tables.RebuysTournamentNote.Key, BlackjackHosting.BrokeStatus(tournament, "late").Key);
+    }
+
+    [Fact]
+    public void RebuyIsOfferedOnlyWhenTheServerWouldTakeIt()
+    {
+        var board = new CasinoBlackjackRoomStateDto(Practice: true, Currency: CasinoCurrencies.Practice,
+            PracticeRebuy: true, MinBet: 500, Phase: BlackjackPhases.Betting, PracticeStack: 100_000);
+
+        Assert.False(BlackjackHosting.CanRebuy(board with { Phase = BlackjackPhases.Settlement }, 0, 0));
+        Assert.False(BlackjackHosting.CanRebuy(board with { Phase = BlackjackPhases.Intermission }, 0, 0));
+        Assert.False(BlackjackHosting.CanRebuy(board, 0, 500));
+        Assert.False(BlackjackHosting.CanRebuy(board with
+        {
+            Tournament = new CasinoBlackjackTournamentDto(Live: true),
+        }, 0, 0));
+        Assert.True(BlackjackHosting.CanRebuy(board with
+        {
+            Tournament = new CasinoBlackjackTournamentDto(WinnerUserId: "winner"),
+        }, 0, 0));
+    }
+
+    [Fact]
+    public void NaturalsPayTheHouseRulesTheSnapshotCarries()
+    {
+        var standard = new CasinoBlackjackRoomStateDto();
+        var evenMoney = new CasinoBlackjackRoomStateDto(Rules: new CasinoBlackjackRuleSheetDto(
+            BlackjackPays: CasinoRuleSheet.PaysEven));
+
+        Assert.Equal(1_500, BlackjackHosting.NaturalPayout(standard, 1_000));
+        Assert.Equal(1_000, BlackjackHosting.NaturalPayout(evenMoney, 1_000));
+    }
+
+    [Fact]
+    public void ASmallHostedTableOffersOnlyItsOwnSeats()
+    {
+        var fourSeats = new CasinoBlackjackRoomStateDto(Seats: new CasinoBlackjackSeatDto[4]);
+
+        Assert.Equal(4, BlackjackTable.SeatLimit(fourSeats));
+        Assert.Equal(BlackjackRules.SeatCount, BlackjackTable.SeatLimit(new CasinoBlackjackRoomStateDto()));
+    }
+}

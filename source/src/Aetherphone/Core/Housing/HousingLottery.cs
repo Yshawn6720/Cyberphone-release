@@ -1,0 +1,149 @@
+namespace Aetherphone.Core.Housing;
+
+internal readonly record struct HousingLotteryState(HousingLotteryPhase Phase, DateTime? EndsUtc)
+{
+    public static readonly HousingLotteryState Unknown = new(HousingLotteryPhase.Unknown, null);
+
+    public bool IsKnown => Phase != HousingLotteryPhase.Unknown && EndsUtc is not null;
+}
+
+internal readonly record struct HousingDistrictStats(
+    int Open,
+    int Small,
+    int Medium,
+    int Large,
+    int Wards,
+    int FewestEntries,
+    int Lottery)
+{
+    public bool HasFewestEntries => FewestEntries >= 0;
+}
+
+internal static class HousingLottery
+{
+    public const int EntryDays = 5;
+    public const int ResultsDays = 4;
+
+    public static TimeSpan? PhaseLength(HousingLotteryPhase phase) => phase switch
+    {
+        HousingLotteryPhase.Entry => TimeSpan.FromDays(EntryDays),
+        HousingLotteryPhase.Results => TimeSpan.FromDays(ResultsDays),
+        _ => null,
+    };
+
+    public static float Progress(HousingLotteryPhase phase, DateTime? endsUtc, DateTime nowUtc)
+    {
+        if (PhaseLength(phase) is not { } length || endsUtc is not { } ends || ends == default)
+        {
+            return -1f;
+        }
+
+        var remaining = (ends - nowUtc).TotalSeconds;
+        var fraction = 1d - remaining / length.TotalSeconds;
+        return (float)Math.Clamp(fraction, 0d, 1d);
+    }
+
+    public static HousingLotteryState Resolve(IReadOnlyList<HousingPlot> plots, DateTime nowUtc)
+    {
+        var best = HousingLotteryState.Unknown;
+        for (var index = 0; index < plots.Count; index++)
+        {
+            var plot = plots[index];
+            if (plot.PhaseEndsUtc is not { } ends || ends == default || plot.Phase == HousingLotteryPhase.Unknown)
+            {
+                continue;
+            }
+
+            var candidate = new HousingLotteryState(plot.Phase, ends);
+            if (Beats(candidate, best, nowUtc))
+            {
+                best = candidate;
+            }
+        }
+
+        return best;
+    }
+
+    public static HousingLotteryState Prefer(HousingLotteryState current, HousingLotteryState candidate,
+        DateTime nowUtc) =>
+        Beats(candidate, current, nowUtc) ? candidate : current;
+    
+    private static bool Beats(HousingLotteryState candidate, HousingLotteryState current, DateTime nowUtc)
+    {
+        if (!candidate.IsKnown)
+        {
+            return false;
+        }
+
+        if (!current.IsKnown)
+        {
+            return true;
+        }
+
+        var candidateEnds = candidate.EndsUtc!.Value;
+        var currentEnds = current.EndsUtc!.Value;
+        var candidateLive = candidateEnds > nowUtc;
+        if (candidateLive != currentEnds > nowUtc)
+        {
+            return candidateLive;
+        }
+
+        var candidateCycle = IsCycle(candidate.Phase);
+        if (candidateCycle != IsCycle(current.Phase))
+        {
+            return candidateCycle;
+        }
+
+        return candidateLive ? candidateEnds < currentEnds : candidateEnds > currentEnds;
+    }
+
+    private static bool IsCycle(HousingLotteryPhase phase) =>
+        phase is HousingLotteryPhase.Entry or HousingLotteryPhase.Results;
+
+    public static HousingDistrictStats Summarize(IReadOnlyList<HousingPlot> plots)
+    {
+        var small = 0;
+        var medium = 0;
+        var large = 0;
+        var lottery = 0;
+        var fewest = -1;
+        Span<bool> wards = stackalloc bool[HousingDistricts.DefaultWards + 1];
+        var wardCount = 0;
+        for (var index = 0; index < plots.Count; index++)
+        {
+            var plot = plots[index];
+            switch (plot.Size)
+            {
+                case HousingPlotSize.Small:
+                    small++;
+                    break;
+                case HousingPlotSize.Medium:
+                    medium++;
+                    break;
+                case HousingPlotSize.Large:
+                    large++;
+                    break;
+            }
+
+            var ward = plot.Key.Ward;
+            if (ward >= 1 && ward < wards.Length && !wards[ward])
+            {
+                wards[ward] = true;
+                wardCount++;
+            }
+
+            if (plot.Phase != HousingLotteryPhase.Entry)
+            {
+                continue;
+            }
+
+            lottery++;
+            if (plot.Entries is { } entries && (fewest < 0 || entries < fewest))
+            {
+                fewest = entries;
+            }
+        }
+
+        return new HousingDistrictStats(plots.Count, small, medium, large, wardCount, fewest, lottery);
+    }
+}

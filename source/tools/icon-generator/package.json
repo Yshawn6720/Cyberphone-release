@@ -1,0 +1,16 @@
+{
+  "name": "aetherphone-icon-generator",
+  "version": "2.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Regenerates src/Aetherphone/Icons painted app icons from Phosphor Icons (MIT).",
+  "scripts": {
+    "build": "node generate-painted-icons.mjs",
+    "brand": "node generate-brand-images.mjs",
+    "sheet": "node contact-sheet.mjs",
+    "stencils": "node generate-app-icons.mjs"
+  },
+  "dependencies": {
+    "sharp": "^0.35.5"
+  }
+}

@@ -1,0 +1,258 @@
+using Aetherphone.Core;
+using Aetherphone.Core.Localization;
+using Aetherphone.Core.Notifications;
+using Dalamud.Bindings.ImGui;
+
+namespace Aetherphone.Windows.Components;
+
+internal static class SocialChrome
+{
+    public const float CellPadX = 16f;
+    public const float BackChipRadius = Metrics.Size.GlassButton * 0.5f;
+    public const float HeaderIconRadius = Metrics.Size.GlassButton * 0.5f;
+    public const float HeaderIconPitch = 40f;
+
+    private const string BackChipKey = "##socialBackChip";
+    private const float BackChipInset = 12f;
+    private const float BackChipHitHalf = 22f;
+    private const float BackChipGlyph = 17f;
+    private const float TitleGap = 10f;
+    private const float BadgeHeight = 16f;
+    private const float StatGap = 5f;
+    private const float MetaChipPadX = 9f;
+    private const float MetaChipGlyph = 14f;
+    private const float MetaChipGlyphGap = 5f;
+    private const float MetaChipMinLabel = 20f;
+
+    public const float MetaChipHeight = 26f;
+    public const float MetaChipGap = 8f;
+
+    public static readonly TextStyle SubtitleStyle = new(0.8f, FontWeight.Regular);
+    public static readonly TextStyle BadgeStyle = new(0.67f, FontWeight.Bold);
+
+    public static Vector2 HeaderSlot(Rect area, int index)
+    {
+        var scale = UiScale.Current;
+        return new Vector2(
+            area.Max.X - (CellPadX + HeaderIconRadius + index * HeaderIconPitch) * scale,
+            area.Min.Y + AppHeader.Height * scale * 0.5f);
+    }
+
+    public static float HeaderReserve(int slots) => slots == 0 ? 0f : slots * HeaderIconPitch - 4f;
+
+    public static float DrawScreenHeader(Rect area, string title, SocialInk ink, Action back, in TextStyle titleStyle,
+        float trailingReserve = 0f, string subtitle = "", bool showBack = true, bool centered = false,
+        bool overlay = false)
+    {
+        var scale = UiScale.Current;
+        var drawList = ImGui.GetWindowDrawList();
+        var rowCenterY = area.Min.Y + AppHeader.Height * scale * 0.5f;
+        var titleLeft = area.Min.X + CellPadX * scale;
+        if (showBack)
+        {
+            var chipRadius = BackChipRadius * scale;
+            var chipCenter = new Vector2(area.Min.X + BackChipInset * scale + chipRadius, rowCenterY);
+            if (DrawBackChip(drawList, chipCenter, chipRadius, ink, overlay))
+            {
+                back();
+            }
+
+            titleLeft = chipCenter.X + chipRadius + TitleGap * scale;
+        }
+
+        var titleRight = area.Max.X - CellPadX * scale - trailingReserve * scale;
+        var titleHeight = Typography.LineHeight(titleStyle);
+        if (centered)
+        {
+            var reserve = MathF.Max(titleLeft - area.Min.X, area.Max.X - titleRight);
+            var maxWidth = MathF.Max(1f, area.Width - reserve * 2f - 8f * scale);
+            var fitted = Typography.FitText(title, maxWidth, titleStyle);
+            if (subtitle.Length == 0)
+            {
+                Typography.DrawCentered(drawList, new Vector2(area.Center.X, rowCenterY), fitted, ink.TitleInk,
+                    titleStyle);
+                return titleLeft;
+            }
+
+            var centeredSubtitleHeight = Typography.LineHeight(SubtitleStyle);
+            var centeredBlockTop = rowCenterY - (titleHeight + centeredSubtitleHeight) * 0.5f;
+            Typography.DrawCentered(drawList, new Vector2(area.Center.X, centeredBlockTop + titleHeight * 0.5f),
+                fitted, ink.TitleInk, titleStyle);
+            Typography.DrawCentered(drawList,
+                new Vector2(area.Center.X, centeredBlockTop + titleHeight + centeredSubtitleHeight * 0.5f),
+                Typography.FitText(subtitle, maxWidth, SubtitleStyle), ink.MutedInk, SubtitleStyle);
+            return titleLeft;
+        }
+
+        var leftFitted = Typography.FitText(title, MathF.Max(1f, titleRight - titleLeft), titleStyle);
+        if (subtitle.Length == 0)
+        {
+            Typography.Draw(drawList, new Vector2(titleLeft, rowCenterY - titleHeight * 0.5f), leftFitted,
+                ink.TitleInk, titleStyle);
+            return titleLeft;
+        }
+
+        var subtitleHeight = Typography.LineHeight(SubtitleStyle);
+        var blockTop = rowCenterY - (titleHeight + subtitleHeight) * 0.5f;
+        Typography.Draw(drawList, new Vector2(titleLeft, blockTop), leftFitted, ink.TitleInk, titleStyle);
+        Typography.Draw(drawList, new Vector2(titleLeft, blockTop + titleHeight),
+            Typography.FitText(subtitle, MathF.Max(1f, titleRight - titleLeft), SubtitleStyle), ink.MutedInk,
+            SubtitleStyle);
+        return titleLeft;
+    }
+
+    public static bool DrawBackChip(ImDrawListPtr drawList, Vector2 center, float radius, SocialInk ink,
+        bool overlay = false)
+    {
+        var scale = UiScale.Current;
+        var clicked = GlassButton(drawList, ImGui.GetID(BackChipKey), center, radius, BackChipHitHalf * scale, ink,
+            false, overlay, UiSound.Tap, out var grow);
+        PhoneIcon.Draw(drawList, center, PhoneIcons.ChevronLeft, ink.TitleInk, BackChipGlyph * scale * grow);
+        return clicked;
+    }
+
+    public static bool DrawHeaderIcon(ImDrawListPtr drawList, Vector2 center, float radius, string glyph,
+        float iconSize, string tooltip, SocialInk ink, Vector4 idleInk, bool highlighted = false, int badge = 0,
+        HoverLabelSide side = HoverLabelSide.Below, UiSound tapSound = UiSound.Tap)
+    {
+        var scale = UiScale.Current;
+        var buttonRadius = HeaderIconRadius * scale;
+        var extent = new Vector2(buttonRadius, buttonRadius);
+        var clicked = GlassButton(drawList, ImGui.GetID(tooltip.Length > 0 ? tooltip : glyph), center, buttonRadius,
+            buttonRadius, ink, highlighted, false, tapSound, out var grow);
+        PhoneIcon.Draw(drawList, center, glyph, highlighted ? ink.White : idleInk,
+            NavBarMetrics.GlyphSize * scale * grow);
+        DrawCountBadge(drawList, center + new Vector2(10f * scale, -10f * scale), badge, ink);
+        HoverTooltip.Show(new Rect(center - extent, center + extent), tooltip, side);
+        return clicked;
+    }
+
+    public static void DrawCountBadge(ImDrawListPtr drawList, Vector2 center, int count, SocialInk ink)
+    {
+        if (count <= 0)
+        {
+            return;
+        }
+
+        var scale = UiScale.Current;
+        var label = count > 99 ? "99+" : count.ToString(Loc.Culture);
+        var size = Typography.Measure(label, BadgeStyle);
+        var height = BadgeHeight * scale;
+        var width = MathF.Max(height, size.X + 9f * scale);
+        var min = new Vector2(center.X - width * 0.5f, center.Y - height * 0.5f);
+        var max = new Vector2(center.X + width * 0.5f, center.Y + height * 0.5f);
+        var border = new Vector2(2f * scale, 2f * scale);
+        Squircle.Fill(drawList, min - border, max + border, (height + 4f * scale) * 0.5f,
+            ImGui.GetColorU32(ink.BackdropTop));
+        Squircle.Fill(drawList, min, max, height * 0.5f, ImGui.GetColorU32(ink.Accent));
+        Typography.DrawCentered(drawList, center, label, ink.White, BadgeStyle);
+    }
+
+    public static void DrawUnreadDot(ImDrawListPtr drawList, Vector2 center, SocialInk ink)
+    {
+        var scale = UiScale.Current;
+        drawList.AddCircleFilled(center, 4.5f * scale, ImGui.GetColorU32(ink.BackdropTop), 20);
+        drawList.AddCircleFilled(center, 3.2f * scale, ImGui.GetColorU32(ink.Accent), 20);
+    }
+
+    public static float DrawStat(ImDrawListPtr drawList, float left, float top, float lineHeight, string value,
+        string label, bool tappable, float limit, SocialInk ink, in TextStyle valueStyle, in TextStyle labelStyle,
+        out bool clicked)
+    {
+        var scale = UiScale.Current;
+        var gap = StatGap * scale;
+        var valueSize = Typography.Measure(value, valueStyle);
+        var labelFitted = Typography.FitText(label, MathF.Max(1f, limit - left - valueSize.X - gap), labelStyle);
+        var labelSize = Typography.Measure(labelFitted, labelStyle);
+        var min = new Vector2(left, top);
+        var max = new Vector2(left + valueSize.X + gap + labelSize.X, top + lineHeight);
+        var hovered = tappable && UiInteract.Hover(min, max);
+        Typography.Draw(drawList, min, value, ink.TitleInk, valueStyle);
+        Typography.Draw(drawList, new Vector2(min.X + valueSize.X + gap, top + (lineHeight - labelSize.Y) * 0.5f),
+            labelFitted, ink.MutedInk, labelStyle);
+        if (hovered)
+        {
+            drawList.AddLine(new Vector2(min.X, max.Y), new Vector2(max.X, max.Y), ImGui.GetColorU32(ink.MutedInk), 1f);
+            ImGui.SetMouseCursor(ImGuiMouseCursor.Hand);
+        }
+
+        clicked = tappable && UiInteract.Click(min, max, hovered);
+        return max.X;
+    }
+
+    public static void DrawSectionLabel(string label, SocialInk ink, in TextStyle style)
+    {
+        var scale = UiScale.Current;
+        var origin = ImGui.GetCursorScreenPos();
+        var width = ImGui.GetContentRegionAvail().X;
+        var padX = CellPadX * scale;
+        ListSection.PaintOverline(ImGui.GetWindowDrawList(), new Vector2(origin.X + padX, origin.Y + 8f * scale),
+            label, ink.MutedInk, MathF.Max(1f, width - padX * 2f));
+        ImGui.SetCursorScreenPos(origin);
+        ImGui.Dummy(new Vector2(width, ListSection.OverlineHeight + 12f * scale));
+    }
+
+    public static void DrawMetaChip(ImDrawListPtr drawList, ref float cursorX, float right, float centerY,
+        string glyph, string label, SocialInk ink, in TextStyle style)
+    {
+        var scale = UiScale.Current;
+        var padX = MetaChipPadX * scale;
+        var glyphSize = glyph.Length > 0 ? MetaChipGlyph * scale : 0f;
+        var glyphGap = glyph.Length > 0 ? MetaChipGlyphGap * scale : 0f;
+        var available = right - cursorX - padX * 2f - glyphSize - glyphGap;
+        if (available < MetaChipMinLabel * scale)
+        {
+            return;
+        }
+
+        var fitted = Typography.FitText(label, available, style);
+        var size = Typography.Measure(fitted, style);
+        var height = MetaChipHeight * scale;
+        var min = new Vector2(cursorX, centerY - height * 0.5f);
+        var max = new Vector2(cursorX + padX * 2f + glyphSize + glyphGap + size.X, centerY + height * 0.5f);
+        Squircle.Fill(drawList, min, max, height * 0.5f, ImGui.GetColorU32(ink.ChipFill));
+        if (glyph.Length > 0)
+        {
+            PhoneIcon.Draw(drawList, new Vector2(min.X + padX + glyphSize * 0.5f, centerY), glyph, ink.MutedInk,
+                glyphSize);
+        }
+
+        Typography.Draw(drawList, new Vector2(min.X + padX + glyphSize + glyphGap, centerY - size.Y * 0.5f), fitted,
+            ink.MutedInk, style);
+        cursorX = max.X + MetaChipGap * scale;
+    }
+
+    public static void PaintBarBackdrop(AppSkin ui, ImDrawListPtr drawList, Rect bar, Rect screen)
+    {
+        var target = new Rect(bar.Min, new Vector2(bar.Max.X, MathF.Max(bar.Max.Y, screen.Max.Y)));
+        ui.PaintGradient(drawList, target, screen, 0f);
+    }
+
+    private static bool GlassButton(ImDrawListPtr drawList, uint key, Vector2 center, float radius, float hitHalf,
+        SocialInk ink, bool highlighted, bool overlay, UiSound tapSound, out float grow)
+    {
+        var scale = UiScale.Current;
+        var hit = new Vector2(hitHalf, hitHalf);
+        var hovered = overlay
+            ? UiInteract.HoverOverlay(new Rect(center - hit, center + hit))
+            : UiInteract.Hover(center - hit, center + hit);
+        var down = hovered && ImGui.IsMouseDown(ImGuiMouseButton.Left);
+        grow = PressFx.Scale(key, down, PressFx.ControlPressedScale);
+        var drawn = new Vector2(radius * grow, radius * grow);
+        if (highlighted)
+        {
+            Material.AccentGlass(drawList, center - drawn, center + drawn, drawn.X, scale, ink.Accent);
+        }
+        else
+        {
+            Material.ThemedGlass(drawList, center - drawn, center + drawn, drawn.X, scale, ink.BackdropTop);
+        }
+
+        if (hovered)
+        {
+            ImGui.SetMouseCursor(ImGuiMouseCursor.Hand);
+        }
+
+        return UiInteract.Click(center - hit, center + hit, hovered, tapSound);
+    }
+}

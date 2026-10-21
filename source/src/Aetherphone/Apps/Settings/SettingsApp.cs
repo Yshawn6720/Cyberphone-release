@@ -1,0 +1,416 @@
+using Aetherphone.Apps.Settings.Pages;
+using Aetherphone.Core;
+using Aetherphone.Core.Apps;
+using Aetherphone.Core.Changelog;
+using Aetherphone.Core.Crypto;
+using Aetherphone.Core.Localization;
+using Aetherphone.Core.Moderation;
+using Aetherphone.Core.Notifications;
+using Aetherphone.Core.Onboarding;
+using Aetherphone.Core.Photos;
+using Aetherphone.Core.Sharing;
+using Aetherphone.Core.Theme;
+using Aetherphone.Core.Wallpapers;
+using Aetherphone.Windows.Components;
+using Dalamud.Bindings.ImGui;
+using Dalamud.Interface;
+
+namespace Aetherphone.Apps.Settings;
+
+internal sealed class SettingsApp : IResumableApp, ISettingsNavigator, ISpotlightPages
+{
+    public string Id => "settings";
+    public string DisplayName => Loc.T(L.Apps.Settings);
+    public string Glyph => "S";
+    public int BadgeCount => (configuration.HasUnseenChangelog ? 1 : 0)
+        + (configuration.HasUnseenFeaturePin(NewFeaturePins.Nameplate) ? 1 : 0);
+    public bool HasBadge => true;
+    public bool BadgeAsDot => true;
+    public bool WantsSystemTheme => true;
+    public ShareKindSet AcceptedShares => ShareKindSet.Photo;
+    private const float BackAnchorFraction = 0.32f;
+    private const string CallsAppId = "message";
+    private readonly Configuration configuration;
+    private readonly ViewRouter<ISettingsPage> router;
+    private readonly ISettingsPage[] searchablePages;
+    private ISettingsPage? pendingPage;
+    private readonly RouterDraw<ISettingsPage> drawPage;
+    private readonly Action popBack;
+    private readonly SoundService sound;
+    private PhoneTheme frameTheme = PhoneTheme.Default;
+    private INavigator frameNavigation = null!;
+    private readonly AccountPage accountPage;
+    private readonly SafetyPage safetyPage;
+    private readonly SafetyLauncher safetyLauncher;
+    private readonly EncryptionSetupLauncher encryptionSetupLauncher;
+    private readonly SettingsLauncher settingsLauncher;
+    private readonly NotificationsPage notificationsPage;
+    private readonly CallsPage callsPage;
+    private readonly NamePage namePage;
+    private readonly ProfilePage profilePage;
+    private readonly EncryptionPage encryptionPage;
+    private readonly ChangelogPage changelogPage;
+    private readonly PrivacyPage privacyPage;
+    private readonly LinkedDevicesPage linkedDevicesPage;
+    private readonly TagsMentionsPage tagsMentionsPage;
+    private readonly InstalledAppList installedApps;
+    private readonly AppSettingsPages appSettingsPages;
+    private readonly ThemeProvider themes;
+    private readonly WallpaperLibrary wallpapers;
+    private readonly WallpaperImageCache wallpaperImages;
+    private readonly Action<string> assignWallpaper;
+    private string? pendingSharedWallpaper;
+
+    public SettingsApp(PhoneServices services, PhotoLibrary photoLibrary, IReadOnlyList<IPhoneApp> apps)
+    {
+        sound = services.Sound;
+        configuration = services.Configuration;
+        themes = services.Themes;
+        var aethernetSession = services.AethernetSession;
+        var aethernet = services.Aethernet;
+        var keyVault = services.KeyVault;
+        var gameData = services.GameData;
+        var remoteImages = services.RemoteImages;
+        var lodestone = services.Lodestone;
+        var calls = services.Calls;
+        var confirm = services.Confirm;
+        wallpapers = services.Wallpapers;
+        wallpaperImages = services.WallpaperImages;
+        profilePage = new ProfilePage(configuration, aethernetSession, aethernet.Account, gameData);
+        encryptionPage = new EncryptionPage(aethernetSession, keyVault, confirm);
+        namePage = new NamePage(aethernetSession, aethernet.Account, this);
+        var coinPage = new CoinPage(services.Coins);
+        accountPage = new AccountPage(configuration, aethernetSession, aethernet.Auth, aethernet.Account,
+            services.AccountState, aethernet.Media, gameData, remoteImages, lodestone, this, namePage, profilePage,
+            encryptionPage, coinPage, photoLibrary, confirm, wallpaperImages, services.CacheStorage,
+            services.ChatHistory);
+        var appearance = new AppearancePage(configuration, themes, this, photoLibrary, confirm, wallpapers,
+            wallpaperImages, services.Looks);
+        var display = new DisplayPage(configuration);
+        var minimized = new MinimizedPhonePage(services.MinimizedLayout, services.MinimizedPreview, configuration);
+        var language = new LanguagePage(configuration, services.Translation);
+        var general = new GeneralPage(configuration, services.Translation, confirm);
+        var tutorials = new TutorialsPage(configuration);
+        callsPage = new CallsPage(calls, configuration);
+        var nameplatePage = new NameplateTitlePage(services.NameplateTitles, configuration, this, services.PcMedia);
+        var notificationSoundPage = new SoundSettingsPage(sound, confirm, SoundKind.Notification,
+            L.Settings.NotificationSound, FontAwesomeIcon.Bell, new Vector4(0.98f, 0.27f, 0.25f, 1f),
+            "settings.notificationVolume", () => configuration.NotificationSound, token =>
+            {
+                configuration.NotificationSound = token;
+                configuration.Save();
+            }, () => configuration.NotificationVolume, volume =>
+            {
+                configuration.NotificationVolume = volume;
+                configuration.Save();
+            });
+        installedApps = new InstalledAppList(services.Installer, apps);
+        appSettingsPages = new AppSettingsPages(configuration, sound, services.Installer, confirm, this,
+            services.PcMedia);
+        notificationsPage = new NotificationsPage(configuration, this, installedApps, appSettingsPages);
+        var appsPage = new AppsPage(installedApps, appSettingsPages, this, configuration);
+        var ringtonePage = new SoundSettingsPage(sound, confirm, SoundKind.Ringtone, L.Settings.Ringtone,
+            FontAwesomeIcon.Music, new Vector4(0.95f, 0.40f, 0.65f, 1f), "settings.ringtoneVolume",
+            () => configuration.RingtoneSound, token =>
+            {
+                configuration.RingtoneSound = token;
+                configuration.Save();
+            }, () => configuration.RingtoneVolume, volume =>
+            {
+                configuration.RingtoneVolume = volume;
+                configuration.Save();
+            });
+        var sounds = new SoundsPage(configuration, sound, this, ringtonePage, notificationSoundPage);
+        safetyPage = new SafetyPage(aethernetSession, services.ModerationArchive, services.Conduct, this);
+        safetyLauncher = services.SafetyLauncher;
+        encryptionSetupLauncher = services.EncryptionSetup;
+        settingsLauncher = services.SettingsLauncher;
+        var commands = new CommandsPage();
+        tagsMentionsPage = new TagsMentionsPage(aethernetSession, aethernet.Account, this);
+        privacyPage = new PrivacyPage(configuration, aethernetSession, aethernet.Account, services.Leaderboard,
+            services.CasinoFameChoice, aethernet.Safety, confirm, this, tagsMentionsPage, services.CacheStorage);
+        var about = new AboutPage(configuration, gameData, aethernetSession);
+        changelogPage = new ChangelogPage(configuration);
+        linkedDevicesPage = new LinkedDevicesPage(configuration, aethernetSession, aethernet.Auth, this);
+        var hiddenPages = new List<ISettingsPage>(3);
+        if (HiddenApps.Contains(CallsAppId))
+        {
+            hiddenPages.Add(callsPage);
+        }
+
+        if (!HiddenApps.AethernetEnabled)
+        {
+            hiddenPages.Add(safetyPage);
+            hiddenPages.Add(linkedDevicesPage);
+        }
+
+        var groups = WithoutPages(new[]
+        {
+            new ISettingsPage[]
+            {
+                general, appearance, display, minimized, sounds, notificationsPage, callsPage, nameplatePage, language,
+            },
+            new ISettingsPage[] { privacyPage, safetyPage, linkedDevicesPage },
+            new ISettingsPage[] { tutorials, commands, changelogPage, about },
+            new ISettingsPage[] { appsPage },
+        }, hiddenPages);
+        var searchableCount = 0;
+        for (var groupIndex = 0; groupIndex < groups.Length; groupIndex++)
+        {
+            searchableCount += groups[groupIndex].Length;
+        }
+
+        searchablePages = new ISettingsPage[searchableCount];
+        var searchableIndex = 0;
+        for (var groupIndex = 0; groupIndex < groups.Length; groupIndex++)
+        {
+            for (var pageIndex = 0; pageIndex < groups[groupIndex].Length; pageIndex++)
+            {
+                searchablePages[searchableIndex++] = groups[groupIndex][pageIndex];
+            }
+        }
+
+        var profileCard = new ProfileCard(aethernetSession, gameData, services.CharacterWatch, remoteImages,
+            lodestone);
+        router = new ViewRouter<ISettingsPage>(
+            new RootSettingsPage(this, groups, configuration, accountPage,
+                new SupportPage(this, accountPage, aethernetSession, services.RemoteImages, services.Lodestone,
+                    services.FrameCatalog), profileCard, installedApps, appSettingsPages));
+        drawPage = DrawPage;
+        popBack = PopBack;
+        assignWallpaper = AssignWallpaper;
+    }
+
+    public LocString? ShareLabel(ShareKind kind) =>
+        kind == ShareKind.Photo ? L.Share.SetAsWallpaper : null;
+
+    public void OnShare(in ShareItem item)
+    {
+        if (item.Kind != ShareKind.Photo)
+        {
+            return;
+        }
+
+        pendingSharedWallpaper = item.LocalPath;
+    }
+
+    private void AssignWallpaper(string id)
+    {
+        if (wallpapers.ThemeDarkness >= 0.5f)
+        {
+            configuration.DarkWallpaperId = id;
+        }
+        else
+        {
+            configuration.LightWallpaperId = id;
+        }
+
+        themes.Apply(configuration);
+        configuration.Save();
+    }
+
+    private void ConsumeSharedWallpaper()
+    {
+        var path = pendingSharedWallpaper;
+        if (string.IsNullOrEmpty(path))
+        {
+            return;
+        }
+
+        pendingSharedWallpaper = null;
+        router.Reset();
+        router.Push(new WallpaperCropPage(path, this, assignWallpaper, wallpapers, wallpaperImages));
+    }
+
+    public void Open(ISettingsPage page)
+    {
+        if (page == changelogPage)
+        {
+            configuration.MarkChangelogSeen();
+        }
+
+        if (page is NameplateTitlePage)
+        {
+            configuration.MarkFeaturePinSeen(NewFeaturePins.Nameplate);
+        }
+
+        router.Push(page);
+    }
+
+    public void Back()
+    {
+        sound.StopPreview();
+        router.Pop();
+    }
+
+    public void OnOpened()
+    {
+        router.Reset();
+        ConsumePendingPage();
+    }
+
+    public void OnResumed()
+    {
+        ConsumePendingPage();
+    }
+
+    public IReadOnlyList<ISettingsPage> SearchablePages => searchablePages;
+
+    public void RequestPage(ISettingsPage page) => pendingPage = page;
+
+    public int SpotlightPageCount => searchablePages.Length;
+
+    public string SpotlightPageTitle(int pageIndex) => searchablePages[pageIndex].Title;
+
+    public bool IsSpotlightPageHidden(int pageIndex) => searchablePages[pageIndex].IsHidden;
+
+    public void RequestSpotlightPage(int pageIndex) => pendingPage = searchablePages[pageIndex];
+
+    private void ConsumePendingPage()
+    {
+        if (pendingPage is not { } page)
+        {
+            return;
+        }
+
+        pendingPage = null;
+        Open(page);
+    }
+
+    public void OnClosed()
+    {
+        sound.StopPreview();
+    }
+
+    public void Draw(in PhoneContext context)
+    {
+        ConsumeSharedWallpaper();
+        if (GuideIntents.Consume(TourRegistry.SettingsRootIntent))
+        {
+            router.Reset();
+        }
+
+        if (safetyLauncher.TryConsume())
+        {
+            router.Reset();
+            if (HiddenApps.AethernetEnabled)
+            {
+                router.Push(safetyPage);
+            }
+        }
+
+        if (encryptionSetupLauncher.TryConsume())
+        {
+            router.Reset();
+            if (HiddenApps.AethernetEnabled)
+            {
+                router.Push(encryptionPage);
+            }
+        }
+
+        var requestedPage = settingsLauncher.TryConsume();
+        if (requestedPage != SettingsPageKind.None)
+        {
+            router.Reset();
+            var appId = settingsLauncher.TryConsumeAppId();
+            if (PageFor(requestedPage) is { } target)
+            {
+                Open(target);
+                PushAppNotifications(appId);
+            }
+        }
+
+        frameTheme = context.Theme;
+        frameNavigation = context.Navigation;
+        router.Draw(context.Content, context.Theme.AppBackground, ImGui.GetIO().DeltaTime, drawPage);
+    }
+
+    private void DrawPage(ISettingsPage page, Rect area, int depth)
+    {
+        var context = new PhoneContext(area, frameTheme, frameNavigation);
+        if (page.OwnsChrome)
+        {
+            page.Draw(context, area);
+            return;
+        }
+
+        var navBar = AppHeader.BeginLargeTitle(context, depth > 1);
+        page.Draw(context, navBar.Body);
+        if (depth > 1)
+        {
+            UiAnchors.Report("settings.back", new Rect(area.Min, new Vector2(area.Min.X + area.Width * BackAnchorFraction,
+                area.Min.Y + NavBarMetrics.InlineHeight * UiScale.Current)));
+        }
+
+        var backTitle = depth > 1 && router.TryGetView(depth - 2, out var previous) ? previous.Title : string.Empty;
+        AppHeader.EndLargeTitle(in navBar, context, "settings.nav", page.Title, NavBarStyle.From(frameTheme),
+            ReadOnlySpan<NavBarButton>.Empty, backTitle, depth > 1 ? popBack : null);
+    }
+
+    private ISettingsPage? PageFor(SettingsPageKind kind) => kind switch
+    {
+        SettingsPageKind.Notifications => notificationsPage,
+        SettingsPageKind.Privacy => privacyPage,
+        SettingsPageKind.Calls => HiddenApps.Contains(CallsAppId) ? null : callsPage,
+        SettingsPageKind.Changelog => changelogPage,
+        _ => throw new ArgumentOutOfRangeException(nameof(kind)),
+    };
+
+    private static ISettingsPage[][] WithoutPages(ISettingsPage[][] groups, List<ISettingsPage> hiddenPages)
+    {
+        if (hiddenPages.Count == 0)
+        {
+            return groups;
+        }
+
+        var kept = new List<ISettingsPage[]>(groups.Length);
+        for (var groupIndex = 0; groupIndex < groups.Length; groupIndex++)
+        {
+            var pages = Array.FindAll(groups[groupIndex], page => !hiddenPages.Contains(page));
+            if (pages.Length > 0)
+            {
+                kept.Add(pages);
+            }
+        }
+
+        return kept.ToArray();
+    }
+
+    private void PushAppNotifications(string? appId)
+    {
+        if (appId is null)
+        {
+            return;
+        }
+
+        var entries = installedApps.Entries;
+        for (var index = 0; index < entries.Length; index++)
+        {
+            if (!string.Equals(entries[index].AppId, appId, StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            router.Push(appSettingsPages.For(entries[index]));
+            return;
+        }
+    }
+
+    private void PopBack()
+    {
+        sound.StopPreview();
+        router.Pop();
+    }
+
+    public void Dispose()
+    {
+        accountPage.Dispose();
+        namePage.Dispose();
+        profilePage.Dispose();
+        encryptionPage.Dispose();
+        privacyPage.Dispose();
+        tagsMentionsPage.Dispose();
+        linkedDevicesPage.Dispose();
+        installedApps.Dispose();
+    }
+}

@@ -1,0 +1,930 @@
+using Aetherphone.Core.Aethernet;
+using Aetherphone.Core.Confirm;
+using Dalamud.Bindings.ImGui;
+using Aetherphone.Core.Home;
+using Aetherphone.Core.Localization;
+using Aetherphone.Core.Notifications;
+using Aetherphone.Core.Playback;
+using Aetherphone.Core.Telephony.Contracts;
+
+namespace Aetherphone.Core.Telephony;
+
+internal sealed class CallHub : IDisposable
+{
+    private const float IncomingTimeoutSeconds = 60f;
+    private const float DialingTimeoutSeconds = 60f;
+    private const long ReconnectGraceMs = 20_000;
+    private static readonly Vector4 Accent = new(0.20f, 0.78f, 0.35f, 1f);
+    private readonly Configuration configuration;
+    private readonly AethernetSession session;
+    private readonly NotificationService notifications;
+    private readonly SoundService sound;
+    private readonly CallSignalRouter router;
+    private readonly CallAudioController audio;
+    private readonly CallLogStore log;
+    private readonly ConfirmService confirm;
+    private readonly AppGate installed;
+    private readonly ContactBook contacts;
+    private readonly object gate = new();
+    private CallState state = CallState.Idle;
+    private CallView snapshotView;
+    private int snapshotFrame = -1;
+    private const int MissedCallSocialType = 20;
+
+    private Guid callId;
+    private ParticipantInfo[] roster = Array.Empty<ParticipantInfo>();
+    private ParticipantInfo? incomingFrom;
+    private string? realtimeToken;
+    private CallContact? dialingTo;
+    private float stateTimer;
+    private long connectionLostTicks;
+    private volatile bool callScreenRequested;
+
+    public CallHub(Configuration configuration, AethernetSession session, NotificationService notifications,
+        SoundService sound, PlaybackHub playback, RealtimeSignalBus signals, ConfirmService confirm,
+        AppGate installed, ContactBook contacts, PartyRelay partyRelay)
+    {
+        this.configuration = configuration;
+        this.session = session;
+        this.notifications = notifications;
+        this.sound = sound;
+        this.confirm = confirm;
+        this.installed = installed;
+        this.contacts = contacts;
+        router = new CallSignalRouter(session, signals, partyRelay);
+        audio = new CallAudioController(configuration, playback, router.Connection);
+        log = new CallLogStore(configuration);
+    }
+
+    private enum CallEndReason : byte
+    {
+        None,
+        Declined,
+        Unavailable,
+        NoAnswer,
+        ConnectionLost,
+    }
+
+    public event Action? IncomingCallPresented;
+    public bool Enabled => configuration.CallsEnabled;
+    public bool SignedIn => session.IsSignedIn;
+    public bool Connected => router.Connected;
+
+    public CallSignalRouter Router => router;
+    public string LocalUserId => session.CurrentUser?.Id ?? string.Empty;
+    public CallLogEntry[] CallLog => log.Entries;
+    public int UnseenMissed => log.UnseenMissed;
+
+    public void MarkLogSeen() => log.MarkSeen();
+
+    public void Start()
+    {
+        router.IncomingReceived += HandleIncoming;
+        router.RosterReceived += HandleRoster;
+        router.DeclinedReceived += HandleDeclined;
+        router.UnavailableReceived += HandleUnavailable;
+        router.EndedReceived += HandleEnded;
+        router.HandledElsewhereReceived += HandleHandledElsewhere;
+        router.ConnectedChanged += OnConnectedChanged;
+        notifications.Added += OnNotificationAdded;
+        session.Changed += Reconcile;
+        Reconcile();
+    }
+
+    private void OnNotificationAdded(PhoneNotification notification)
+    {
+        if (notification.SocialType != MissedCallSocialType || string.IsNullOrEmpty(notification.ActorId))
+        {
+            return;
+        }
+
+        log.NoteServerMissed(notification.ActorId, notification.Title);
+    }
+
+    public void SetEnabled(bool value)
+    {
+        configuration.CallsEnabled = value;
+        configuration.Save();
+        Reconcile();
+    }
+
+    public CallView Snapshot()
+    {
+        var frame = ImGui.GetFrameCount();
+        if (frame == snapshotFrame)
+        {
+            return snapshotView;
+        }
+
+        lock (gate)
+        {
+            var localId = LocalUserId;
+            var others = CountOthers(localId);
+            var seconds = state == CallState.Active ? audio.ElapsedSecondsLocked : 0;
+            snapshotView = new CallView(state, audio.MutedLocked, audio.VolumeLocked, audio.MicLevelLocked,
+                audio.PeakMicLevelLocked, seconds, roster,
+                incomingFrom, router.Connected && connectionLostTicks == 0, localId, BuildPeerLabel(localId), others);
+            snapshotFrame = frame;
+            return snapshotView;
+        }
+    }
+
+    public float LevelOf(ParticipantInfo participant)
+    {
+        CallSession? current;
+        lock (gate)
+        {
+            current = audio.SessionLocked;
+        }
+
+        return current?.LevelOf(participant.Slot) ?? 0f;
+    }
+
+    public void RequestCallScreen()
+    {
+        callScreenRequested = true;
+    }
+
+    public bool ConsumeCallScreenRequest()
+    {
+        if (!callScreenRequested)
+        {
+            return false;
+        }
+
+        callScreenRequested = false;
+        return true;
+    }
+
+    public void StartCall(CallContact target)
+    {
+        if (!configuration.CallsEnabled || !session.IsSignedIn)
+        {
+            AepLog.Info($"[calls] start-refused calls_enabled={configuration.CallsEnabled} signed_in={session.IsSignedIn}");
+            return;
+        }
+
+        var switching = false;
+        lock (gate)
+        {
+            if (state == CallState.Ringing)
+            {
+                AepLog.Info("[calls] start-refused an incoming call is still ringing");
+                return;
+            }
+
+            if (state != CallState.Idle)
+            {
+                if (InvolvesLocked(target.UserId))
+                {
+                    AepLog.Info($"[calls] start-refused already engaged with {target.UserId} in state {state}");
+                    return;
+                }
+
+                switching = true;
+            }
+        }
+
+        if (switching)
+        {
+            Hangup();
+        }
+
+        Guid id;
+        lock (gate)
+        {
+            if (state != CallState.Idle)
+            {
+                AepLog.Info($"[calls] start-refused state {state} never returned to idle");
+                return;
+            }
+
+            id = Guid.NewGuid();
+            callId = id;
+            state = CallState.Dialing;
+            dialingTo = target;
+            incomingFrom = null;
+            roster = Array.Empty<ParticipantInfo>();
+            stateTimer = 0f;
+        }
+
+        log.Add(target, CallDirection.Outgoing);
+        AepLog.Info($"[calls] start-sent call={id:D} to={target.UserId} realtime_connected={router.Connected}");
+        router.Send(new CallControl
+        {
+            Type = SignalType.Start, CallId = id.ToString("D"), InviteeIds = new[] { target.UserId },
+        });
+        sound.StartRingback();
+    }
+
+    private bool InvolvesLocked(string userId)
+    {
+        if (dialingTo is not null && dialingTo.UserId == userId)
+        {
+            return true;
+        }
+
+        for (var index = 0; index < roster.Length; index++)
+        {
+            if (roster[index].UserId == userId)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    public void AddParticipant(CallContact target)
+    {
+        string? id;
+        lock (gate)
+        {
+            if (state is not CallState.Active and not CallState.Dialing)
+            {
+                return;
+            }
+
+            id = callId.ToString("D");
+        }
+
+        log.Add(target, CallDirection.Outgoing);
+        router.Send(new CallControl { Type = SignalType.Invite, CallId = id, InviteeIds = new[] { target.UserId }, });
+    }
+
+    public void Accept()
+    {
+        string? id;
+        ParticipantInfo? from;
+        lock (gate)
+        {
+            if (state != CallState.Ringing)
+            {
+                return;
+            }
+
+            state = CallState.Connecting;
+            id = callId.ToString("D");
+            from = incomingFrom;
+        }
+
+        sound.StopCallRing();
+        router.Send(new CallControl { Type = SignalType.Accept, CallId = id });
+        if (from is not null)
+        {
+            log.Add(new CallContact(from.UserId, from.Name, from.World, from.DisplayName), CallDirection.Incoming);
+        }
+    }
+
+    public void Decline() => DeclineInternal(timedOut: false);
+
+    private void DeclineInternal(bool timedOut)
+    {
+        string? id;
+        ParticipantInfo? from;
+        lock (gate)
+        {
+            if (state != CallState.Ringing)
+            {
+                return;
+            }
+
+            id = callId.ToString("D");
+            from = incomingFrom;
+        }
+
+        router.Send(new CallControl { Type = SignalType.Decline, CallId = id });
+        EndCall(CallEndReason.None);
+        if (timedOut)
+        {
+            LogMissed(from);
+        }
+    }
+
+    public void Hangup() => Leave(CallEndReason.None);
+
+    private void Leave(CallEndReason reason)
+    {
+        string? id;
+        lock (gate)
+        {
+            if (state == CallState.Idle)
+            {
+                return;
+            }
+
+            id = callId.ToString("D");
+        }
+
+        router.Send(new CallControl { Type = SignalType.Leave, CallId = id });
+        EndCall(reason);
+    }
+
+    public void ToggleMute()
+    {
+        lock (gate)
+        {
+            audio.ToggleMuteLocked();
+        }
+    }
+
+    public void SetVolume(float value)
+    {
+        lock (gate)
+        {
+            audio.SetVolumeLocked(value);
+        }
+    }
+
+    public float InputGain
+    {
+        get
+        {
+            lock (gate)
+            {
+                return audio.InputGainLocked;
+            }
+        }
+    }
+
+    public void SetInputGain(float value)
+    {
+        lock (gate)
+        {
+            audio.SetInputGainLocked(value);
+        }
+    }
+
+    public bool AutoGain
+    {
+        get
+        {
+            lock (gate)
+            {
+                return audio.AutoGainLocked;
+            }
+        }
+    }
+
+    public void SetAutoGain(bool value)
+    {
+        lock (gate)
+        {
+            audio.SetAutoGainLocked(value);
+        }
+
+        configuration.Save();
+    }
+
+    public void SelectInputDevice(string name)
+    {
+        if (configuration.CallInputDevice == name)
+        {
+            return;
+        }
+
+        configuration.CallInputDevice = name;
+        configuration.Save();
+        lock (gate)
+        {
+            audio.SwitchInputLocked();
+        }
+    }
+
+    public void SelectOutputDevice(string name)
+    {
+        if (configuration.CallOutputDevice == name)
+        {
+            return;
+        }
+
+        configuration.CallOutputDevice = name;
+        configuration.Save();
+        lock (gate)
+        {
+            audio.SwitchOutputLocked();
+        }
+    }
+
+    public float PeerVolume(string userId)
+    {
+        lock (gate)
+        {
+            return audio.PeerVolumeLocked(userId);
+        }
+    }
+
+    public bool PeerMuted(string userId)
+    {
+        lock (gate)
+        {
+            return audio.PeerMutedLocked(userId);
+        }
+    }
+
+    public void SetPeerVolume(string userId, float value)
+    {
+        lock (gate)
+        {
+            audio.SetPeerVolumeLocked(userId, value, roster);
+        }
+    }
+
+    public void SetPeerMuted(string userId, bool value)
+    {
+        lock (gate)
+        {
+            audio.SetPeerMutedLocked(userId, value, roster);
+        }
+
+        configuration.Save();
+    }
+
+    public void SaveAudioSettings() => configuration.Save();
+
+    public string DisplayNameOf(ParticipantInfo participant) => NameOf(participant);
+
+    public void Advance(float deltaSeconds)
+    {
+        var declineTimeout = false;
+        var dialTimeout = false;
+        var reconnectTimeout = false;
+        lock (gate)
+        {
+            if (state != CallState.Idle && connectionLostTicks != 0
+                && Environment.TickCount64 - connectionLostTicks >= ReconnectGraceMs)
+            {
+                reconnectTimeout = true;
+            }
+
+            if (state == CallState.Ringing)
+            {
+                stateTimer += deltaSeconds;
+                if (stateTimer >= IncomingTimeoutSeconds)
+                {
+                    declineTimeout = true;
+                }
+            }
+            else if (state == CallState.Dialing)
+            {
+                stateTimer += deltaSeconds;
+                if (stateTimer >= DialingTimeoutSeconds)
+                {
+                    dialTimeout = true;
+                }
+            }
+        }
+
+        if (reconnectTimeout)
+        {
+            EndCall(CallEndReason.ConnectionLost);
+            return;
+        }
+
+        if (declineTimeout)
+        {
+            DeclineInternal(timedOut: true);
+        }
+        else if (dialTimeout)
+        {
+            Leave(CallEndReason.NoAnswer);
+        }
+    }
+
+    private void HandleIncoming(Guid id, CallControl message)
+    {
+        if (message.From is null)
+        {
+            return;
+        }
+
+        if (!configuration.CallsEnabled || !installed.Open)
+        {
+            router.Send(new CallControl { Type = SignalType.Decline, CallId = message.CallId, Reason = "unavailable" });
+            LogMissed(message.From);
+            return;
+        }
+
+        var busy = false;
+        lock (gate)
+        {
+            if (state != CallState.Idle)
+            {
+                busy = true;
+            }
+            else
+            {
+                callId = id;
+                state = CallState.Ringing;
+                incomingFrom = message.From;
+                roster = message.Participants ?? new[] { message.From };
+                stateTimer = 0f;
+            }
+        }
+
+        if (busy)
+        {
+            router.Send(new CallControl { Type = SignalType.Decline, CallId = message.CallId, Reason = "busy" });
+            LogMissed(message.From);
+            return;
+        }
+
+        sound.StartCallRing();
+        notifications.Notify(new PhoneNotification("message", NameOf(message.From), Loc.T(L.Phone.IncomingCallBody), DateTime.Now,
+            Accent, "call:" + message.From.UserId)
+        {
+            ChannelId = NotificationChannels.PhoneChannel,
+        });
+        IncomingCallPresented?.Invoke();
+    }
+
+    private void HandleRoster(Guid id, CallControl message)
+    {
+        var participants = message.Participants ?? Array.Empty<ParticipantInfo>();
+        CallSession? sessionToDispose = null;
+        var becameActive = false;
+        var localId = LocalUserId;
+        lock (gate)
+        {
+            if (id != callId)
+            {
+                return;
+            }
+
+            connectionLostTicks = 0;
+            roster = participants;
+            var localSlot = -1;
+            var activeOthers = 0;
+            for (var index = 0; index < participants.Length; index++)
+            {
+                var participant = participants[index];
+                if (participant.UserId == localId)
+                {
+                    localSlot = participant.Slot;
+                }
+                else if (participant.State == ParticipantState.Active)
+                {
+                    activeOthers++;
+                }
+            }
+
+            if (activeOthers > 0)
+            {
+                audio.EnsureStartedLocked(callId, localSlot);
+                audio.SyncRemotesLocked(participants, localId);
+                becameActive = state != CallState.Active;
+                state = CallState.Active;
+            }
+            else if (audio.HasSessionLocked)
+            {
+                sessionToDispose = ClearLocked();
+            }
+        }
+
+        sessionToDispose?.Dispose();
+        if (becameActive)
+        {
+            sound.StopCallRing();
+            UiFeedback.Play(UiSound.CallConnect);
+        }
+    }
+
+    private void HandleDeclined(Guid id, CallControl message)
+    {
+        var ended = false;
+        var localId = LocalUserId;
+        lock (gate)
+        {
+            if (id != callId || state != CallState.Dialing)
+            {
+                return;
+            }
+
+            var pending = 0;
+            for (var index = 0; index < roster.Length; index++)
+            {
+                var participant = roster[index];
+                if (participant.UserId != localId && participant.State != ParticipantState.Left)
+                {
+                    pending++;
+                }
+            }
+
+            if (pending == 0)
+            {
+                ended = true;
+            }
+        }
+
+        if (ended)
+        {
+            EndCall(CallEndReason.Declined);
+        }
+    }
+
+    private void HandleUnavailable(Guid id, CallControl message)
+    {
+        var matched = false;
+        lock (gate)
+        {
+            matched = id == callId && state == CallState.Dialing;
+        }
+
+        if (matched)
+        {
+            EndCall(CallEndReason.Unavailable);
+        }
+    }
+
+    private void HandleEnded(Guid id, CallControl message)
+    {
+        var matched = false;
+        ParticipantInfo? missedFrom = null;
+        lock (gate)
+        {
+            matched = id == callId && state != CallState.Idle;
+            if (matched && state == CallState.Ringing)
+            {
+                missedFrom = incomingFrom;
+            }
+        }
+
+        if (matched)
+        {
+            EndCall(CallEndReason.None);
+            LogMissed(missedFrom);
+        }
+    }
+
+    private void HandleHandledElsewhere(Guid id, CallControl message)
+    {
+        bool matched;
+        lock (gate)
+        {
+            matched = id == callId && state == CallState.Ringing;
+        }
+
+        if (matched)
+        {
+            EndCall(CallEndReason.None);
+        }
+    }
+
+    private void OnConnectedChanged(bool isConnected)
+    {
+        if (isConnected)
+        {
+            OnReconnected();
+            return;
+        }
+
+        var abandonRinging = false;
+        ParticipantInfo? missedFrom = null;
+        lock (gate)
+        {
+            if (state == CallState.Idle)
+            {
+                return;
+            }
+
+            if (state == CallState.Ringing)
+            {
+                abandonRinging = true;
+                missedFrom = incomingFrom;
+            }
+            else if (connectionLostTicks == 0)
+            {
+                connectionLostTicks = Environment.TickCount64;
+            }
+        }
+
+        if (abandonRinging)
+        {
+            EndCall(CallEndReason.None);
+            LogMissed(missedFrom);
+        }
+    }
+
+    private void OnReconnected()
+    {
+        string? id = null;
+        var resendAccept = false;
+        lock (gate)
+        {
+            if (state is CallState.Dialing or CallState.Connecting or CallState.Active)
+            {
+                id = callId.ToString("D");
+                resendAccept = state == CallState.Connecting;
+            }
+            else
+            {
+                connectionLostTicks = 0;
+            }
+        }
+
+        if (id is null)
+        {
+            return;
+        }
+
+        router.Send(new CallControl { Type = SignalType.Rejoin, CallId = id });
+        if (resendAccept)
+        {
+            router.Send(new CallControl { Type = SignalType.Accept, CallId = id });
+        }
+    }
+
+    private void EndCall(CallEndReason reason)
+    {
+        CallSession? toDispose;
+        bool wasConnected;
+        double durationMs;
+        CallState priorState;
+        string peerName;
+        lock (gate)
+        {
+            if (state == CallState.Idle)
+            {
+                return;
+            }
+
+            priorState = state;
+            peerName = PeerNameLocked();
+            wasConnected = audio.StartTicksLocked != 0;
+            durationMs = wasConnected ? Environment.TickCount64 - audio.StartTicksLocked : 0;
+            toDispose = ClearLocked();
+        }
+
+        AepLog.Info($"[calls] ended from={priorState} reason={reason} connected={wasConnected} duration_ms={durationMs:F0}");
+
+        sound.StopCallRing();
+        if (wasConnected)
+        {
+            UiFeedback.Play(UiSound.CallEnd);
+        }
+        toDispose?.Dispose();
+        RaiseOutcome(reason, peerName);
+    }
+
+    private void RaiseOutcome(CallEndReason reason, string peerName)
+    {
+        string title;
+        string body;
+        switch (reason)
+        {
+            case CallEndReason.Unavailable:
+                title = Loc.T(L.Phone.OutcomeUnavailableTitle, peerName);
+                body = Loc.T(L.Phone.OutcomeUnavailableBody);
+                break;
+            case CallEndReason.Declined:
+                title = Loc.T(L.Phone.OutcomeDeclinedTitle, peerName);
+                body = Loc.T(L.Phone.OutcomeDeclinedBody);
+                break;
+            case CallEndReason.NoAnswer:
+                title = Loc.T(L.Phone.NoAnswerTitle);
+                body = Loc.T(L.Phone.OutcomeNoAnswerBody, peerName);
+                break;
+            case CallEndReason.ConnectionLost:
+                title = Loc.T(L.Phone.OutcomeDroppedTitle);
+                body = Loc.T(L.Phone.OutcomeDroppedBody);
+                break;
+            default:
+                return;
+        }
+
+        confirm.Alert(title, body, Loc.T(L.Phone.OutcomeDismiss));
+    }
+
+    private string PeerNameLocked()
+    {
+        if (dialingTo is not null && dialingTo.DisplayName.Length > 0)
+        {
+            return contacts.NameFor(dialingTo.UserId, dialingTo.DisplayName);
+        }
+
+        var localId = LocalUserId;
+        for (var index = 0; index < roster.Length; index++)
+        {
+            if (roster[index].UserId != localId && roster[index].DisplayName.Length > 0)
+            {
+                return NameOf(roster[index]);
+            }
+        }
+
+        return incomingFrom is { } caller ? NameOf(caller) : string.Empty;
+    }
+
+    private string NameOf(ParticipantInfo participant) => contacts.NameFor(participant.UserId, participant.DisplayName);
+
+    private CallSession? ClearLocked()
+    {
+        state = CallState.Idle;
+        callId = default;
+        roster = Array.Empty<ParticipantInfo>();
+        incomingFrom = null;
+        dialingTo = null;
+        connectionLostTicks = 0;
+        stateTimer = 0f;
+        return audio.TakeLocked();
+    }
+
+    private int CountOthers(string localId)
+    {
+        var count = 0;
+        for (var index = 0; index < roster.Length; index++)
+        {
+            if (roster[index].UserId != localId)
+            {
+                count++;
+            }
+        }
+
+        return count;
+    }
+
+    private string BuildPeerLabel(string localId)
+    {
+        switch (state)
+        {
+            case CallState.Dialing:
+                return dialingTo is { } target
+                    ? contacts.NameFor(target.UserId, target.DisplayName)
+                    : Loc.T(L.Phone.StatusCalling);
+            case CallState.Ringing:
+                return incomingFrom is { } caller ? NameOf(caller) : Loc.T(L.Phone.IncomingCallBody);
+            case CallState.Connecting:
+                return Loc.T(L.Phone.StatusConnecting);
+            case CallState.Active:
+                ParticipantInfo? only = null;
+                var others = 0;
+                for (var index = 0; index < roster.Length; index++)
+                {
+                    if (roster[index].UserId != localId)
+                    {
+                        others++;
+                        only = roster[index];
+                    }
+                }
+
+                return others == 1 && only is not null ? NameOf(only) : Loc.T(L.Phone.GroupCall);
+            default:
+                return string.Empty;
+        }
+    }
+
+    private void LogMissed(ParticipantInfo? from)
+    {
+        if (from is null)
+        {
+            return;
+        }
+
+        log.Add(new CallContact(from.UserId, from.Name, from.World, from.DisplayName), CallDirection.Missed);
+    }
+
+    private void Reconcile()
+    {
+        if (!session.IsSignedIn)
+        {
+            EndCall(CallEndReason.None);
+            realtimeToken = null;
+            router.Stop();
+            return;
+        }
+
+        var token = session.Token;
+        if (realtimeToken is not null && !string.Equals(token, realtimeToken, StringComparison.Ordinal))
+        {
+            EndCall(CallEndReason.None);
+            router.Stop();
+        }
+
+        realtimeToken = token;
+        router.Start();
+        if (!configuration.CallsEnabled)
+        {
+            EndCall(CallEndReason.None);
+        }
+    }
+
+    public void Dispose()
+    {
+        router.IncomingReceived -= HandleIncoming;
+        router.RosterReceived -= HandleRoster;
+        router.DeclinedReceived -= HandleDeclined;
+        router.UnavailableReceived -= HandleUnavailable;
+        router.EndedReceived -= HandleEnded;
+        router.HandledElsewhereReceived -= HandleHandledElsewhere;
+        router.ConnectedChanged -= OnConnectedChanged;
+        notifications.Added -= OnNotificationAdded;
+        session.Changed -= Reconcile;
+        CallSession? toDispose;
+        lock (gate)
+        {
+            toDispose = audio.TakeLocked();
+        }
+
+        toDispose?.Dispose();
+        router.Dispose();
+    }
+}

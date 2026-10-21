@@ -1,0 +1,106 @@
+using Aetherphone.Core.Onboarding;
+using Xunit;
+
+namespace Aetherphone.Tests;
+
+public sealed class TourRegistryTests
+{
+    // Expected values were read out of TourRegistry before its 410 line BuildTours
+    // was split across six partial files, so this table is the pre split behaviour. Cyberphone drops the
+    // Aethernet-only steps (music Jam, settings profile, AetherStream party, games Together), so those four
+    // counts are lower than upstream.
+    private static readonly Dictionary<string, (int Version, int StepCount)> Expected = new()
+    {
+        { "messages", (4, 6) },
+        { "music", (4, 6) },
+        { "character", (4, 3) },
+        { "chirper", (3, 6) },
+        { "aethergram", (3, 6) },
+        { "collections", (3, 3) },
+        { "wallet", (4, 3) },
+        { "inventory", (4, 3) },
+        { "settings", (4, 4) },
+        { "camera", (5, 7) },
+        { "photos", (4, 6) },
+        { "news", (4, 3) },
+        { "notes", (3, 6) },
+        { "dailies", (4, 5) },
+        { "velvet", (5, 8) },
+        { "notifications", (4, 3) },
+        { "message", (3, 6) },
+        { "polls", (5, 2) },
+        { "muster", (3, 5) },
+        { "yellowpages", (2, 6) },
+        { "jobs", (3, 5) },
+        { "announcements", (2, 2) },
+        { "housing", (3, 6) },
+        { "feedback", (4, 4) },
+        { "appstore", (2, 5) },
+        { "health", (3, 4) },
+        { "shortcuts", (3, 6) },
+        { "aetherstream", (3, 4) },
+        { "games", (5, 3) },
+        { "clock", (4, 5) },
+        { "calendar", (3, 5) },
+        { "calculator", (4, 3) },
+        { "timers", (4, 3) },
+        { "coin", (3, 5) },
+        { "casino", (5, 6) },
+        { "skywatcher", (4, 6) },
+        { "strats", (3, 7) },
+        { "market", (4, 7) },
+        { "venues", (5, 6) },
+        { "maps", (4, 5) },
+        { "fishing", (4, 6) },
+        { "hunts", (7, 7) },
+    };
+
+    [Fact]
+    public void EveryAppTourResolvesWithItsOriginalVersionAndStepCount()
+    {
+        foreach (var (appId, expected) in Expected)
+        {
+            Assert.True(TourRegistry.TryGetAppTour(appId, out var sequence), $"no tour registered for '{appId}'");
+            Assert.Equal(appId, sequence.Id);
+            Assert.Equal(appId, sequence.RequiredAppId);
+            Assert.Equal(expected.Version, sequence.ContentVersion);
+            Assert.Equal(expected.StepCount, sequence.Steps.Length);
+            Assert.True(sequence.IsValid);
+        }
+    }
+
+    [Fact]
+    public void NoTourIsRegisteredBeyondTheExpectedSet()
+    {
+        Assert.Equal(42, Expected.Count);
+        foreach (var appId in new[] { "welcome", "nope", "", "Messages" })
+        {
+            Assert.False(TourRegistry.TryGetAppTour(appId, out _), $"'{appId}' should not have an app tour");
+        }
+    }
+
+    [Fact]
+    public void TheWelcomeSequenceIsSeparateFromTheAppTours()
+    {
+        var welcome = TourRegistry.GetWelcome();
+        Assert.Equal(TourRegistry.WelcomeId, welcome.Id);
+        Assert.Null(welcome.RequiredAppId);
+        Assert.True(welcome.IsValid);
+    }
+
+    [Fact]
+    public void TheHalloweenGuideOpensSettingsAndEndsOnTheSeasonalPicker()
+    {
+        var guide = TourRegistry.GetHalloweenGuide();
+        Assert.Equal(TourRegistry.HalloweenGuideId, guide.Id);
+        Assert.Equal(1, guide.ContentVersion);
+        Assert.Null(guide.RequiredAppId);
+        Assert.True(guide.LeavesHome);
+        Assert.Equal(3, guide.Steps.Length);
+        Assert.Equal(GuideSurface.FullCard, guide.Steps[0].Surface);
+        Assert.NotNull(guide.Steps[0].OnAdvance);
+        Assert.Equal("settings.row.appearance", guide.Steps[1].AnchorKey);
+        Assert.Equal("settings.appearance.seasonal", guide.Steps[2].AnchorKey);
+        Assert.False(TourRegistry.TryGetAppTour(TourRegistry.HalloweenGuideId, out _));
+    }
+}

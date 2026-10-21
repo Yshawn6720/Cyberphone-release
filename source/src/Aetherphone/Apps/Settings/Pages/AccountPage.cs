@@ -1,0 +1,999 @@
+using Aetherphone.Core;
+using Aetherphone.Core.Aethernet;
+using Aetherphone.Core.Aethernet.Clients;
+using Aetherphone.Core.Aethernet.Contracts;
+using Aetherphone.Core.Apps;
+using Aetherphone.Core.Confirm;
+using Aetherphone.Core.Crypto;
+using Aetherphone.Core.Game;
+using Aetherphone.Core.Localization;
+using Aetherphone.Core.Lodestone;
+using Aetherphone.Core.Media;
+using Aetherphone.Core.Net;
+using Aetherphone.Core.Photos;
+using Aetherphone.Core.Social;
+using Aetherphone.Core.Theme;
+using Aetherphone.Core.Wallpapers;
+using Aetherphone.Windows;
+using Aetherphone.Windows.Components;
+using Dalamud.Interface;
+using Dalamud.Bindings.ImGui;
+
+namespace Aetherphone.Apps.Settings.Pages;
+
+internal sealed class AccountPage : ISettingsPage, IDisposable
+{
+    private enum AccountRowAction
+    {
+        None,
+        Switch,
+        Remove,
+    }
+
+    private const string LodestoneProfileUrl = "https://na.finalfantasyxiv.com/lodestone/my/setting/profile/";
+    private const string RisingStonesProfileSettingsUrl = "https://ff14risingstones.web.sdo.com/pc/index.html#/me/settings/main";
+    public string Title => Loc.T(L.Account.Title);
+
+    public string Summary =>
+        session.IsSignedIn
+            ? session.CurrentUser?.DisplayName ?? Loc.T(L.Account.SignedIn)
+            : Loc.T(L.Account.NotSignedIn);
+
+    public FontAwesomeIcon Icon => FontAwesomeIcon.User;
+    public Vector4 Tint => new(0.36f, 0.72f, 0.62f, 1f);
+    public ReadOnlySpan<SettingsEntry> Entries => Searchable;
+    private const float AccountRowHeight = 58f;
+
+    private static readonly SettingsEntry[] Searchable =
+    {
+        new(L.Account.SignIn),
+        new(L.Account.SignOut),
+        new(L.Account.DeleteAccount),
+        new(L.Account.AddAccount, L.Account.AccountsSection),
+        new(L.Account.FollowCharacter, L.Account.AccountsSection),
+        new(L.Account.PatreonLink, L.Account.PatreonSection),
+        new(L.Account.BadgesSection),
+        new(L.Account.NameTitle),
+        new(L.Profile.Title),
+        new(L.Coin.SettingsRow),
+        new(L.Encryption.Title),
+    };
+    private readonly Configuration configuration;
+    private readonly AethernetSession session;
+    private readonly AuthClient auth;
+    private readonly AccountClient account;
+    private readonly AccountStateService accountState;
+    private readonly MediaClient media;
+    private readonly GameData gameData;
+    private readonly RemoteImageCache images;
+    private readonly LodestoneService lodestone;
+    private readonly ISettingsNavigator navigator;
+    private readonly NamePage namePage;
+    private readonly ISettingsPage profilePage;
+    private readonly ISettingsPage encryptionPage;
+    private readonly ISettingsPage coinPage;
+    private readonly PhotoLibrary photoLibrary;
+    private readonly ConfirmService confirm;
+    private readonly WallpaperImageCache wallpaperImages;
+    private readonly CacheStorage cacheStorage;
+    private readonly DecryptedHistoryStore chatHistory;
+    private readonly SignInFlow flow;
+    private readonly PatreonLinkFlow patreonFlow;
+    private readonly CancellationTokenSource cancellation = new();
+    private readonly List<ulong> accountIds = new();
+    private string risingStonesUuid = string.Empty;
+    private int accountIdsStamp = -1;
+    private volatile bool avatarBusy;
+    private bool meRequested;
+    private int lastDrawnFrame = -2;
+
+    public AccountPage(Configuration configuration, AethernetSession session, AuthClient auth, AccountClient account,
+        AccountStateService accountState, MediaClient media, GameData gameData, RemoteImageCache images,
+        LodestoneService lodestone, ISettingsNavigator navigator, NamePage namePage, ISettingsPage profilePage,
+        ISettingsPage encryptionPage, ISettingsPage coinPage, PhotoLibrary photoLibrary, ConfirmService confirm,
+        WallpaperImageCache wallpaperImages, CacheStorage cacheStorage, DecryptedHistoryStore chatHistory)
+    {
+        this.configuration = configuration;
+        this.session = session;
+        this.auth = auth;
+        this.account = account;
+        this.accountState = accountState;
+        this.media = media;
+        this.gameData = gameData;
+        this.images = images;
+        this.lodestone = lodestone;
+        this.navigator = navigator;
+        this.namePage = namePage;
+        this.profilePage = profilePage;
+        this.encryptionPage = encryptionPage;
+        this.coinPage = coinPage;
+        this.photoLibrary = photoLibrary;
+        this.confirm = confirm;
+        this.wallpaperImages = wallpaperImages;
+        this.cacheStorage = cacheStorage;
+        this.chatHistory = chatHistory;
+        flow = new SignInFlow(session, auth);
+        patreonFlow = new PatreonLinkFlow(account, accountState.RefreshNow);
+    }
+
+    public void Draw(in PhoneContext context, Rect body)
+    {
+        var frame = ImGui.GetFrameCount();
+        if (frame - lastDrawnFrame > 1)
+        {
+            accountState.RefreshNow();
+        }
+
+
+        lastDrawnFrame = frame;
+        var theme = context.Theme;
+        using (AppSurface.Begin(body))
+        {
+            if (session.IsSignedIn)
+            {
+                DrawSignedIn(theme);
+            }
+            else
+            {
+                DrawSignedOut(theme);
+            }
+
+            if (flow.ConsumeFailure() is { } failureReason)
+            {
+                ShowFailureAlert(failureReason);
+            }
+
+            if (patreonFlow.ConsumeLinked())
+            {
+                confirm.Alert(Loc.T(L.Account.PatreonLinkedTitle), Loc.T(L.Account.PatreonLinkedBody),
+                    Loc.T(L.Account.FailDismiss));
+            }
+
+            if (patreonFlow.ConsumeFailure() is { } patreonFailure)
+            {
+                ShowPatreonFailureAlert(patreonFailure);
+            }
+        }
+    }
+
+    private void ShowPatreonFailureAlert(string failureReason)
+    {
+        var body = failureReason == PatreonLinkFlow.FailureNetwork
+            ? Loc.T(L.Account.FailNetworkBody)
+            : Loc.T(L.Account.PatreonFailedBody);
+        confirm.Alert(Loc.T(L.Account.PatreonFailedTitle), body, Loc.T(L.Account.FailDismiss));
+    }
+
+    private void ShowFailureAlert(string failureReason)
+    {
+        var (title, message) = SignInFailureText.Resolve(failureReason, gameData);
+        confirm.Alert(title, message, Loc.T(L.Account.FailDismiss));
+    }
+
+    private void DrawSignedIn(PhoneTheme theme)
+    {
+        if (session.CurrentUser is null && !meRequested && !flow.Busy)
+        {
+            meRequested = true;
+            StartMe();
+        }
+
+        var scale = UiScale.Current;
+        var user = session.CurrentUser;
+        if (user is null)
+        {
+            var origin = ImGui.GetCursorScreenPos();
+            var center = new Vector2(origin.X + ImGui.GetContentRegionAvail().X * 0.5f, origin.Y + 88f * scale);
+            LoadingPulse.Draw(center, 14f * scale, theme.Accent, theme.TextMuted, LoadingPulse.SafeLabel());
+            ImGui.Dummy(new Vector2(0f, 168f * scale));
+            var loadingSignOut = GroupCard.Begin(theme, 1);
+            if (SettingsRow.Action(loadingSignOut.NextRow(), Loc.T(L.Account.SignOut), theme.Danger, theme))
+            {
+                AskSignOut();
+            }
+
+            loadingSignOut.End();
+            return;
+        }
+
+        DrawIdentityHeader(user, theme, scale);
+        DrawCharacterMismatch(user, theme, scale);
+        SettingsForm.Gap(Metrics.Space.Xl);
+        var details = GroupCard.Begin(theme, 2);
+        SettingsRow.Info(details.NextRow(), Loc.T(L.Account.CharacterLabel), user.Name, theme);
+        SettingsRow.Info(details.NextRow(), Loc.T(L.Account.HomeWorldLabel), user.World, theme);
+        details.End();
+
+        DrawCommunityBadgesSection(theme, scale);
+        DrawPatreonSection(theme, scale);
+        SettingsForm.Gap(Metrics.Space.Lg);
+        var links = GroupCard.Begin(theme, 4);
+        if (SettingsRow.Link(links.NextRow(), namePage.Icon, namePage.Tint, namePage.Title, namePage.Summary, theme))
+        {
+            namePage.ResetEdit();
+            navigator.Open(namePage);
+        }
+
+        if (SettingsRow.Link(links.NextRow(), profilePage.Icon, profilePage.Tint, profilePage.Title,
+                profilePage.Summary, theme))
+        {
+            navigator.Open(profilePage);
+        }
+
+        if (SettingsRow.Link(links.NextRow(), coinPage.Icon, coinPage.Tint, coinPage.Title,
+                coinPage.Summary, theme))
+        {
+            navigator.Open(coinPage);
+        }
+
+        if (SettingsRow.Link(links.NextRow(), encryptionPage.Icon, encryptionPage.Tint, encryptionPage.Title,
+                encryptionPage.Summary, theme))
+        {
+            navigator.Open(encryptionPage);
+        }
+
+        links.End();
+
+        DrawAccountsSection(theme, scale, true);
+        SettingsForm.Gap(Metrics.Space.Lg);
+        var signOut = GroupCard.Begin(theme, 1);
+        if (SettingsRow.Action(signOut.NextRow(), Loc.T(L.Account.SignOut), theme.Danger, theme))
+        {
+            AskSignOut();
+        }
+
+        signOut.End();
+        SettingsForm.Gap(Metrics.Space.Lg);
+        var deleteAccount = GroupCard.Begin(theme, 1);
+        if (SettingsRow.Action(deleteAccount.NextRow(), Loc.T(L.Account.DeleteAccount), theme.Danger, theme))
+        {
+            AskDeleteAccount();
+        }
+
+        deleteAccount.End();
+        SettingsForm.Gap(Metrics.Space.Sm);
+        SettingsSection.Hint(Loc.T(L.Account.DeleteAccountHint), theme);
+        SettingsForm.Gap(Metrics.Space.Lg);
+    }
+
+    private void DrawIdentityHeader(UserDto user, PhoneTheme theme, float scale)
+    {
+        var drawList = ImGui.GetWindowDrawList();
+        var origin = ImGui.GetCursorScreenPos();
+        var width = ImGui.GetContentRegionAvail().X;
+        var centerX = origin.X + width * 0.5f;
+        var radius = 38f * scale;
+        var avatarCenter = new Vector2(centerX, origin.Y + 10f * scale + radius);
+        AvatarView.DrawRemote(drawList, avatarCenter, radius, theme, user.Name, user.World, user.AvatarUrl, images,
+            lodestone, 2.0f, 64, 1f, Frames.Of(user.FrameId));
+        var avatarExtent = new Vector2(radius, radius);
+        var avatarMin = avatarCenter - avatarExtent;
+        var avatarMax = avatarCenter + avatarExtent;
+        var avatarHovered = UiInteract.Hover(avatarMin, avatarMax);
+        var changeLabel = Loc.T(L.Account.ChangePhoto);
+        var changeSize = Typography.Measure(changeLabel, TextStyles.Subheadline);
+        var changeCenter = new Vector2(centerX, avatarCenter.Y + radius + 12f * scale + changeSize.Y * 0.5f);
+        var changePadding = new Vector2(6f * scale, 4f * scale);
+        var changeMin = changeCenter - changeSize * 0.5f - changePadding;
+        var changeMax = changeCenter + changeSize * 0.5f + changePadding;
+        var changeHovered = UiInteract.Hover(changeMin, changeMax);
+        var changeInk = changeHovered ? Palette.Mix(theme.Accent, theme.TextStrong, 0.25f) : theme.Accent;
+        Typography.DrawCentered(changeCenter, changeLabel, changeInk, TextStyles.Subheadline);
+        var photoHovered = avatarHovered || changeHovered;
+        if (photoHovered)
+        {
+            ImGui.SetMouseCursor(ImGuiMouseCursor.Hand);
+        }
+
+        var photoMin = Vector2.Min(avatarMin, changeMin);
+        var photoMax = Vector2.Max(avatarMax, changeMax);
+        if (UiInteract.Click(photoMin, photoMax, photoHovered))
+        {
+            OpenPhotoPicker();
+        }
+
+        var nameY = changeCenter.Y + changeSize.Y * 0.5f + 18f * scale;
+        var nameStyle = TextStyles.Title2;
+        var badgeCount = Math.Max(RoleBadges.Count(user.Badges), user.ProfileBadges?.Length ?? 0);
+        var reserve = UserName.Reserve(user.Badges, user.ProfileBadges, nameStyle, badgeCount);
+        var nameSize = Typography.Measure(user.DisplayName, nameStyle);
+        var nameWidth = MathF.Min(nameSize.X, MathF.Max(1f, width - 24f * scale - reserve));
+        UserName.DrawAuto(drawList, "account.header.name", user.DisplayName, user.Badges, user.ProfileBadges,
+            centerX - (nameWidth + reserve) * 0.5f, nameY - nameSize.Y * 0.5f, nameWidth + reserve, nameStyle,
+            theme.TextStrong, theme, badgeCount);
+        Typography.DrawCentered(new Vector2(centerX, nameY + 24f * scale), $"{user.Name}@{user.World}",
+            theme.TextMuted, TextStyles.Subheadline);
+        ImGui.SetCursorScreenPos(origin);
+        ImGui.Dummy(new Vector2(width, nameY + 34f * scale - origin.Y));
+    }
+
+    private void DrawCommunityBadgesSection(PhoneTheme theme, float scale)
+    {
+        SettingsForm.Gap(Metrics.Space.Lg);
+        SettingsSection.Header(Loc.T(L.Account.BadgesSection), theme);
+        SettingsSection.Hint(Loc.T(L.Loadout.SettingsMoved), theme);
+    }
+
+    private void DrawPatreonSection(PhoneTheme theme, float scale)
+    {
+        patreonFlow.EnsureStatus();
+        var status = patreonFlow.Status;
+        if (status is null || !status.Available)
+        {
+            return;
+        }
+
+        SettingsForm.Gap(Metrics.Space.Lg);
+        SettingsSection.Header(Loc.T(L.Account.PatreonSection), theme);
+        if (patreonFlow.Waiting)
+        {
+            SettingsForm.Body(Loc.T(L.Account.PatreonWaitingBody), theme);
+            SettingsForm.Gap(Metrics.Space.Md);
+            SettingsForm.ButtonPair(Loc.T(L.Account.PatreonOpen), Loc.T(L.Common.Cancel), theme, out var openAgain,
+                out var cancel);
+            if (openAgain)
+            {
+                patreonFlow.OpenAgain();
+            }
+
+            if (cancel)
+            {
+                patreonFlow.Cancel();
+            }
+
+            return;
+        }
+
+        if (status.Linked)
+        {
+            var card = GroupCard.Begin(theme, 2);
+            SettingsRow.Info(card.NextRow(), Loc.T(L.Account.PatreonStatusLabel),
+                Loc.T(status.Entitled ? L.Account.PatreonLinkedActive : L.Account.PatreonLinkedInactive), theme);
+            if (SettingsRow.Action(card.NextRow(), Loc.T(L.Account.PatreonUnlink), theme.Danger, theme))
+            {
+                AskUnlinkPatreon();
+            }
+
+            card.End();
+            if (!status.Entitled)
+            {
+                SettingsForm.Gap(Metrics.Space.Sm);
+                SettingsSection.Hint(Loc.T(L.Account.PatreonInactiveHint), theme);
+            }
+
+            return;
+        }
+
+        var linkCard = GroupCard.Begin(theme, 1);
+        var tint = RoleInk.For(RoleKind.Patreon, RoleInk.IsLight(theme));
+        if (SettingsRow.Link(linkCard.NextRow(), FontAwesomeIcon.Star, tint, Loc.T(L.Account.PatreonLink),
+                string.Empty, theme) && !patreonFlow.Busy)
+        {
+            patreonFlow.Start();
+        }
+
+        linkCard.End();
+        SettingsForm.Gap(Metrics.Space.Sm);
+        SettingsSection.Hint(Loc.T(L.Account.PatreonHint), theme);
+    }
+
+    private void AskUnlinkPatreon()
+    {
+        confirm.Ask(new ConfirmRequest
+        {
+            Title = Loc.T(L.Account.PatreonUnlinkTitle),
+            Message = Loc.T(L.Account.PatreonUnlinkBody),
+            ConfirmLabel = Loc.T(L.Account.PatreonUnlink),
+            CancelLabel = Loc.T(L.Common.Cancel),
+            Confirm = patreonFlow.Unlink,
+        });
+    }
+
+    private void DrawCharacterMismatch(UserDto user, PhoneTheme theme, float scale)
+    {
+        if (session.MatchesPlayedCharacter || gameData.LocalPlayer is not { } player)
+        {
+            return;
+        }
+
+        var notice = Loc.T(L.Account.PlayingAs, player.Name.TextValue, $"@{user.Handle}");
+        var width = ImGui.GetContentRegionAvail().X;
+        var origin = ImGui.GetCursorScreenPos();
+        var text = Typography.FitText(notice, width - 24f * scale, TextStyles.Footnote);
+        var size = Typography.Measure(text, TextStyles.Footnote);
+        Typography.DrawCentered(new Vector2(origin.X + width * 0.5f, origin.Y + size.Y * 0.5f), text, theme.Accent,
+            TextStyles.Footnote);
+        ImGui.Dummy(new Vector2(width, size.Y + 4f * scale));
+    }
+
+    private void DrawAccountsSection(PhoneTheme theme, float scale, bool signedIn)
+    {
+        RefreshAccountIds();
+        var rowCount = CountStoredAccounts();
+        if (rowCount == 0)
+        {
+            return;
+        }
+
+        SettingsSection.Header(Loc.T(L.Account.AccountsSection), theme);
+        var switchTo = 0ul;
+        var forget = 0ul;
+        var card = GroupCard.Begin(theme, rowCount, AccountRowHeight);
+        for (var index = 0; index < accountIds.Count; index++)
+        {
+            var contentId = accountIds[index];
+            if (!configuration.CharacterSessions.TryGetValue(contentId, out var entry) || entry.Token.Length == 0)
+            {
+                continue;
+            }
+
+            var active = session.IsSignedIn && contentId == session.ActiveContentId;
+            switch (DrawAccountRow(card.NextRow(), entry, active, theme, scale))
+            {
+                case AccountRowAction.Switch:
+                    switchTo = contentId;
+                    break;
+                case AccountRowAction.Remove:
+                    forget = contentId;
+                    break;
+            }
+        }
+
+        card.End();
+        if (signedIn)
+        {
+            var canAdd = session.PlayingContentId != 0;
+            SettingsForm.Gap(Metrics.Space.Md);
+            var actions = GroupCard.Begin(theme, canAdd ? 2 : 1);
+            if (canAdd && SettingsRow.Link(actions.NextRow(), FontAwesomeIcon.Plus, Tint, Loc.T(L.Account.AddAccount),
+                    string.Empty, theme))
+            {
+                AddAccount();
+            }
+
+            var followCharacter = SettingsRow.Bool(actions.NextRow(), Loc.T(L.Account.FollowCharacter),
+                session.FollowsCharacter, theme, null, Loc.T(L.Account.FollowCharacterHint));
+            actions.End();
+            if (followCharacter != session.FollowsCharacter)
+            {
+                ToggleFollowCharacter();
+            }
+        }
+        else
+        {
+            SettingsForm.Gap(Metrics.Space.Sm);
+            SettingsSection.Hint(Loc.T(L.Account.SwitchHint), theme);
+        }
+
+        SettingsForm.Gap(Metrics.Space.Xs);
+        if (switchTo != 0)
+        {
+            SwitchAccount(switchTo);
+        }
+        else if (forget != 0)
+        {
+            AskForgetAccount(forget);
+        }
+    }
+
+    private AccountRowAction DrawAccountRow(Rect row, CharacterSession entry, bool active, PhoneTheme theme,
+        float scale)
+    {
+        var drawList = ImGui.GetWindowDrawList();
+        var radius = 17f * scale;
+        var avatarCenter = new Vector2(row.Min.X + radius, row.Center.Y);
+        var removeExtent = new Vector2(13f * scale, 13f * scale);
+        var removeCenter = new Vector2(row.Max.X - removeExtent.X, row.Center.Y);
+        var removable = !active;
+        var overRemove = removable && UiInteract.Hover(removeCenter - removeExtent, removeCenter + removeExtent);
+        var hovered = UiInteract.Hover(row.Min, row.Max);
+        if (hovered && !active)
+        {
+            SettingsRow.DrawRowHighlight(row, theme);
+            ImGui.SetMouseCursor(ImGuiMouseCursor.Hand);
+        }
+
+        AvatarView.DrawRemote(drawList, avatarCenter, radius, theme, entry.CharacterName, entry.World,
+            entry.AvatarUrl.Length == 0 ? null : entry.AvatarUrl, images, lodestone, 1.1f, 40);
+        var textLeft = avatarCenter.X + radius + 12f * scale;
+        var textRight = removable ? removeCenter.X - removeExtent.X - 4f * scale : row.Max.X - 24f * scale;
+        var textWidth = MathF.Max(24f * scale, textRight - textLeft);
+        var title = Typography.FitText(TitleOf(entry), textWidth, TextStyles.BodyEmphasized);
+        var subtitle = Typography.FitText(SubtitleOf(entry), textWidth, TextStyles.Footnote);
+        var titleSize = Typography.Measure(title, TextStyles.BodyEmphasized);
+        var subtitleSize = Typography.Measure(subtitle, TextStyles.Footnote);
+        var gap = 2f * scale;
+        var top = row.Center.Y - (titleSize.Y + gap + subtitleSize.Y) * 0.5f;
+        Typography.Draw(new Vector2(textLeft, top), title, theme.TextStrong, TextStyles.BodyEmphasized);
+        Typography.Draw(new Vector2(textLeft, top + titleSize.Y + gap), subtitle, theme.TextMuted, TextStyles.Footnote);
+        if (active)
+        {
+            var tip = new Vector2(row.Max.X - 12f * scale, row.Center.Y + 5f * scale);
+            var ink = ImGui.GetColorU32(theme.Accent);
+            drawList.AddLine(tip - new Vector2(5f * scale, 5f * scale), tip, ink, 2f * scale);
+            drawList.AddLine(tip, new Vector2(tip.X + 9f * scale, tip.Y - 11f * scale), ink, 2f * scale);
+        }
+        else
+        {
+            ProgressRing.CenterIcon(drawList, removeCenter, FontAwesomeIcon.Times,
+                overRemove ? theme.Danger : theme.TextMuted, 12f * scale);
+        }
+
+        if (removable && UiInteract.Click(removeCenter - removeExtent, removeCenter + removeExtent, overRemove))
+        {
+            return AccountRowAction.Remove;
+        }
+
+        if (!active && UiInteract.Click(row.Min, row.Max, hovered && !overRemove))
+        {
+            return AccountRowAction.Switch;
+        }
+
+        return AccountRowAction.None;
+    }
+
+    private void RefreshAccountIds()
+    {
+        if (configuration.CharacterSessions.Count == accountIdsStamp)
+        {
+            return;
+        }
+
+        accountIdsStamp = configuration.CharacterSessions.Count;
+        accountIds.Clear();
+        foreach (var pair in configuration.CharacterSessions)
+        {
+            accountIds.Add(pair.Key);
+        }
+
+        accountIds.Sort();
+    }
+
+    private int CountStoredAccounts()
+    {
+        var count = 0;
+        for (var index = 0; index < accountIds.Count; index++)
+        {
+            if (configuration.CharacterSessions.TryGetValue(accountIds[index], out var entry)
+                && entry.Token.Length > 0)
+            {
+                count++;
+            }
+        }
+
+        return count;
+    }
+
+    private static string TitleOf(CharacterSession entry)
+    {
+        if (entry.DisplayName.Length > 0)
+        {
+            return entry.DisplayName;
+        }
+
+        return entry.CharacterName.Length > 0 ? entry.CharacterName : Loc.T(L.Account.SignedIn);
+    }
+
+    private static string SubtitleOf(CharacterSession entry)
+    {
+        var character = entry.CharacterName.Length > 0 && entry.World.Length > 0
+            ? $"{entry.CharacterName}@{entry.World}"
+            : string.Empty;
+        if (entry.Handle.Length == 0)
+        {
+            return character;
+        }
+
+        return character.Length == 0 ? $"@{entry.Handle}" : $"@{entry.Handle} · {character}";
+    }
+
+    private void SwitchAccount(ulong contentId)
+    {
+        if (contentId == session.PlayingContentId)
+        {
+            session.UseCharacterAccount();
+        }
+        else
+        {
+            session.PinAccount(contentId);
+        }
+
+        account.EnsureCurrentUser();
+        ResetFlow();
+    }
+
+    private void ToggleFollowCharacter()
+    {
+        if (session.FollowsCharacter)
+        {
+            session.PinAccount(session.ActiveContentId);
+            return;
+        }
+
+        session.UseCharacterAccount();
+        account.EnsureCurrentUser();
+        ResetFlow();
+    }
+
+    private void AddAccount()
+    {
+        var playing = session.PlayingContentId;
+        if (playing != 0 && configuration.CharacterSessions.TryGetValue(playing, out var stored)
+                         && stored.Token.Length > 0)
+        {
+            var who = stored.CharacterName.Length > 0 ? stored.CharacterName : TitleOf(stored);
+            confirm.Alert(Loc.T(L.Account.AddAccountTakenTitle), Loc.T(L.Account.AddAccountTakenBody, who),
+                Loc.T(L.Account.FailDismiss));
+            return;
+        }
+
+        session.UseCharacterAccount();
+        ResetFlow();
+    }
+
+    private void AskForgetAccount(ulong contentId)
+    {
+        if (!configuration.CharacterSessions.TryGetValue(contentId, out var entry))
+        {
+            return;
+        }
+
+        var bearer = entry.Token;
+        confirm.Ask(new ConfirmRequest
+        {
+            Title = Loc.T(L.Account.RemoveAccountTitle, TitleOf(entry)),
+            Message = Loc.T(L.Account.RemoveAccountBody),
+            ConfirmLabel = Loc.T(L.Account.RemoveAccount),
+            CancelLabel = Loc.T(L.Common.Cancel),
+            Danger = true,
+            Confirm = () =>
+            {
+                RevokeToken(bearer);
+                session.ForgetAccount(contentId);
+                accountIdsStamp = -1;
+            },
+        });
+    }
+
+    private void OpenPhotoPicker()
+    {
+        navigator.Open(new AvatarPhotoPage(photoLibrary, wallpaperImages, navigator, () => avatarBusy, UploadAvatar,
+            confirm));
+    }
+
+    private void UploadAvatar(string sourcePath, WallpaperCrop crop, Action<AvatarUploadOutcome> onComplete)
+    {
+        if (avatarBusy)
+        {
+            return;
+        }
+
+        avatarBusy = true;
+        AvatarUploader.Upload(account, media, session, sourcePath, crop, cancellation.Token, outcome =>
+        {
+            avatarBusy = false;
+            onComplete(outcome);
+        });
+    }
+
+    private void AskSignOut()
+    {
+        confirm.Ask(new ConfirmRequest
+        {
+            Title = Loc.T(L.Account.SignOutConfirmTitle),
+            Message = Loc.T(L.Account.SignOutConfirmBody),
+            ConfirmLabel = Loc.T(L.Account.SignOut),
+            CancelLabel = Loc.T(L.Common.Cancel),
+            Sheet = true,
+            Confirm = () =>
+            {
+                RevokeCurrentToken();
+                session.SignOut();
+                ResetFlow();
+                _ = Task.Run(cacheStorage.Clear);
+            },
+        });
+    }
+
+    private void RevokeCurrentToken()
+    {
+        if (session.Token is { } bearer)
+        {
+            RevokeToken(bearer);
+        }
+    }
+
+    private void RevokeToken(string bearer)
+    {
+        if (bearer.Length == 0)
+        {
+            return;
+        }
+
+        var token = cancellation.Token;
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                await auth.RevokeTokenAsync(bearer, token).ConfigureAwait(false);
+            }
+            catch (Exception exception)
+            {
+                AepLog.Warning(exception, "Token revoke failed");
+            }
+        });
+    }
+
+    private void AskDeleteAccount()
+    {
+        confirm.Ask(new ConfirmRequest
+        {
+            Title = Loc.T(L.Account.DeleteConfirmTitle),
+            Message = Loc.T(L.Account.DeleteConfirmBody),
+            ConfirmLabel = Loc.T(L.Account.DeleteConfirmAction),
+            CancelLabel = Loc.T(L.Common.Cancel),
+            Danger = true,
+            ConfirmAsync = done =>
+            {
+                var token = cancellation.Token;
+                _ = Task.Run(async () =>
+                {
+                    var erased = false;
+                    try
+                    {
+                        erased = await account.DeleteAsync(token).ConfigureAwait(false);
+                    }
+                    catch (Exception exception)
+                    {
+                        AepLog.Warning(exception, "Account deletion failed");
+                    }
+
+                    if (erased)
+                    {
+                        cacheStorage.Clear();
+                        chatHistory.Clear();
+                        session.SignOut();
+                        ResetFlow();
+                    }
+
+                    done(true);
+                    if (!erased)
+                    {
+                        confirm.Alert(Loc.T(L.Account.DeleteConfirmTitle), Loc.T(L.Account.DeleteFailed),
+                            Loc.T(L.Account.FailDismiss));
+                    }
+                });
+            },
+        });
+    }
+
+    private void DrawSignedOut(PhoneTheme theme)
+    {
+        var player = gameData.LocalPlayer;
+        if (player is null)
+        {
+            SettingsForm.Gap(Metrics.Space.Xxl);
+            SettingsForm.Body(Loc.T(L.Account.LogInFirst), theme);
+            return;
+        }
+
+        if (gameData.IsChineseGameClient())
+        {
+            if (flow.RisingStonesActive)
+            {
+                DrawRisingStonesVerifyStep(theme);
+                return;
+            }
+
+            DrawRisingStonesSignedOut(theme);
+            return;
+        }
+
+        if (flow.XivAuthActive)
+        {
+            DrawXivAuthStep(theme);
+            return;
+        }
+
+        if (flow.LodestoneActive)
+        {
+            DrawVerifyStep(theme);
+            return;
+        }
+
+        var scale = UiScale.Current;
+        var name = player.Name.TextValue;
+        var world = gameData.WorldName(gameData.LocalHomeWorldId);
+        var ready = !flow.Busy && name.Length > 0 && world.Length > 0;
+        DrawAccountsSection(theme, scale, false);
+        SettingsForm.Gap(Metrics.Space.Sm);
+        SettingsForm.Body(Loc.T(L.Account.SignInIntro), theme);
+        SettingsForm.Gap(Metrics.Space.Md);
+        DrawIdentityCard(name, world, theme);
+        SettingsForm.Gap(Metrics.Space.Xl);
+        if (SettingsForm.Button(Loc.T(L.Account.XivSignIn), theme, ButtonStyle.Prominent) && ready)
+        {
+            flow.StartXivAuth(name, world);
+        }
+
+        SettingsForm.Gap(Metrics.Space.Sm);
+        if (SettingsForm.Button(Loc.T(L.Account.SignIn), theme) && ready)
+        {
+            flow.StartLodestone(name, world);
+        }
+
+        SettingsForm.Gap(Metrics.Space.Sm);
+        SettingsSection.Hint(Loc.T(L.Account.LodestoneHint), theme);
+        DrawStatus(theme);
+    }
+
+    private void DrawRisingStonesSignedOut(PhoneTheme theme)
+    {
+        var scale = UiScale.Current;
+        DrawAccountsSection(theme, scale, false);
+        SettingsForm.Gap(Metrics.Space.Sm);
+        SettingsForm.Body(Loc.T(L.Account.RisingStonesIntro), theme);
+        SettingsForm.Gap(Metrics.Space.Md);
+        SettingsForm.TextField("##risingStonesUuid", Loc.T(L.Account.RisingStonesUuidLabel), ref risingStonesUuid,
+            theme, SignInFlow.RisingStonesUuidMaxLength, ImGuiInputTextFlags.CharsDecimal);
+        SettingsForm.Gap(Metrics.Space.Sm);
+        SettingsSection.Hint(Loc.T(L.Account.RisingStonesUuidHint), theme);
+        SettingsForm.Gap(Metrics.Space.Xl);
+        if (SettingsForm.Button(Loc.T(L.Account.RisingStonesSignIn), theme, ButtonStyle.Prominent,
+                enabled: risingStonesUuid.Length > 0) && !flow.Busy)
+        {
+            flow.StartRisingStones(risingStonesUuid);
+        }
+
+        DrawStatus(theme);
+    }
+
+    private void DrawRisingStonesVerifyStep(PhoneTheme theme)
+    {
+        DrawChallenge(theme, Loc.T(L.Account.RisingStonesVerifyTitle), Loc.T(L.Account.RisingStonesVerifyIntro),
+            Loc.T(L.Account.RisingStonesStep2), Loc.T(L.Account.RisingStonesStep3),
+            Loc.T(L.Account.RisingStonesOpen), RisingStonesProfileSettingsUrl);
+    }
+
+    private void DrawVerifyStep(PhoneTheme theme)
+    {
+        DrawChallenge(theme, Loc.T(L.Account.VerifyTitle), Loc.T(L.Account.VerifyIntro), Loc.T(L.Account.Step2),
+            Loc.T(L.Account.Step3), Loc.T(L.Account.OpenProfile), LodestoneProfileUrl);
+    }
+
+    private void DrawChallenge(PhoneTheme theme, string title, string intro, string secondStep, string thirdStep,
+        string openLabel, string openUrl)
+    {
+        SettingsForm.Gap(Metrics.Space.Xxs);
+        SettingsForm.Title(title, theme);
+        SettingsForm.Gap(Metrics.Space.Xs);
+        SettingsForm.Body(intro, theme);
+        var code = flow.ChallengeCode;
+        SettingsForm.Gap(Metrics.Space.Lg);
+        if (SettingsForm.CodeCard(code, theme))
+        {
+            ImGui.SetClipboardText(code);
+        }
+
+        SettingsForm.Gap(Metrics.Space.Lg);
+        SettingsForm.Steps(theme, Loc.T(L.Account.Step1), secondStep, thirdStep, Loc.T(L.Account.Step4));
+        SettingsForm.Gap(Metrics.Space.Xl);
+        SettingsForm.ButtonPair(Loc.T(L.Account.CopyCode), openLabel, theme, out var copy, out var open);
+        if (copy)
+        {
+            ImGui.SetClipboardText(code);
+        }
+
+        if (open)
+        {
+            UrlActions.OpenInBrowser(openUrl);
+        }
+
+        SettingsForm.Gap(Metrics.Space.Sm);
+        if (SettingsForm.Button(Loc.T(L.Account.VerifyAdded), theme, ButtonStyle.Prominent) && !flow.Busy)
+        {
+            flow.VerifyChallenge();
+        }
+
+        SettingsForm.Gap(Metrics.Space.Sm);
+        if (SettingsForm.Button(Loc.T(L.Common.Cancel), theme, ButtonStyle.Plain))
+        {
+            ResetFlow();
+        }
+
+        DrawStatus(theme);
+    }
+
+    private void DrawXivAuthStep(PhoneTheme theme)
+    {
+        SettingsForm.Gap(Metrics.Space.Xxs);
+        SettingsForm.Title(Loc.T(L.Account.XivTitle), theme);
+        SettingsForm.Gap(Metrics.Space.Xs);
+        SettingsForm.Body(Loc.T(L.Account.XivIntro), theme);
+        var xivUserCode = flow.XivUserCode;
+        if (xivUserCode.Length > 0)
+        {
+            SettingsForm.Gap(Metrics.Space.Lg);
+            if (SettingsForm.CodeCard(xivUserCode, theme))
+            {
+                ImGui.SetClipboardText(xivUserCode);
+            }
+        }
+
+        SettingsForm.Gap(Metrics.Space.Md);
+        SettingsSection.Hint(Loc.T(L.Account.XivWaiting), theme);
+        SettingsForm.Gap(Metrics.Space.Xl);
+        SettingsForm.ButtonPair(Loc.T(L.Account.XivOpen), Loc.T(L.Common.Cancel), theme, out var open,
+            out var cancel);
+        if (open && flow.XivVerificationUri is { } verificationUri)
+        {
+            UrlActions.OpenInBrowser(verificationUri);
+        }
+
+        if (cancel)
+        {
+            flow.CancelXivAuth();
+        }
+    }
+
+    private static void DrawIdentityCard(string name, string world, PhoneTheme theme)
+    {
+        SettingsSection.Header(Loc.T(L.Account.SigningInAs), theme);
+        var card = GroupCard.Begin(theme, 1);
+        var row = card.NextRow();
+        var identity = Typography.FitText($"{name}@{world}", row.Width, TextStyles.BodyEmphasized);
+        var size = Typography.Measure(identity, TextStyles.BodyEmphasized);
+        Typography.Draw(ImGui.GetWindowDrawList(), new Vector2(row.Min.X, row.Center.Y - size.Y * 0.5f), identity,
+            theme.TextStrong, TextStyles.BodyEmphasized);
+        card.End();
+    }
+
+    private void DrawStatus(PhoneTheme theme)
+    {
+        var message = flow.Status;
+        if (message.Length == 0)
+        {
+            return;
+        }
+
+        SettingsForm.Gap(Metrics.Space.Sm);
+        SettingsForm.Body(message, theme);
+    }
+
+    private void StartMe()
+    {
+        var token = cancellation.Token;
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                var me = await account.MeAsync(token).ConfigureAwait(false);
+                if (me is not null)
+                {
+                    session.SetUser(me);
+                }
+            }
+            catch (OperationCanceledException)
+            {
+            }
+            catch (Exception exception)
+            {
+                AepLog.Warning(exception, "Aethernet profile load failed");
+            }
+        });
+    }
+
+    private void ResetFlow()
+    {
+        flow.Reset();
+        meRequested = false;
+    }
+
+    public void Dispose()
+    {
+        cancellation.Cancel();
+        flow.Dispose();
+        patreonFlow.Dispose();
+        cancellation.Dispose();
+    }
+}

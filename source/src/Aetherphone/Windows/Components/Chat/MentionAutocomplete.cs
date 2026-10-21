@@ -1,0 +1,185 @@
+using Aetherphone.Core;
+using Aetherphone.Core.Aethernet.Contracts;
+using Aetherphone.Core.Social;
+using Dalamud.Bindings.ImGui;
+
+namespace Aetherphone.Windows.Components;
+
+internal sealed class MentionAutocomplete
+{
+    private const float DebounceSeconds = 0.20f;
+
+    public const int MaxRows = 5;
+
+    private readonly MentionSuggestions suggestions;
+    private MentionSuggestDto[] visible = Array.Empty<MentionSuggestDto>();
+    private string pending = string.Empty;
+    private string applied = string.Empty;
+    private float debounce;
+    private bool tokenLive;
+    private string? commitHandle;
+
+    public MentionAutocomplete(MentionSuggestions suggestions)
+    {
+        this.suggestions = suggestions;
+    }
+
+    public int SelectedIndex { get; private set; }
+
+    public Rect Anchor { get; set; }
+
+    public Rect PopupArea { get; set; }
+
+    public bool PointerOverPopup => IsOpen && ImGui.IsMouseHoveringRect(PopupArea.Min, PopupArea.Max, false);
+
+    public MentionSuggestDto[] Rows
+    {
+        get
+        {
+            var results = suggestions.Results;
+            if (results.Length <= MaxRows)
+            {
+                return results;
+            }
+
+            if (visible.Length != MaxRows || !ReferenceEquals(visible[0], results[0]))
+            {
+                visible = results[..MaxRows];
+            }
+
+            return visible;
+        }
+    }
+
+    public bool IsOpen => tokenLive && (Rows.Length > 0 || suggestions.Loading);
+
+    public void Track(string logical, int logicalCursor, float deltaSeconds)
+    {
+        if (!MentionTokenScanner.TryFind(logical, logicalCursor, out var start, out var length))
+        {
+            Close();
+            return;
+        }
+
+        var query = MentionTokenScanner.QueryOf(logical, start, length);
+        if (query.Length < 1)
+        {
+            Close();
+            return;
+        }
+
+        tokenLive = true;
+        if (!string.Equals(query, pending, StringComparison.Ordinal))
+        {
+            pending = query;
+            debounce = 0f;
+            SelectedIndex = 0;
+        }
+
+        if (string.Equals(pending, applied, StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        debounce += deltaSeconds;
+        if (debounce < DebounceSeconds)
+        {
+            return;
+        }
+
+        applied = pending;
+        suggestions.Request(pending);
+    }
+
+    public bool HandleNavigation()
+    {
+        if (!IsOpen)
+        {
+            return false;
+        }
+
+        var rows = Rows.Length;
+        if (rows == 0)
+        {
+            return false;
+        }
+
+        if (SelectedIndex >= rows)
+        {
+            SelectedIndex = rows - 1;
+        }
+
+        var moved = false;
+        if (ImGui.IsKeyPressed(ImGuiKey.DownArrow, true))
+        {
+            SelectedIndex = (SelectedIndex + 1) % rows;
+            moved = true;
+        }
+
+        if (ImGui.IsKeyPressed(ImGuiKey.UpArrow, true))
+        {
+            SelectedIndex = (SelectedIndex + rows - 1) % rows;
+            moved = true;
+        }
+
+        return moved;
+    }
+
+    public bool ConsumedEscape()
+    {
+        if (!IsOpen || !ImGui.IsKeyPressed(ImGuiKey.Escape))
+        {
+            return false;
+        }
+
+        Close();
+        return true;
+    }
+
+    public bool RequestCommit()
+    {
+        if (!IsOpen)
+        {
+            return false;
+        }
+
+        return Pick(SelectedIndex);
+    }
+
+    public bool Pick(int index)
+    {
+        var rows = Rows;
+        if (index < 0 || index >= rows.Length)
+        {
+            return false;
+        }
+
+        commitHandle = rows[index].Handle;
+        Close();
+        return true;
+    }
+
+    public bool TryTakeCommit(out string handle)
+    {
+        handle = commitHandle ?? string.Empty;
+        if (commitHandle is null)
+        {
+            return false;
+        }
+
+        commitHandle = null;
+        return true;
+    }
+
+    public void Close()
+    {
+        tokenLive = false;
+        pending = string.Empty;
+        applied = string.Empty;
+        debounce = 0f;
+        SelectedIndex = 0;
+        PopupArea = default;
+        visible = Array.Empty<MentionSuggestDto>();
+        suggestions.Clear();
+    }
+}

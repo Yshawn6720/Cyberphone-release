@@ -1,0 +1,87 @@
+using Aetherphone.Core.Aethernet.Contracts;
+using Aetherphone.Core.Net;
+
+namespace Aetherphone.Core.Aethernet.Clients;
+
+internal sealed class AuthClient
+{
+    private readonly AethernetTransport net;
+
+    public AuthClient(AethernetTransport net)
+    {
+        this.net = net;
+    }
+
+    public Task<ChallengeResponse?> ChallengeAsync(string name, string world, CancellationToken token,
+        Action<AepFailure>? onFailure = null)
+    {
+        return net.PostAnonymousAsync("/auth/challenge", new ChallengeRequest(name, world), AethernetJsonContext.Default.ChallengeRequest, AethernetJsonContext.Default.ChallengeResponse, token, null, onFailure);
+    }
+
+    public Task<ChallengeResponse?> RisingStonesChallengeAsync(string uuid, CancellationToken token,
+        Action<AepFailure>? onFailure = null)
+    {
+        return net.PostAnonymousAsync("/auth/risingstones/challenge", new RisingStonesChallengeRequest(uuid), AethernetJsonContext.Default.RisingStonesChallengeRequest, AethernetJsonContext.Default.ChallengeResponse, token, null, onFailure);
+    }
+
+    public async Task<VerifyResult> VerifyAsync(string challengeId, CancellationToken token)
+    {
+        var status = 0;
+        var response = await net.PostAnonymousAsync("/auth/verify", new VerifyRequest(challengeId), AethernetJsonContext.Default.VerifyRequest, AethernetJsonContext.Default.VerifyResponse, token, statusCode => status = statusCode).ConfigureAwait(false);
+        if (response is not null)
+        {
+            if (response.Ok && response.Token is not null && response.User is not null)
+            {
+                return VerifyResult.Success(new AuthResponse(response.Token, response.User));
+            }
+
+            return VerifyResult.Failure(response.Reason ?? VerifyFailure.CodeNotFound, response.BanReason,
+                response.Suspension);
+        }
+
+        return VerifyResult.Failure(status == 429 ? VerifyFailure.RateLimited : VerifyFailure.Network);
+    }
+
+    public Task<XivAuthStartResponse?> StartXivAuthAsync(string name, string world, CancellationToken token)
+    {
+        return net.PostAnonymousAsync("/auth/xivauth/start", new XivAuthStartRequest(name, world), AethernetJsonContext.Default.XivAuthStartRequest, AethernetJsonContext.Default.XivAuthStartResponse, token);
+    }
+
+    public async Task<VerifyResult> PollXivAuthAsync(string flowId, CancellationToken token)
+    {
+        var status = 0;
+        var response = await net.PostAnonymousAsync("/auth/xivauth/poll", new XivAuthPollRequest(flowId), AethernetJsonContext.Default.XivAuthPollRequest, AethernetJsonContext.Default.VerifyResponse, token, statusCode => status = statusCode).ConfigureAwait(false);
+        if (response is not null)
+        {
+            if (response.Ok && response.Token is not null && response.User is not null)
+            {
+                return VerifyResult.Success(new AuthResponse(response.Token, response.User));
+            }
+
+            return VerifyResult.Failure(response.Reason ?? VerifyFailure.Pending, response.BanReason,
+                response.Suspension);
+        }
+
+        return VerifyResult.Failure(status == 429 ? VerifyFailure.RateLimited : VerifyFailure.Network);
+    }
+
+    public Task<bool> RevokeTokenAsync(string bearer, CancellationToken token)
+    {
+        return net.SendWithBearerAsync(HttpMethod.Delete, "/auth/token", bearer, token);
+    }
+
+    public Task<DeviceLinkNewResponse?> NewDeviceLinkAsync(CancellationToken token)
+    {
+        return net.PostAsync("/auth/device-link/new", new DeviceLinkNewRequest(), AethernetJsonContext.Default.DeviceLinkNewRequest, AethernetJsonContext.Default.DeviceLinkNewResponse, token);
+    }
+
+    public Task<DeviceLinkStatusResponse?> DeviceLinkStatusAsync(string code, CancellationToken token)
+    {
+        return net.GetAsync($"/auth/device-link/status/{code}", AethernetJsonContext.Default.DeviceLinkStatusResponse, token);
+    }
+
+    public Task<DeviceLinkApproveResponse?> ApproveDeviceLinkAsync(string code, CancellationToken token)
+    {
+        return net.PostAsync("/auth/device-link/approve", new DeviceLinkApproveRequest(code), AethernetJsonContext.Default.DeviceLinkApproveRequest, AethernetJsonContext.Default.DeviceLinkApproveResponse, token);
+    }
+}

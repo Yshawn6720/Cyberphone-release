@@ -1,0 +1,17 @@
+<Project>
+
+  <!--
+    Replaces DalamudPackager's own Debug/Release defaults, which are skipped
+    once this file exists. Every configuration packages and zips Cyberphone:
+    the packager reads the manifest named after TargetName (Cyberphone.json).
+  -->
+
+  <Target Name="PackagePlugin" AfterTargets="Build">
+    <DalamudPackager
+      ProjectDir="$(ProjectDir)"
+      OutputPath="$(OutputPath)"
+      AssemblyName="$(TargetName)"
+      MakeZip="true" />
+  </Target>
+
+</Project>
