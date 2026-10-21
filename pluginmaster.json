@@ -1,0 +1,35 @@
+[
+  {
+    "Author": "XeldarAlz; Cyberphone fork by Yshawn6720",
+    "Name": "Cyberphone",
+    "InternalName": "Cyberphone",
+    "AssemblyVersion": "1.3.3.0",
+    "Description": "An in-game smartphone for the Traditional Chinese client. Unofficial fork of Aetherphone by XeldarAlz (AGPL-3.0-or-later); it is not affiliated with Aetherphone and never connects to the official Aethernet service.",
+    "ApplicableVersion": "any",
+    "RepoUrl": "https://github.com/Yshawn6720/Cyberphone-release",
+    "Tags": [
+      "phone",
+      "cyberphone",
+      "messages",
+      "ui",
+      "quality of life",
+      "device",
+      "call"
+    ],
+    "DalamudApiLevel": 13,
+    "LoadRequiredState": 0,
+    "LoadSync": false,
+    "CanUnloadAsync": false,
+    "LoadPriority": 0,
+    "IconUrl": "https://raw.githubusercontent.com/Yshawn6720/Cyberphone-release/main/images/icon.png",
+    "Punchline": "A smartphone for the Traditional Chinese client.",
+    "AcceptsFeedback": true,
+    "DownloadLinkInstall": "https://github.com/Yshawn6720/Cyberphone-release/releases/download/v1.3.3.0-73cae19/Cyberphone.zip",
+    "DownloadLinkUpdate": "https://github.com/Yshawn6720/Cyberphone-release/releases/download/v1.3.3.0-73cae19/Cyberphone.zip",
+    "DownloadLinkTesting": "https://github.com/Yshawn6720/Cyberphone-release/releases/download/v1.3.3.0-73cae19/Cyberphone.zip",
+    "IsHide": false,
+    "IsTestingExclusive": false,
+    "LastUpdate": 1792599054,
+    "Changelog": "自架派對：設定改成單一連線碼；主持人複製的邀請貼到「一起看」就能加入。"
+  }
+]

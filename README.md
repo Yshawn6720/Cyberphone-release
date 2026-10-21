@@ -2,18 +2,22 @@
 
 Cyberphone 是 FFXIV 台服用的 Dalamud 插件（遊戲內手機），改自 XeldarAlz 的 Aetherphone，授權 AGPL-3.0-or-later。本 repo 只放編譯好的檔案，與 Aetherphone 官方無關，也不連官方 Aethernet。
 
-## 下載
+## 安裝（Dalamud 插件庫）
 
-- 插件：[Cyberphone.zip](https://github.com/Yshawn6720/Cyberphone-release/releases/latest/download/Cyberphone.zip)
-- 對應原始碼：同一個 release 裡的 `Cyberphone-source-<commit>.zip`
+1. 遊戲內輸入 `/xlsettings` → Experimental →「Custom Plugin Repositories」，貼上下面這條網址，勾選啟用，按儲存：
 
-## 安裝
+   ```
+   https://raw.githubusercontent.com/Yshawn6720/Cyberphone-release/main/pluginmaster.json
+   ```
 
-1. 把 `Cyberphone.zip` 解壓到固定的資料夾，例如 `C:\FFXIV\Cyberphone\`（整個資料夾都要留著，不能只拿 dll）。
-2. 遊戲內輸入 `/xlsettings` → Experimental →「Dev Plugin Locations」，加入解壓後 `Cyberphone.dll` 的完整路徑，按儲存。
-3. `/xlplugins` → Dev Tools → Installed Dev Plugins，啟用 Cyberphone。開啟指令 `/cyberphone` 或 `/cphone`。
+2. `/xlplugins` → 搜尋 Cyberphone → 安裝。開啟指令 `/cyberphone` 或 `/cphone`。
 
-更新時下載新的 zip，覆蓋同一個資料夾後重新載入插件。
+之後有新版本，Dalamud 會自己提示更新。之前用 Dev Plugin Locations 載入過 Cyberphone 的人，先把那條路徑移除再安裝，兩份同時存在會載入失敗。
+
+## 手動下載
+
+- 插件：[Cyberphone.zip](https://github.com/Yshawn6720/Cyberphone-release/releases/latest/download/Cyberphone.zip)，解壓整個資料夾，在「Dev Plugin Locations」填 `Cyberphone.dll` 的完整路徑。
+- 對應原始碼：每個 release 裡的 `Cyberphone-source-<commit>.zip`。
 
 ## 一起看派對
 
