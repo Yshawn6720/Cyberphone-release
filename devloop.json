@@ -1,0 +1,3 @@
+{
+  "canonicalTest": "test -s LICENSE.md && test -s NOTICE && test -s THIRD-PARTY-NOTICES.md && test -s README.md"
+}
