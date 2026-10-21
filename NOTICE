@@ -1,0 +1,72 @@
+FFXIV-Aetherphone
+Copyright (c) 2026 XeldarAlz
+
+This project is licensed under the GNU Affero General Public License,
+version 3 or (at your option) any later version (AGPL-3.0-or-later).
+See the LICENSE.md file for the full license text.
+
+Redistributions and derivative works must preserve existing copyright
+notices and license information as required by the AGPL.
+
+The AGPL covers the source code. It does not license the project's name or
+its identity: "Aetherphone" and "Aethernet", the plugin icon and the app
+icons are not part of the grant. A modified version must carry its own name
+and its own icon, must state what it changed, and must not connect to the
+official Aethernet servers. See TRADEMARK.md and section 18 of TERMS.md.
+
+------------------------------------------------------------------------
+
+Cyberphone
+Modifications Copyright (c) 2026 Yshawn6720
+
+Cyberphone is a modified version (fork) of FFXIV-Aetherphone, based on
+upstream tag v1.3.3.0 (commit 4b72228612b0616a41640fc3c846114f5104ab00,
+https://github.com/XeldarAlz/FFXIV-Aetherphone). It is not Aetherphone, is not
+endorsed by its authors, and does not connect to the official Aethernet
+servers. Report problems to https://github.com/Yshawn6720/Cyberphone, not to
+the Aetherphone project. The modified version is licensed under the same
+terms, AGPL-3.0-or-later.
+
+Modifications (AGPL-3.0 section 5(a)), first made 2026-10-21:
+
+- 2026-10-21  Ported to the Traditional Chinese client's Dalamud (API 13,
+              .NET 9): SDK downgrade, Dalamud/Lumina/ClientStructs API
+              differences, net9 test project.
+- 2026-10-21  Official Aethernet hosts blocked before DNS resolution by
+              src/Aetherphone/Core/Net/OfficialHostGuard.cs, the only place
+              that creates HTTP clients and WebSockets; default service base
+              URL points at a reserved .invalid name. Guarded by
+              src/Aetherphone.Tests/OfflineGuaranteeTests.cs.
+- 2026-10-21  Aethernet-only apps (social, chat, calls, casino, coin,
+              feedback, polls, Muster, Yellow Pages), Strats and announcements
+              hidden; account sign-in removed from setup and Settings; links
+              to upstream community and donation pages removed.
+- 2026-10-21  Renamed to Cyberphone in player-visible text (all nine
+              languages), slash commands /cyberphone and /cphone, plugin
+              manifest, plugin file Cyberphone.dll and InternalName
+              Cyberphone. The assembly name and code namespaces remain
+              "Aetherphone" for now because the bundled SixLabors licence is
+              scoped to that assembly name.
+- 2026-10-21  App icons, plugin icon and emblem regenerated from Phosphor
+              Icons (MIT) duotone glyphs in Cyberphone's own style; seasonal
+              icon variants dropped.
+- 2026-10-21  Removed assets that need their owners' permission: the 58
+              contributed artwork phone cases (src/Aetherphone/Cases/*.png)
+              and the Rolladeck partner mark (Icons/rolladeck.png).
+- 2026-10-21  Added a Traditional Chinese (Taiwan) language with Taiwan
+              client language detection; the shared CJK font now draws the
+              game's own Axis glyphs; Hunts is hidden on the Traditional
+              Chinese client, which Faloop does not serve; realtime signals
+              are no longer sent while Aethernet is off.
+- 2026-10-21  Watch parties run through a self-hosted relay instead of
+              Aethernet: relay server in server/ (Cloudflare Worker and
+              Durable Objects, see docs/self-hosting-relay.md); MogCast
+              settings for the relay address and invite code; the party tab
+              appears only when both are set, and the plugin connects only
+              when a party is started or joined. Host heartbeat relaxed from
+              8 to 30 seconds. Party features the relay does not implement
+              are hidden while using it.
+
+Corresponding source: the Git repository above, at the commit whose version
+matches the build. Upstream's original README is kept in
+docs/upstream/UPSTREAM-README.md.
