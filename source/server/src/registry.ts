@@ -1,10 +1,12 @@
 import { DurableObject } from "cloudflare:workers";
 import type { Env } from "./index";
-import { SLOT_RESERVATION_MS, type RoomKind } from "./protocol";
-import { PROBE_PATH, type SlotOccupant } from "./room";
+import { MAX_NEARBY_ROOMS, NEARBY_RATE, SLOT_RESERVATION_MS, type RoomKind } from "./protocol";
+import { PROBE_PATH, type RoomListing, type SlotOccupant } from "./room";
+import { type Bucket, charge, freshBucket } from "./wire";
 
 export const CLAIM_PATH = "/claim";
 export const RELEASE_PATH = "/release";
+export const NEARBY_PATH = "/nearby";
 
 export interface SlotClaim {
   kind: RoomKind;
@@ -21,6 +23,16 @@ export interface SlotRelease {
   id: string;
   slot: number;
 }
+
+export interface NearbyQuery {
+  kind: RoomKind;
+  territoryId: number;
+  worldId: number;
+  address: string;
+  roomCount: number;
+}
+
+export type NearbyAnswer = { listings: RoomListing[] } | { retryAfterSeconds: number };
 
 interface Reservation {
   id: string;
@@ -57,13 +69,19 @@ async function probe(rooms: DurableObjectNamespace, slot: number): Promise<SlotO
 // the rooms themselves are the record.
 export class SlotRegistry extends DurableObject<Env> {
   private readonly reservations = new Map<number, Reservation>();
+  private readonly nearbyBuckets = new Map<string, Bucket>();
   private tail: Promise<void> = Promise.resolve();
 
   async fetch(request: Request): Promise<Response> {
-    if (new URL(request.url).pathname === RELEASE_PATH) {
+    const path = new URL(request.url).pathname;
+    if (path === RELEASE_PATH) {
       const release = await request.json() as SlotRelease;
       await this.exclusive(async () => this.release(release));
       return new Response(null, { status: 204 });
+    }
+
+    if (path === NEARBY_PATH) {
+      return Response.json(await this.nearby(await request.json() as NearbyQuery));
     }
 
     const claim = await request.json() as SlotClaim;
@@ -74,6 +92,40 @@ export class SlotRegistry extends DurableObject<Env> {
     if (this.reservations.get(release.slot)?.id === release.id) {
       this.reservations.delete(release.slot);
     }
+  }
+
+  // A nearby list reads the slots without claiming anything, so it skips the claim queue. Full buckets are dropped
+  // on every query, which keeps the map to the addresses that asked within the last minute.
+  private async nearby(query: NearbyQuery): Promise<NearbyAnswer> {
+    const now = Date.now();
+    for (const [address, bucket] of this.nearbyBuckets) {
+      if (now - bucket.at >= NEARBY_RATE.capacity * NEARBY_RATE.refillMs) {
+        this.nearbyBuckets.delete(address);
+      }
+    }
+
+    const bucket = this.nearbyBuckets.get(query.address) ?? freshBucket(NEARBY_RATE, now);
+    this.nearbyBuckets.set(query.address, bucket);
+    if (charge(bucket, NEARBY_RATE, now) !== "accept") {
+      return { retryAfterSeconds: Math.ceil((1 - bucket.tokens) * NEARBY_RATE.refillMs / 1000) };
+    }
+
+    const rooms = roomsOf(this.env, query.kind);
+    const probes: Promise<SlotOccupant>[] = [];
+    for (let slot = 0; slot < query.roomCount; slot++) {
+      probes.push(probe(rooms, slot));
+    }
+
+    const listings: RoomListing[] = [];
+    for (const occupant of await Promise.all(probes)) {
+      const listing = occupant.listing;
+      if (listing !== undefined && listing !== null && listing.territoryId === query.territoryId
+        && listing.worldId === query.worldId && listings.length < MAX_NEARBY_ROOMS) {
+        listings.push(listing);
+      }
+    }
+
+    return { listings };
   }
 
   private async exclusive<T>(work: () => Promise<T>): Promise<T> {

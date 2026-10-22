@@ -232,7 +232,7 @@ internal sealed record ParticipantInfo(
     string? AvatarUrl = null);
 
 internal sealed record NearbyStreamInfo(string HostId, string Name, string World, string DisplayName,
-    string Handle = "", string? AvatarUrl = null);
+    string Handle = "", string? AvatarUrl = null, string? Code = null, int MemberCount = 0);
 
 internal sealed record StreamQueueEntry(string? Url, string? Title);
 
@@ -311,6 +311,7 @@ internal sealed record CallControl
     public uint? TerritoryId { get; init; }
     public uint? WorldId { get; init; }
     public bool? Discoverable { get; init; }
+    public bool? NearbyOptIn { get; init; }
     public NearbyStreamInfo[]? NearbyStreams { get; init; }
 
     public string? App { get; init; }

@@ -182,7 +182,7 @@ internal sealed class AnnouncementsStore : IDisposable
     private async Task LoadFromRelayAsync(CancellationToken token)
     {
         var result = await feed.LoadAsync(token).ConfigureAwait(false);
-        if (result.Status == RelayContentStatus.Failed)
+        if (result.Status is RelayContentStatus.Failed or RelayContentStatus.Unsupported)
         {
             failureBox = new AepFailureBox(result.Failure);
             AepLog.Warning($"Announcements failed to load from the relay: {result.Failure.Describe()}");

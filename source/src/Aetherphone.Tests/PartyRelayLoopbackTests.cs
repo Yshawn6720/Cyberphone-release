@@ -63,6 +63,19 @@ public sealed class PartyRelayLoopbackTests
     }
 
     [Fact]
+    public async Task JoiningFromTheNearbyListAsksWithTheNearbyCode()
+    {
+        using var server = new LoopbackRelayServer();
+        using var router = CreateRouter(server.Url);
+
+        Assert.True(router.BeginRelay("ABC234", nearby: true));
+
+        Assert.True(await LoopbackRelayServer.WaitUntilAsync(() => router.RelayConnected, Patience));
+        var request = Assert.Single(server.Requests);
+        Assert.StartsWith("GET /rt?nearby=ABC234&", LoopbackRelayServer.RequestLine(request), StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task EndingTheRelayClosesTheSocketAndNeverReconnects()
     {
         using var server = new LoopbackRelayServer();
@@ -191,6 +204,27 @@ public sealed class PartyRelayLoopbackTests
         Assert.True(await LoopbackRelayServer.WaitUntilAsync(() => server.ReceivedBytes >= expectedBytes, Patience));
         await Task.Delay(TimeSpan.FromMilliseconds(300));
         Assert.Equal(expectedBytes, server.ReceivedBytes);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task TheHostStateCarriesTheNearbyOptInBesideDiscoverable(bool discoverable)
+    {
+        using var server = new LoopbackRelayServer();
+        using var router = CreateRouter(server.Url);
+        using var stream = new StreamSignalRouter(router);
+        Assert.True(router.BeginRelay(null));
+        Assert.True(await LoopbackRelayServer.WaitUntilAsync(() => router.RelayConnected, Patience));
+
+        stream.PublishState(new StreamPublication("https://video.test/a", 1, false, 132, 73, false, discoverable,
+            false, 0, null, null, null));
+
+        Assert.True(await LoopbackRelayServer.WaitUntilAsync(() => server.ReceivedTexts.Length > 0, Patience));
+        using var sent = JsonDocument.Parse(server.ReceivedTexts[0]);
+        Assert.Equal("stream.state", sent.RootElement.GetProperty("type").GetString());
+        Assert.Equal(discoverable, sent.RootElement.GetProperty("discoverable").GetBoolean());
+        Assert.Equal(discoverable, sent.RootElement.GetProperty("nearbyOptIn").GetBoolean());
     }
 
     private static long MaskedFrameBytes(int payloadLength)

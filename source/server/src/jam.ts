@@ -3,22 +3,39 @@ import type { Env } from "./index";
 import {
   ALONE_TIMEOUT_MS,
   CloseCode,
+  DECLINE_DENIED,
   HOST_RATE,
   JAM_CONTROL_ACTIONS,
   JAM_GUEST_PERMISSIONS,
+  JAM_PERMISSION_ADD,
+  JAM_PERMISSION_CONTROL,
+  JAM_REACTION_KINDS,
   JamSignal,
+  MAX_ADMITTED,
   MAX_JAM_QUEUE,
   MAX_JAM_TITLE,
   MAX_MEMBERS,
   MAX_MESSAGE_BYTES,
   MAX_THUMBNAIL_URL,
   MAX_TRACK_TEXT,
+  REACTION_RATE,
   ROOM_LIFETIME_MS,
   THUMBNAIL_HOSTS,
   VIEWER_RATE,
+  locationId,
+  nearbyCode,
 } from "./protocol";
-import { JOIN_HEADER, type JoinTicket, type SlotOccupant, VACANT, isProbe, occupantResponse } from "./room";
-import { type Bucket, type Message, OPEN, charge, exceedsUtf8Bytes, freshBucket, parseMessage, send } from "./wire";
+import {
+  JOIN_HEADER,
+  type JoinTicket,
+  type RoomListing,
+  type SlotOccupant,
+  VACANT,
+  isProbe,
+  occupantResponse,
+  ticketMatches,
+} from "./room";
+import { type Bucket, type Message, OPEN, cappedText, charge, exceedsUtf8Bytes, freshBucket, parseMessage, send } from "./wire";
 
 const ROOM_KEY = "room";
 const VIDEO_ID = /^[A-Za-z0-9_-]{1,64}$/;
@@ -47,6 +64,8 @@ interface PlayState {
   stateAtUnixMs: number;
 }
 
+// nearbyCode is set only while the host lets nearby players find the Jam; admitted holds the last characters the
+// host let in, so they come back after a dropped connection without asking again.
 export interface JamRoomState {
   code: string;
   address: string;
@@ -58,16 +77,36 @@ export interface JamRoomState {
   nextEntryId: number;
   queueVersion: number;
   play: PlayState;
+  guestPermissions: number;
+  approvalRequired: boolean;
+  discoverable: boolean;
+  nearbyCode: string | null;
+  admitted: string[];
 }
 
+type JamSettings = "guestPermissions" | "approvalRequired" | "discoverable" | "nearbyCode" | "admitted";
+type StoredJamRoom = Omit<JamRoomState, JamSettings> & Partial<Pick<JamRoomState, JamSettings>>;
+
+interface JamLocation {
+  territoryId: number;
+  worldId: number;
+}
+
+// location is the host's own zone, reported with jam.nearby only while the Jam is discoverable; it lives in the
+// attachment so a host walking between zones writes no storage.
 interface Member {
   id: string;
   name: string;
+  world: string;
   role: "host" | "guest";
   joined: boolean;
+  awaiting: boolean;
+  nearby: boolean;
   gone: boolean;
   sequence: number;
   bucket: Bucket;
+  reactions: Bucket;
+  location: JamLocation | null;
 }
 
 interface Connection {
@@ -77,15 +116,6 @@ interface Connection {
 
 function memberOf(socket: WebSocket): Member {
   return socket.deserializeAttachment() as Member;
-}
-
-function cappedText(value: unknown, limit: number): string | null {
-  if (typeof value !== "string") {
-    return null;
-  }
-
-  const text = value.trim();
-  return text.length === 0 ? null : text.slice(0, limit);
 }
 
 function thumbnailUrl(value: unknown): string | null {
@@ -125,9 +155,13 @@ function roomDeadline(room: JamRoomState): number {
   return room.aloneSince === null ? lifetimeEnd : Math.min(lifetimeEnd, room.aloneSince + ALONE_TIMEOUT_MS);
 }
 
-// One Jam per room slot. Membership and rate buckets live in WebSocket attachments; the queue and the last
-// playback state outgrow an attachment, so they sit under one storage key that is written only when they change
-// (a heartbeat that merely confirms the expected position stays in memory).
+function guestMay(member: Member, room: JamRoomState, permission: number): boolean {
+  return member.role === "host" || (room.guestPermissions & permission) !== 0;
+}
+
+// One Jam per room slot. Membership and rate buckets live in WebSocket attachments; the queue, the last playback
+// state, the host's settings and the admitted list outgrow an attachment, so they sit under one storage key that is
+// written only when one of them changes (a heartbeat that merely confirms the expected position stays in memory).
 export class JamRoom extends DurableObject<Env> {
   private cached: JamRoomState | null | undefined;
 
@@ -163,6 +197,11 @@ export class JamRoom extends DurableObject<Env> {
         nextEntryId: 1,
         queueVersion: 0,
         play: { track: null, positionSeconds: 0, paused: true, stateAtUnixMs: now },
+        guestPermissions: JAM_GUEST_PERMISSIONS,
+        approvalRequired: false,
+        discoverable: false,
+        nearbyCode: null,
+        admitted: [],
       };
       await this.save(room);
       await this.ctx.storage.setAlarm(roomDeadline(room));
@@ -170,7 +209,7 @@ export class JamRoom extends DurableObject<Env> {
     }
 
     const room = await this.room();
-    if (host === undefined || room === null || room.code !== ticket.code) {
+    if (host === undefined || room === null || !ticketMatches(ticket, room.code, room.nearbyCode)) {
       return new Response("room not found", { status: 404 });
     }
 
@@ -213,7 +252,11 @@ export class JamRoom extends DurableObject<Env> {
       return;
     }
 
-    const verdict = charge(member.bucket, member.role === "host" ? HOST_RATE : VIEWER_RATE, Date.now());
+    const parsed = parseMessage(raw);
+    const now = Date.now();
+    const verdict = parsed?.type === JamSignal.react
+      ? charge(member.reactions, REACTION_RATE, now)
+      : charge(member.bucket, member.role === "host" ? HOST_RATE : VIEWER_RATE, now);
     socket.serializeAttachment(member);
     if (verdict === "close") {
       socket.close(CloseCode.rate, "rate limited");
@@ -221,7 +264,7 @@ export class JamRoom extends DurableObject<Env> {
       return;
     }
 
-    const message = verdict === "drop" ? null : parseMessage(raw);
+    const message = verdict === "drop" ? null : parsed;
     const room = message === null ? null : await this.room();
     if (message === null || room === null) {
       return;
@@ -237,13 +280,13 @@ export class JamRoom extends DurableObject<Env> {
       case JamSignal.leave:
       case JamSignal.end:
         socket.close(CloseCode.ended, "left");
-        await this.depart(socket, member);
+        await this.depart(socket, member, true);
         return;
       case JamSignal.state:
         await this.onState(member, room, message);
         return;
       case JamSignal.control:
-        this.onControl(member, message);
+        this.onControl(member, room, message);
         return;
       case JamSignal.transfer:
         this.onTransfer(socket, member, room, message);
@@ -259,6 +302,24 @@ export class JamRoom extends DurableObject<Env> {
         return;
       case JamSignal.queueMove:
         await this.onQueueMove(member, room, message);
+        return;
+      case JamSignal.approve:
+        await this.onApprove(member, room, message);
+        return;
+      case JamSignal.deny:
+        await this.onDeny(member, room, message);
+        return;
+      case JamSignal.kick:
+        await this.onKick(member, room, message);
+        return;
+      case JamSignal.react:
+        this.onReact(socket, member, room, message);
+        return;
+      case JamSignal.settings:
+        await this.onSettings(member, room, message);
+        return;
+      case JamSignal.nearby:
+        this.onNearby(socket, member, message);
         return;
     }
   }
@@ -288,9 +349,20 @@ export class JamRoom extends DurableObject<Env> {
     await this.ctx.storage.setAlarm(deadline);
   }
 
+  // Rooms stored before the host settings existed load with the defaults a new Jam starts with.
   private async room(): Promise<JamRoomState | null> {
     if (this.cached === undefined) {
-      this.cached = await this.ctx.storage.get<JamRoomState>(ROOM_KEY) ?? null;
+      const stored = await this.ctx.storage.get<StoredJamRoom>(ROOM_KEY);
+      this.cached = stored === undefined
+        ? null
+        : {
+          ...stored,
+          guestPermissions: stored.guestPermissions ?? JAM_GUEST_PERMISSIONS,
+          approvalRequired: stored.approvalRequired ?? false,
+          discoverable: stored.discoverable ?? false,
+          nearbyCode: stored.nearbyCode ?? null,
+          admitted: stored.admitted ?? [],
+        };
     }
 
     return this.cached;
@@ -302,24 +374,53 @@ export class JamRoom extends DurableObject<Env> {
   }
 
   private async occupant(): Promise<SlotOccupant> {
-    const host = this.connections().find((connection) => connection.member.role === "host");
+    const connections = this.connections();
+    const host = connections.find((connection) => connection.member.role === "host");
     if (host === undefined) {
       return VACANT;
     }
 
     const room = await this.room();
-    return { occupied: true, hostId: host.member.id, address: room?.address ?? null };
+    return {
+      occupied: true,
+      hostId: host.member.id,
+      address: room?.address ?? null,
+      listing: room === null ? null : this.listing(host.member, room, connections),
+    };
+  }
+
+  private listing(host: Member, room: JamRoomState, connections: Connection[]): RoomListing | null {
+    const location = host.location;
+    if (!room.discoverable || room.nearbyCode === null || location === null || !host.joined) {
+      return null;
+    }
+
+    return {
+      code: room.nearbyCode,
+      territoryId: location.territoryId,
+      worldId: location.worldId,
+      hostName: host.name,
+      memberCount: this.joined(connections).length,
+      title: room.title.length > 0 ? room.title : null,
+      jamId: room.jamId,
+      track: room.play.track,
+    };
   }
 
   private newMember(ticket: JoinTicket, role: "host" | "guest", now: number): Member {
     return {
       id: ticket.id,
       name: ticket.name,
+      world: ticket.world,
       role,
       joined: false,
+      awaiting: false,
+      nearby: role === "guest" && ticket.nearby === true,
       gone: false,
       sequence: now,
       bucket: freshBucket(role === "host" ? HOST_RATE : VIEWER_RATE, now),
+      reactions: freshBucket(REACTION_RATE, now),
+      location: null,
     };
   }
 
@@ -350,7 +451,7 @@ export class JamRoom extends DurableObject<Env> {
     return connections.filter((connection) => connection.member.joined);
   }
 
-  private members(connections: Connection[]): Message[] {
+  private members(room: JamRoomState, connections: Connection[]): Message[] {
     return this.joined(connections)
       .sort((left, right) => (left.member.role === "host" ? -1 : right.member.role === "host" ? 1 : 0)
         || left.member.sequence - right.member.sequence)
@@ -360,12 +461,12 @@ export class JamRoom extends DurableObject<Env> {
         handle: "",
         avatarUrl: null,
         isHost: connection.member.role === "host",
-        permissions: JAM_GUEST_PERMISSIONS,
+        permissions: connection.member.role === "host" ? JAM_GUEST_PERMISSIONS : room.guestPermissions,
       }));
   }
 
-  private hostId(connections: Connection[]): string | null {
-    return connections.find((connection) => connection.member.role === "host")?.member.id ?? null;
+  private hostOf(connections: Connection[]): Connection | undefined {
+    return connections.find((connection) => connection.member.role === "host");
   }
 
   private roster(room: JamRoomState, connections: Connection[]): Message {
@@ -373,10 +474,10 @@ export class JamRoom extends DurableObject<Env> {
       type: JamSignal.roster,
       jamId: room.jamId,
       title: room.title,
-      guestPermissions: JAM_GUEST_PERMISSIONS,
-      approvalRequired: false,
-      discoverable: false,
-      jamMembers: this.members(connections),
+      guestPermissions: room.guestPermissions,
+      approvalRequired: room.approvalRequired,
+      discoverable: room.discoverable,
+      jamMembers: this.members(room, connections),
     };
   }
 
@@ -389,7 +490,7 @@ export class JamRoom extends DurableObject<Env> {
       ...this.roster(room, connections),
       type,
       code: room.code,
-      hostId: this.hostId(connections),
+      hostId: this.hostOf(connections)?.member.id ?? null,
       stale: false,
       entries: room.entries,
       queueVersion: room.queueVersion,
@@ -397,6 +498,16 @@ export class JamRoom extends DurableObject<Env> {
       positionSeconds: room.play.positionSeconds,
       paused: room.play.paused,
       stateAtUnixMs: room.play.stateAtUnixMs,
+    };
+  }
+
+  private joinRequest(room: JamRoomState, member: Member, hostId: string): Message {
+    return {
+      type: JamSignal.joinRequest,
+      jamId: room.jamId,
+      userId: member.id,
+      hostId,
+      from: { userId: member.id, name: member.name, world: member.world, displayName: member.name, handle: "", avatarUrl: null },
     };
   }
 
@@ -424,26 +535,175 @@ export class JamRoom extends DurableObject<Env> {
     send(socket, this.snapshot(JamSignal.joined, room, this.connections()));
   }
 
+  // A guest who came from a nearby list holds the nearby code instead of the room code and always waits for the
+  // host, whatever the approval setting, because nobody invited them.
   private async onJoin(socket: WebSocket, member: Member, room: JamRoomState, message: Message): Promise<void> {
     if (member.role !== "guest") {
       return;
     }
 
-    if (message.code !== room.code) {
-      send(socket, { type: JamSignal.declined, reason: "code", code: message.code ?? null });
+    const viaNearby = member.nearby && room.discoverable && room.nearbyCode !== null && message.code === room.nearbyCode;
+    if (message.code !== room.code && !viaNearby) {
+      send(socket, {
+        type: JamSignal.declined,
+        reason: member.nearby ? DECLINE_DENIED : "code",
+        code: message.code ?? null,
+      });
       socket.close(CloseCode.ended, "declined");
       return;
     }
 
-    const rejoin = member.joined;
-    member.joined = true;
-    socket.serializeAttachment(member);
-    const connections = this.connections();
-    send(socket, this.snapshot(JamSignal.joined, room, connections));
-    if (!rejoin) {
-      this.broadcast(connections, this.roster(room, connections), socket);
-      await this.updateAlone(room, connections);
+    if (member.joined) {
+      send(socket, this.snapshot(JamSignal.joined, room, this.connections()));
+      return;
     }
+
+    const host = this.hostOf(this.connections());
+    if ((room.approvalRequired || member.nearby) && !room.admitted.includes(member.id)) {
+      member.awaiting = true;
+      socket.serializeAttachment(member);
+      send(socket, { type: JamSignal.joinPending, jamId: room.jamId, hostId: host?.member.id ?? null });
+      if (host !== undefined) {
+        send(host.socket, this.joinRequest(room, member, host.member.id));
+      }
+
+      return;
+    }
+
+    await this.admit({ socket, member }, room);
+  }
+
+  // Reads the connections only after the entrant's attachment says joined, so the snapshot and the roster list them.
+  private async admit(entrant: Connection, room: JamRoomState): Promise<void> {
+    entrant.member.awaiting = false;
+    entrant.member.joined = true;
+    entrant.socket.serializeAttachment(entrant.member);
+    const connections = this.connections();
+    const known = room.admitted.includes(entrant.member.id);
+    room.admitted = room.admitted.filter((entry) => entry !== entrant.member.id);
+    room.admitted.push(entrant.member.id);
+    if (room.admitted.length > MAX_ADMITTED) {
+      room.admitted.shift();
+    }
+
+    send(entrant.socket, this.snapshot(JamSignal.joined, room, connections));
+    this.broadcast(connections, this.roster(room, connections), entrant.socket);
+    await this.updateAlone(room, connections, !known);
+  }
+
+  private async onApprove(member: Member, room: JamRoomState, message: Message): Promise<void> {
+    if (member.role !== "host") {
+      return;
+    }
+
+    const target = this.connections().find((connection) => connection.member.awaiting
+      && connection.member.id === message.userId);
+    if (target !== undefined) {
+      await this.admit(target, room);
+    }
+  }
+
+  private async onDeny(member: Member, room: JamRoomState, message: Message): Promise<void> {
+    if (member.role !== "host") {
+      return;
+    }
+
+    const target = this.connections().find((connection) => connection.member.awaiting
+      && connection.member.id === message.userId);
+    if (target === undefined) {
+      return;
+    }
+
+    send(target.socket, { type: JamSignal.declined, jamId: room.jamId, reason: DECLINE_DENIED, hostId: member.id });
+    target.socket.close(CloseCode.ended, "declined");
+    await this.depart(target.socket, target.member, true);
+  }
+
+  // Identities are self-declared, so removing someone only closes their connection: the same name may come back
+  // with the code, and while approval is on it has to be let in again.
+  private async onKick(member: Member, room: JamRoomState, message: Message): Promise<void> {
+    if (member.role !== "host") {
+      return;
+    }
+
+    const target = this.connections().find((connection) => connection.member.role === "guest"
+      && connection.member.id === message.userId);
+    if (target === undefined) {
+      return;
+    }
+
+    send(target.socket, { type: JamSignal.kicked, jamId: room.jamId, userId: target.member.id, hostId: member.id });
+    target.socket.close(CloseCode.kicked, "kicked");
+    await this.depart(target.socket, target.member, true);
+  }
+
+  private onReact(socket: WebSocket, member: Member, room: JamRoomState, message: Message): void {
+    const reaction = message.reaction;
+    if (!member.joined || typeof reaction !== "number" || !Number.isInteger(reaction) || reaction < 0
+      || reaction >= JAM_REACTION_KINDS) {
+      return;
+    }
+
+    this.broadcast(this.connections(), { type: JamSignal.reaction, jamId: room.jamId, reaction, userId: member.id },
+      socket);
+  }
+
+  private async onSettings(member: Member, room: JamRoomState, message: Message): Promise<void> {
+    if (member.role !== "host" || !member.joined) {
+      return;
+    }
+
+    let changed = false;
+    const permissions = message.guestPermissions;
+    if (typeof permissions === "number" && Number.isInteger(permissions)
+      && (permissions & JAM_GUEST_PERMISSIONS) !== room.guestPermissions) {
+      room.guestPermissions = permissions & JAM_GUEST_PERMISSIONS;
+      changed = true;
+    }
+
+    if (typeof message.approvalRequired === "boolean" && message.approvalRequired !== room.approvalRequired) {
+      room.approvalRequired = message.approvalRequired;
+      changed = true;
+    }
+
+    if (typeof message.title === "string") {
+      const title = cappedText(message.title, MAX_JAM_TITLE) ?? "";
+      changed ||= title !== room.title;
+      room.title = title;
+    }
+
+    if (typeof message.discoverable === "boolean" && message.discoverable !== room.discoverable) {
+      room.discoverable = message.discoverable;
+      room.nearbyCode = message.discoverable ? nearbyCode(room.code) : null;
+      changed = true;
+    }
+
+    if (changed) {
+      await this.save(room);
+    }
+
+    const connections = this.connections();
+    this.broadcast(connections, this.roster(room, connections));
+    if (room.approvalRequired) {
+      return;
+    }
+
+    for (const waiting of connections) {
+      if (waiting.member.awaiting && !waiting.member.nearby) {
+        await this.admit(waiting, room);
+      }
+    }
+  }
+
+  private onNearby(socket: WebSocket, member: Member, message: Message): void {
+    if (member.role !== "host") {
+      return;
+    }
+
+    const territoryId = locationId(message.territoryId);
+    const worldId = locationId(message.worldId);
+    member.location = territoryId !== null && worldId !== null ? { territoryId, worldId } : null;
+    socket.serializeAttachment(member);
   }
 
   private async onState(member: Member, room: JamRoomState, message: Message): Promise<void> {
@@ -482,13 +742,13 @@ export class JamRoom extends DurableObject<Env> {
     });
   }
 
-  private onControl(member: Member, message: Message): void {
+  private onControl(member: Member, room: JamRoomState, message: Message): void {
     if (member.role !== "guest" || !member.joined || typeof message.action !== "string"
-      || JAM_CONTROL_ACTIONS[message.action] !== true) {
+      || JAM_CONTROL_ACTIONS[message.action] !== true || !guestMay(member, room, JAM_PERMISSION_CONTROL)) {
       return;
     }
 
-    const host = this.connections().find((connection) => connection.member.role === "host");
+    const host = this.hostOf(this.connections());
     if (host === undefined) {
       return;
     }
@@ -516,17 +776,25 @@ export class JamRoom extends DurableObject<Env> {
 
     member.role = "guest";
     member.bucket = freshBucket(VIEWER_RATE, Date.now());
+    member.location = null;
     target.member.role = "host";
     target.member.bucket = freshBucket(HOST_RATE, Date.now());
+    target.member.location = null;
     socket.serializeAttachment(member);
     target.socket.serializeAttachment(target.member);
     const updated = this.connections();
     this.broadcast(updated, this.snapshot(JamSignal.hostChanged, room, updated));
+    for (const waiting of updated) {
+      if (waiting.member.awaiting) {
+        send(target.socket, this.joinRequest(room, waiting.member, target.member.id));
+      }
+    }
   }
 
   private async onQueueAdd(member: Member, room: JamRoomState, message: Message): Promise<void> {
     const track = parseTrack(message.track);
-    if (!member.joined || track === null || room.entries.length >= MAX_JAM_QUEUE) {
+    if (!member.joined || track === null || room.entries.length >= MAX_JAM_QUEUE
+      || !guestMay(member, room, JAM_PERMISSION_ADD)) {
       return;
     }
 
@@ -571,10 +839,12 @@ export class JamRoom extends DurableObject<Env> {
     this.broadcast(this.connections(), this.queue(room));
   }
 
+  // Reordering is a playback decision in the client, so a guest needs the control permission for it.
   private async onQueueMove(member: Member, room: JamRoomState, message: Message): Promise<void> {
     const index = member.joined ? room.entries.findIndex((entry) => entry.entryId === message.entryId) : -1;
     const target = message.toIndex;
-    if (index < 0 || typeof target !== "number" || !Number.isInteger(target)) {
+    if (index < 0 || typeof target !== "number" || !Number.isInteger(target)
+      || !guestMay(member, room, JAM_PERMISSION_CONTROL)) {
       return;
     }
 
@@ -589,10 +859,15 @@ export class JamRoom extends DurableObject<Env> {
     this.broadcast(this.connections(), this.queue(room));
   }
 
-  private async updateAlone(room: JamRoomState, connections: Connection[]): Promise<void> {
+  // dirty: the room already changed in memory, so it is saved even when the company did not change.
+  private async updateAlone(room: JamRoomState, connections: Connection[], dirty = false): Promise<void> {
     const hasCompany = connections.some((connection) => connection.member.role === "guest" && connection.member.joined);
     const aloneSince = hasCompany ? null : room.aloneSince ?? Date.now();
     if (aloneSince === room.aloneSince) {
+      if (dirty) {
+        await this.save(room);
+      }
+
       return;
     }
 
@@ -601,7 +876,8 @@ export class JamRoom extends DurableObject<Env> {
     await this.ctx.storage.setAlarm(roomDeadline(room));
   }
 
-  private async depart(socket: WebSocket, member: Member): Promise<void> {
+  // forget: the guest left on purpose or was removed, so a later connection under that name asks again.
+  private async depart(socket: WebSocket, member: Member, forget = false): Promise<void> {
     if (member.gone) {
       return;
     }
@@ -614,13 +890,31 @@ export class JamRoom extends DurableObject<Env> {
     }
 
     const room = await this.room();
-    if (room === null || !member.joined) {
+    if (room === null) {
       return;
     }
 
     const connections = this.connections(socket);
+    if (member.awaiting) {
+      const host = this.hostOf(connections);
+      if (host !== undefined) {
+        send(host.socket, { type: JamSignal.joinCancelled, jamId: room.jamId, userId: member.id });
+      }
+
+      return;
+    }
+
+    if (!member.joined) {
+      return;
+    }
+
+    const forgotten = forget && room.admitted.includes(member.id);
+    if (forgotten) {
+      room.admitted = room.admitted.filter((entry) => entry !== member.id);
+    }
+
     this.broadcast(connections, this.roster(room, connections));
-    await this.updateAlone(room, connections);
+    await this.updateAlone(room, connections, forgotten);
   }
 
   private async endRoom(exclude: WebSocket | null, reason: string): Promise<void> {

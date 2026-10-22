@@ -2,12 +2,38 @@ import { listDurableObjectIds } from "cloudflare:test";
 import { describe, expect, it } from "vitest";
 import announcements from "../content/announcements.json";
 import calendar from "../content/calendar.json";
+import newsTaiwan from "../content/news-tw.json";
+import radio from "../content/radio.json";
 import worker from "../src/index";
 import { CONTENT_MAX_AGE_SECONDS } from "../src/content";
 import { BASE, INVITE, env, self } from "./support";
 
-const ROUTES = ["/content/announcements", "/content/calendar"];
+const ROUTES = ["/content/announcements", "/content/calendar", "/content/news-tw", "/content/radio"];
 const ISO_WITH_ZONE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2})?(\.\d+)?(Z|[+-]\d{2}:\d{2})$/;
+const NEWS_LISTS = ["topics", "notices", "maintenance", "updates"];
+const NEWS_FIELDS: Record<string, true> = { id: true, url: true, title: true, time: true, description: true, start: true, end: true };
+const NEWS_SUMMARY_LIMIT = 121;
+
+interface NewsItem {
+  id: string;
+  url: string;
+  title: string;
+  time: string;
+  description?: string;
+  start?: string;
+  end?: string;
+}
+
+function isNewsItem(value: unknown): value is NewsItem {
+  return typeof value === "object" && value !== null
+    && "id" in value && typeof value.id === "string"
+    && "url" in value && typeof value.url === "string"
+    && "title" in value && typeof value.title === "string"
+    && "time" in value && typeof value.time === "string"
+    && (!("description" in value) || typeof value.description === "string")
+    && (!("start" in value) || typeof value.start === "string")
+    && (!("end" in value) || typeof value.end === "string");
+}
 
 function contentRequest(path: string, headers: Record<string, string> = {}): Request {
   return new Request(`${BASE}${path}`, { headers });
@@ -43,6 +69,19 @@ describe("static content", () => {
     expect(calendarServed.status).toBe(200);
     expect(await calendarServed.json()).toEqual(calendar);
     expect(calendarServed.headers.get("ETag")).not.toBe(served.headers.get("ETag"));
+  });
+
+  it("serves the Traditional Chinese news and the radio list as their own documents", async () => {
+    const news = await fetchContent("/content/news-tw");
+    const stations = await fetchContent("/content/radio");
+
+    expect(news.status).toBe(200);
+    expect(news.headers.get("Content-Type")).toBe("application/json; charset=utf-8");
+    expect(await news.json()).toEqual(newsTaiwan);
+    expect(stations.status).toBe(200);
+    expect(await stations.json()).toEqual(radio);
+    expect(stations.headers.get("ETag")).toMatch(/^"[0-9a-f]{32}"$/);
+    expect(stations.headers.get("ETag")).not.toBe(news.headers.get("ETag"));
   });
 
   it.each(ROUTES)("answers a matching If-None-Match on %s with an empty 304", async (path) => {
@@ -128,6 +167,60 @@ describe("shipped content files", () => {
       expect(event.begin).toMatch(ISO_WITH_ZONE);
       expect(event.end).toMatch(ISO_WITH_ZONE);
       expect(Date.parse(event.end)).toBeGreaterThanOrEqual(Date.parse(event.begin));
+    }
+  });
+
+  it("lists Traditional Chinese news newest first, with links and short summaries but no bodies or images", () => {
+    const lists: Record<string, unknown> = newsTaiwan;
+    expect(new URL(String(lists.source)).hostname).toBe("www.ffxiv.com.tw");
+    for (const list of NEWS_LISTS) {
+      const items = lists[list];
+      expect(Array.isArray(items)).toBe(true);
+      if (!Array.isArray(items)) {
+        continue;
+      }
+
+      const seen = new Set<string>();
+      let newest = Number.POSITIVE_INFINITY;
+      for (const item of items) {
+        expect(isNewsItem(item)).toBe(true);
+        if (!isNewsItem(item)) {
+          continue;
+        }
+
+        expect(Object.keys(item).filter((field) => NEWS_FIELDS[field] !== true)).toEqual([]);
+        expect(item.id).toMatch(/^tw-\d+$/);
+        expect(seen.has(item.id)).toBe(false);
+        seen.add(item.id);
+        expect(item.title.length).toBeGreaterThan(0);
+        expect(["https:", "http:"]).toContain(new URL(item.url).protocol);
+        expect(item.time).toMatch(ISO_WITH_ZONE);
+        expect(Date.parse(item.time)).toBeLessThanOrEqual(newest);
+        newest = Date.parse(item.time);
+        if (item.description !== undefined) {
+          expect([...item.description].length).toBeLessThanOrEqual(NEWS_SUMMARY_LIMIT);
+        }
+
+        if (item.start !== undefined || item.end !== undefined) {
+          expect(list).toBe("maintenance");
+          expect(item.start).toMatch(ISO_WITH_ZONE);
+          expect(item.end).toMatch(ISO_WITH_ZONE);
+          expect(Date.parse(String(item.end))).toBeGreaterThanOrEqual(Date.parse(String(item.start)));
+        }
+      }
+    }
+  });
+
+  it("lists radio stations with a stream, a genre and a homepage", () => {
+    expect(radio.stations.length).toBeGreaterThan(0);
+    const streams = new Set<string>();
+    for (const station of radio.stations) {
+      expect(station.name.trim().length).toBeGreaterThan(0);
+      expect(["https:", "http:"]).toContain(new URL(station.streamUrl).protocol);
+      expect(streams.has(station.streamUrl)).toBe(false);
+      streams.add(station.streamUrl);
+      expect(station.genre.trim().length).toBeGreaterThan(0);
+      expect(["https:", "http:"]).toContain(new URL(station.homepage).protocol);
     }
   });
 });

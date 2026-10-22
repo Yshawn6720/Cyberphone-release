@@ -18,9 +18,11 @@ internal sealed partial class MusicApp
     private const float JamNearbyJoinHeight = 32f;
     private const float JamNearbyTrackGlyphScale = 0.62f;
     private const float JamNearbyHoverAlpha = 0.06f;
+    private const float JamNearbySpinnerShare = 0.6f;
     private const string JamNearbySeparator = " · ";
 
     private readonly RadioCountLabel jamNearbyCountLabel = new();
+    private readonly RadioCountLabel jamNearbyStatusLabel = new();
     private JamNearbyLabels[] jamNearbyLabels = Array.Empty<JamNearbyLabels>();
     private int jamNearbyLabelsVersion = -1;
     private LanguageInfo? jamNearbyLanguage;
@@ -61,18 +63,73 @@ internal sealed partial class MusicApp
     {
         EnsureJamNearbyLabels();
         var nearby = jam.NearbyJams;
-        if (nearby.Length == 0 || jamNearbyLabels.Length != nearby.Length)
+        var listed = nearby.Length > 0 && jamNearbyLabels.Length == nearby.Length;
+        if (jam.RelayMode)
+        {
+            SectionHeader.Draw(ui, Loc.T(L.Music.Jam.NearbyHeader), false);
+            DrawJamNearbyRefreshRow(listed ? nearby.Length : 0, scale);
+            if (!listed && jam.NearbyUnsupported && !jam.NearbyLoading)
+            {
+                DrawJamNearbyUnsupported();
+            }
+        }
+        else if (listed)
+        {
+            SectionHeader.Draw(ui, Loc.T(L.Music.Jam.NearbyHeader), false);
+        }
+
+        if (!listed)
         {
             return;
         }
 
-        SectionHeader.Draw(ui, Loc.T(L.Music.Jam.NearbyHeader), false);
         for (var index = 0; index < nearby.Length; index++)
         {
             ImGui.PushID(index);
             DrawJamNearbyRow(nearby[index], jamNearbyLabels[index], scale);
             ImGui.PopID();
         }
+    }
+
+    private void DrawJamNearbyRefreshRow(int count, float scale)
+    {
+        var radius = RoundButton.SmallRadius * scale;
+        var lineHeight = Typography.LineHeight(TextStyles.Footnote);
+        var block = BeginJamBlock(MathF.Max(radius * 2f, lineHeight));
+        var drawList = ImGui.GetWindowDrawList();
+        var center = new Vector2(block.Max.X - radius, block.Center.Y);
+        var loading = jam.NearbyLoading;
+        if (loading)
+        {
+            LoadingPulse.Spinner(center, radius * JamNearbySpinnerShare, ui.Accent, 1f, drawList);
+        }
+        else if (RoundButton.Icon(drawList, center, radius, PhoneIcons.Refresh, ui.Ink,
+                     tooltip: Loc.T(L.Common.Refresh), enabled: jam.CanRefreshNearby))
+        {
+            jam.RefreshNearby();
+        }
+
+        if ((!loading || count > 0) && !jam.NearbyUnsupported)
+        {
+            var label = jamNearbyStatusLabel.Plural(L.Music.Jam.NearbyCount, count);
+            var labelWidth = MathF.Max(1f, center.X - radius - Metrics.Space.Md * scale - block.Min.X);
+            Typography.Draw(drawList, new Vector2(block.Min.X, block.Center.Y - lineHeight * 0.5f),
+                Typography.FitText(label, labelWidth, TextStyles.Footnote), ui.MutedInk, TextStyles.Footnote);
+        }
+
+        EndJamBlock();
+        JamGap(Metrics.Space.Sm);
+    }
+
+    private void DrawJamNearbyUnsupported()
+    {
+        var text = Loc.T(L.AetherStream.NearbyUnsupported);
+        var width = ScrollLayout.StableContentWidth() - MusicUi.Inset * 2f * UiScale.Current;
+        var height = Typography.MeasureWrappedBlock(text, TextStyles.Footnote, width).Y;
+        var block = BeginJamBlock(height);
+        Typography.DrawWrappedLeft(block.Min, text, ui.MutedInk, TextStyles.Footnote, width);
+        EndJamBlock();
+        JamGap(Metrics.Space.Sm);
     }
 
     private void DrawJamNearbyRow(JamNearbyJam entry, in JamNearbyLabels labels, float scale)
@@ -124,7 +181,7 @@ internal sealed partial class MusicApp
         JamGap(Metrics.Space.Sm);
         if (joinTapped || rowTapped)
         {
-            JoinJam(entry.Code);
+            JoinJam(entry.Code, true);
         }
     }
 
@@ -139,8 +196,9 @@ internal sealed partial class MusicApp
     private void DrawJamDiscoverableSetting(float scale)
     {
         var discoverable = ShownJamFlag(ref jamDiscoverableDraft, jamDiscoverableDraftAt, jam.Discoverable);
+        var hint = jam.RelayMode ? L.Music.Jam.DiscoverableRelayHint : L.Music.Jam.DiscoverableHint;
         var next = DrawJamFeature("music.jam.setting.discoverable", FontAwesomeIcon.MapMarkerAlt, AccentRing.Teal,
-            Loc.T(L.Music.Jam.Discoverable), Loc.T(L.Music.Jam.DiscoverableHint), discoverable, scale);
+            Loc.T(L.Music.Jam.Discoverable), Loc.T(hint), discoverable, scale);
         if (next == discoverable)
         {
             return;

@@ -4,6 +4,8 @@ using Aetherphone.Apps.Calendar;
 using Aetherphone.Core.Aethernet;
 using Aetherphone.Core.Aethernet.Contracts;
 using Aetherphone.Core.Net;
+using Aetherphone.Core.News;
+using Aetherphone.Core.Radio;
 using Xunit;
 
 namespace Aetherphone.Tests;
@@ -20,7 +22,7 @@ public sealed class RelayContentFeedTests : IDisposable
         Path.Combine(Path.GetTempPath(), "aetherphone-relay-content-" + Guid.NewGuid().ToString("N"));
     private readonly HttpService http = new();
     private DateTimeOffset now = new(2026, 10, 22, 1, 0, 0, TimeSpan.Zero);
-    private bool refuse;
+    private int refusal;
 
     public void Dispose()
     {
@@ -108,20 +110,22 @@ public sealed class RelayContentFeedTests : IDisposable
         Assert.Equal(Tag, LoopbackRelayServer.HeaderValue(requests[1], "If-None-Match"));
     }
 
-    [Fact]
-    public async Task ARefusedRefreshKeepsTheLastGoodCopy()
+    [Theory]
+    [InlineData(401, false)]
+    [InlineData(404, true)]
+    public async Task ARefusedRefreshKeepsTheLastGoodCopy(int status, bool unsupported)
     {
         using var server = new LoopbackRelayServer(respond: Answer);
         var configuration = Configured(server);
         await CreateFeed(configuration).LoadAsync(CancellationToken.None);
 
         now += RelayContentFeed<AnnouncementPage>.RefreshInterval + TimeSpan.FromMinutes(1);
-        Volatile.Write(ref refuse, true);
+        Volatile.Write(ref refusal, status);
         var feed = CreateFeed(configuration);
         var result = await feed.LoadAsync(CancellationToken.None);
 
-        Assert.Equal(RelayContentStatus.Failed, result.Status);
-        Assert.Equal(401, result.Failure.StatusCode);
+        Assert.Equal(unsupported ? RelayContentStatus.Unsupported : RelayContentStatus.Failed, result.Status);
+        Assert.Equal(status, result.Failure.StatusCode);
         Assert.Equal("welcome", Assert.Single(result.Value!.Items).Id);
         Assert.Equal(2, server.Requests.Length);
     }
@@ -154,6 +158,23 @@ public sealed class RelayContentFeedTests : IDisposable
             Assert.True(record.Begin <= record.End);
             Assert.Equal(DateTimeKind.Local, record.Begin.Kind);
         }
+
+        var news = JsonSerializer.Deserialize(File.ReadAllText(Path.Combine(content, "news-tw.json")),
+            TaiwanNewsJsonContext.Default.TaiwanNewsDocument);
+        Assert.NotNull(news);
+        Assert.True(news.UpdatedAt > DateTimeOffset.UnixEpoch);
+        var board = TaiwanNewsBoard.From(news);
+        Assert.NotEmpty(board.ItemsFor(NewsCategory.Topics));
+        Assert.Equal(news.Topics!.Length, board.ItemsFor(NewsCategory.Topics).Length);
+        Assert.Equal(news.Notices!.Length, board.ItemsFor(NewsCategory.Notices).Length);
+        Assert.Equal(news.Maintenance!.Length, board.ItemsFor(NewsCategory.Maintenance).Length);
+        Assert.Equal(news.Updates!.Length, board.ItemsFor(NewsCategory.Updates).Length);
+
+        var radio = JsonSerializer.Deserialize(File.ReadAllText(Path.Combine(content, "radio.json")),
+            RelayRadioJsonContext.Default.RelayRadioDocument);
+        Assert.NotNull(radio);
+        Assert.NotEmpty(radio.Stations!);
+        Assert.Equal(radio.Stations!.Length, RelayRadioStations.Readable(radio).Stations.Length);
     }
 
     private string CachePath => Path.Combine(directory, "relay_announcements.json");
@@ -166,9 +187,10 @@ public sealed class RelayContentFeedTests : IDisposable
 
     private byte[] Answer(string request)
     {
-        if (Volatile.Read(ref refuse))
+        var status = Volatile.Read(ref refusal);
+        if (status != 0)
         {
-            return Encoding.ASCII.GetBytes("HTTP/1.1 401 Unauthorized\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+            return Encoding.ASCII.GetBytes($"HTTP/1.1 {status} Refused\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
         }
 
         if (LoopbackRelayServer.HeaderValue(request, "If-None-Match") == Tag)

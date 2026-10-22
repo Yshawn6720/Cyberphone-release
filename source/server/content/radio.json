@@ -1,0 +1,64 @@
+{
+  "stations": [
+    {
+      "name": "SomaFM Groove Salad",
+      "streamUrl": "https://ice2.somafm.com/groovesalad-128-mp3",
+      "genre": "氛圍電子 / 慢拍",
+      "homepage": "https://somafm.com/groovesalad/"
+    },
+    {
+      "name": "SomaFM Drone Zone",
+      "streamUrl": "https://ice2.somafm.com/dronezone-128-mp3",
+      "genre": "環境音樂",
+      "homepage": "https://somafm.com/dronezone/"
+    },
+    {
+      "name": "SomaFM Sonic Universe",
+      "streamUrl": "https://ice2.somafm.com/sonicuniverse-128-mp3",
+      "genre": "爵士",
+      "homepage": "https://somafm.com/sonicuniverse/"
+    },
+    {
+      "name": "Radio Paradise Main Mix",
+      "streamUrl": "https://stream.radioparadise.com/mp3-192",
+      "genre": "綜合曲風",
+      "homepage": "https://radioparadise.com/"
+    },
+    {
+      "name": "Radio Paradise Mellow Mix",
+      "streamUrl": "https://stream.radioparadise.com/mellow-192",
+      "genre": "輕柔綜合",
+      "homepage": "https://radioparadise.com/"
+    },
+    {
+      "name": "KEXP 90.3 FM",
+      "streamUrl": "https://kexp-mp3-128.streamguys1.com/kexp128.mp3",
+      "genre": "獨立 / 另類",
+      "homepage": "https://www.kexp.org/"
+    },
+    {
+      "name": "Nightwave Plaza",
+      "streamUrl": "https://radio.plaza.one/mp3",
+      "genre": "蒸氣波 / City Pop",
+      "homepage": "https://plaza.one/"
+    },
+    {
+      "name": "Rainwave Game",
+      "streamUrl": "https://relay.rainwave.cc/game.mp3",
+      "genre": "遊戲音樂",
+      "homepage": "https://rainwave.cc/game/"
+    },
+    {
+      "name": "Rainwave OC ReMix",
+      "streamUrl": "https://relay.rainwave.cc/ocremix.mp3",
+      "genre": "遊戲音樂改編",
+      "homepage": "https://rainwave.cc/ocremix/"
+    },
+    {
+      "name": "Rainwave Chiptune",
+      "streamUrl": "https://relay.rainwave.cc/chiptune.mp3",
+      "genre": "晶片音樂",
+      "homepage": "https://rainwave.cc/chiptune/"
+    }
+  ]
+}

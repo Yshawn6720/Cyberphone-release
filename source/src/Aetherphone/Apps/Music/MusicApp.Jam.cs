@@ -289,9 +289,9 @@ internal sealed partial class MusicApp
         });
     }
 
-    private void JoinJam(string code)
+    private void JoinJam(string code, bool nearby = false)
     {
-        if (jam.Join(code))
+        if (nearby ? jam.JoinNearby(code) : jam.Join(code))
         {
             jamCodeField.Clear();
         }

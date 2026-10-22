@@ -36,7 +36,11 @@ internal sealed partial class MusicApp
     private void DrawJamHomeCard(float scale)
     {
         EnsureJamMembers();
-        jam.WantNearby();
+        if (!jam.RelayMode)
+        {
+            jam.WantNearby();
+        }
+
         JamGap(MusicUi.SectionGap);
         if (jam.InJam)
         {
@@ -218,11 +222,6 @@ internal sealed partial class MusicApp
         if (UiInteract.Click(pillMin, pillMax, hovered))
         {
             OpenJamLobby();
-        }
-
-        if (jam.RelayMode)
-        {
-            return pillMax.Y - min.Y;
         }
 
         var barTop = pillMax.Y + gap;

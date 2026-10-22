@@ -180,7 +180,12 @@ internal sealed class LodestoneWidget : IHomeWidget
             return;
         }
 
-        var line = state == NewsState.Failed ? L.WidgetsUtility.NewsFailed : L.WidgetsUtility.NewsEmpty;
+        var line = state switch
+        {
+            NewsState.Unconfigured => L.News.RelayNeeded,
+            NewsState.Failed => L.WidgetsUtility.NewsFailed,
+            _ => L.WidgetsUtility.NewsEmpty,
+        };
         WidgetChrome.Message(context, ink, body, FontAwesomeIcon.Newspaper, accent, Loc.T(line), string.Empty);
     }
 
@@ -193,7 +198,7 @@ internal sealed class LodestoneWidget : IHomeWidget
             return;
         }
 
-        entries[slot] = news.Request(category, gameData.LodestoneLocale(), false);
+        entries[slot] = news.RequestWithoutRelay(category, gameData.LodestoneLocale());
     }
 
     private NewsCategory CategoryOf(string config)
@@ -207,7 +212,9 @@ internal sealed class LodestoneWidget : IHomeWidget
             }
 
             var category = NewsCategories.All[index];
-            return category == NewsCategory.Status && gameData.IsChineseGameClient() ? NewsCategory.Topics : category;
+            return category != NewsCategory.Status || NewsCategories.AvailableFor(category, gameData.LodestoneLocale())
+                ? category
+                : NewsCategory.Topics;
         }
 
         return NewsCategory.Topics;

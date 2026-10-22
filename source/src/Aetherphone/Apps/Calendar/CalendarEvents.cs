@@ -148,7 +148,7 @@ internal sealed class CalendarEvents : IDisposable
                 return;
             }
 
-            failed = result.Status == RelayContentStatus.Failed;
+            failed = result.Status is RelayContentStatus.Failed or RelayContentStatus.Unsupported;
         }
         catch (OperationCanceledException) when (cancellation.IsCancellationRequested)
         {

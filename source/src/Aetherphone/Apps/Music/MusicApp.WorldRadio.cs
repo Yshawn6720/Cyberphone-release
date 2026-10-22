@@ -18,6 +18,7 @@ internal sealed partial class MusicApp
     private const float CategoryGap = 12f;
     private const float FacetRowHeight = 44f;
     private const string RadioSortMenuId = "music.radioSort";
+    private const float HomepageButtonGap = 28f;
 
     private static readonly Dictionary<int, string> FacetCountCache = new();
     private static readonly Dictionary<(string, int, string), string> StationSubtitleCache = new();
@@ -109,7 +110,8 @@ internal sealed partial class MusicApp
         SectionHeader.Draw(ui, Loc.T(L.Music.YourStations), false, 0f);
         for (var index = 0; index < favoriteRadioStations.Length; index++)
         {
-            DrawStationRow(scale, favoriteRadioStations[index], index, true, 6f);
+            DrawStationRow(scale, favoriteRadioStations, index, 6f, StationSubtitle(favoriteRadioStations[index]),
+                string.Empty);
         }
     }
 
@@ -169,7 +171,7 @@ internal sealed partial class MusicApp
         ImGui.Dummy(new Vector2(0f, 4f * scale));
         for (var index = 0; index < stations.Length; index++)
         {
-            DrawStationRow(scale, stations[index], index, false, FeedCell.PadX);
+            DrawStationRow(scale, stations, index, FeedCell.PadX, StationSubtitle(stations[index]), string.Empty);
         }
 
         if (loadingMore)
@@ -199,8 +201,11 @@ internal sealed partial class MusicApp
             ui.MutedInk, TextStyles.Subheadline, maxWidth);
     }
 
-    private void DrawStationRow(float scale, RadioStation station, int index, bool fromFavorites, float sideInset)
+    private void DrawStationRow(float scale, RadioStation[] queue, int index, float sideInset, string stationSub,
+        string homepage)
     {
+        var station = queue[index];
+        var homepageGap = homepage.Length > 0 ? HomepageButtonGap * scale : 0f;
         var rowHeight = StationRowHeight * scale;
         var drawList = ImGui.GetWindowDrawList();
         var cell = FeedCell.Begin(drawList, rowHeight, ui.HoverWash);
@@ -213,7 +218,7 @@ internal sealed partial class MusicApp
         var artMax = artMin + new Vector2(artSize, artSize);
         drawList.AddImageRounded(artwork.HandleForName(station.Name), artMin, artMax, Vector2.Zero, Vector2.One,
             0xFFFFFFFFu, 8f * scale, ImDrawFlags.RoundCornersAll);
-        var trailing = inset + (current ? 44f : 27f) * scale;
+        var trailing = inset + (current ? 44f : 27f) * scale + homepageGap;
         var textLeft = artMax.X + 12f * scale;
         var textWidth = max.X - trailing - textLeft;
         var stationNameY = min.Y + 10f * scale;
@@ -223,7 +228,7 @@ internal sealed partial class MusicApp
         Marquee.DrawLeft(new MarqueeId("music.stationRow.name.", station.StreamUrl), station.Name, textLeft,
             stationNameY, textWidth, TextStyles.BodyEmphasized, current ? ui.Accent : ui.TitleInk,
             stationNameHovering);
-        var stationSub = StationSubtitle(station);
+        var starX = max.X - inset - (current ? 30f : 12f) * scale;
         var stationSubY = min.Y + 34f * scale;
         var stationSubSize = Typography.Measure(stationSub, TextStyles.Caption1);
         var stationSubHovering = UiInteract.Hover(new Vector2(textLeft, stationSubY),
@@ -240,12 +245,21 @@ internal sealed partial class MusicApp
         if (isFavoriteStation || cell.Hovered)
         {
             var tooltip = Loc.T(isFavoriteStation ? L.Music.RemoveFavoriteStation : L.Music.AddFavoriteStation);
-            var starX = max.X - inset - (current ? 30f : 12f) * scale;
             var starCenter = new Vector2(starX, min.Y + rowHeight * 0.5f);
             if (ui.IconButton(starCenter, 14f * scale, IconGlyph.Of(Dalamud.Interface.FontAwesomeIcon.Star),
                     isFavoriteStation ? ui.Accent : ui.MutedInk, AppSkin.Transparent, 0.82f, tooltip))
             {
                 ToggleFavoriteStation(station);
+            }
+        }
+
+        if (homepageGap > 0f && cell.Hovered)
+        {
+            var globeCenter = new Vector2(starX - homepageGap, min.Y + rowHeight * 0.5f);
+            if (ui.IconButton(globeCenter, 14f * scale, IconGlyph.Of(Dalamud.Interface.FontAwesomeIcon.Globe),
+                    ui.MutedInk, AppSkin.Transparent, 0.82f, Loc.T(L.Music.OpenStationSite)))
+            {
+                Windows.UrlActions.AskThenOpen(homepage);
             }
         }
 
@@ -255,13 +269,9 @@ internal sealed partial class MusicApp
             {
                 playback.TogglePlayPause();
             }
-            else if (fromFavorites)
-            {
-                PlayStationFromFavorites(index);
-            }
             else
             {
-                PlayStation(index);
+                PlayStation(queue, index);
             }
         }
 
@@ -671,16 +681,10 @@ internal sealed partial class MusicApp
         return list.ToArray();
     }
 
-    private void PlayStation(int index)
+    private void PlayStation(RadioStation[] queue, int index)
     {
-        radio.ReportClick(stations[index].Uuid);
-        playback.PlayStations(stations, index);
-    }
-
-    private void PlayStationFromFavorites(int index)
-    {
-        radio.ReportClick(favoriteRadioStations[index].Uuid);
-        playback.PlayStations(favoriteRadioStations, index);
+        radio.ReportClick(queue[index].Uuid);
+        playback.PlayStations(queue, index);
     }
 
     private bool IsCurrentStation(RadioStation station)

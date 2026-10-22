@@ -123,13 +123,19 @@ internal sealed partial class AetherStreamApp
         DrawCodeJoin(scale);
 
         var nearby = watchAlong.Nearby;
-        if (nearby.Count > 0)
+        if (relayMode ? watchAlong.RelayReady : nearby.Count > 0)
         {
+            AskNearbyOnAppear();
             Gap(Metrics.Space.Md);
-            SectionLabel(Loc.T(L.AetherStream.JoinNearbyHeader));
+            DrawNearbyHeader(scale);
             for (var index = 0; index < nearby.Count; index++)
             {
-                DrawNearbyRow(nearby[index], scale);
+                DrawNearbyRow(nearby[index], index, scale);
+            }
+
+            if (nearby.Count == 0 && !watchAlong.NearbyLoading)
+            {
+                DrawNearbyEmpty(scale);
             }
         }
 
@@ -145,6 +151,17 @@ internal sealed partial class AetherStreamApp
         {
             router.Push(new StreamRoute(StreamScreen.PartySettings));
         }
+    }
+
+    private void DrawNearbyEmpty(float scale)
+    {
+        var text = Loc.T(watchAlong.NearbyUnsupported ? L.AetherStream.NearbyUnsupported : L.AetherStream.NearbyEmpty);
+        var width = ScrollLayout.StableContentWidth() - PadX * 2f * scale;
+        var height = Typography.MeasureWrappedBlock(text, TextStyles.Subheadline, width).Y;
+        var block = BeginBlock(height + Metrics.Space.Sm * scale);
+        Typography.DrawWrappedLeft(new Vector2(block.Min.X, block.Min.Y + Metrics.Space.Xs * scale), text,
+            Ink.MutedInk, TextStyles.Subheadline, width);
+        EndBlock();
     }
 
     private void DrawCodeJoin(float scale)
@@ -584,7 +601,8 @@ internal sealed partial class AetherStreamApp
             guests.End();
             Gap(Metrics.Space.Md);
             SettingsSection.Header(Loc.T(L.AetherStream.PartySettingsJoining), accentedTheme);
-            var joining = GroupCard.Begin(accentedTheme, aethernet ? (partyRows ? 3 : 2) : 1);
+            var relayDiscoverable = !aethernet && (watchAlong.IsHosting || watchAlong.IsPartyOpen);
+            var joining = GroupCard.Begin(accentedTheme, aethernet ? (partyRows ? 3 : 2) : (relayDiscoverable ? 2 : 1));
             var codeEnabled = policy.CodeEnabled;
             if (aethernet && partyRows)
             {
@@ -595,10 +613,13 @@ internal sealed partial class AetherStreamApp
             var approval = SettingsRow.Bool(joining.NextRow(), Loc.T(L.AetherStream.SettingsApprovalRequired),
                 policy.ApprovalRequired, accentedTheme, hint: Loc.T(L.AetherStream.SettingsApprovalRequiredHint));
             var discoverable = policy.Discoverable;
-            if (aethernet)
+            if (aethernet || relayDiscoverable)
             {
+                var discoverableHint = aethernet
+                    ? L.AetherStream.SettingsDiscoverableHint
+                    : L.AetherStream.SettingsDiscoverableRelayHint;
                 discoverable = SettingsRow.Bool(joining.NextRow(), Loc.T(L.AetherStream.SettingsDiscoverable),
-                    discoverable, accentedTheme, hint: Loc.T(L.AetherStream.SettingsDiscoverableHint));
+                    discoverable, accentedTheme, hint: Loc.T(discoverableHint));
             }
 
             joining.End();

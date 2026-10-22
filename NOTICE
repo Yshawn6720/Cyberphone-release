@@ -66,6 +66,96 @@ Modifications (AGPL-3.0 section 5(a)), first made 2026-10-21:
               when a party is started or joined. Host heartbeat relaxed from
               8 to 30 seconds. Party features the relay does not implement
               are hidden while using it.
+- 2026-10-22  The in-world video screen is drawn from Dalamud's UI draw
+              callback instead of a DirectX Present hook, so turning the
+              plugin off and on leaves no hook behind in the game's present
+              call; the screen now hides whenever Dalamud hides plugin
+              windows. ScreenPainter logs why a frame was not drawn, only
+              when the reason changes.
+- 2026-10-22  Music Jam runs through the same self-hosted relay: a JamRoom
+              Durable Object in server/, the shared relay address and invite
+              code from MogCast settings, and a connection only while a Jam
+              is started or joined. Host heartbeat relaxed from 8 to 30
+              seconds; the relay ends the Jam when the host leaves.
+- 2026-10-22  The MogCast relay party regains join approval, queue
+              suggestions, reactions and removing a member. The relay holds
+              newcomers until the host approves, passes suggestions to the
+              host and the answer back to the author, forwards reactions on
+              a separate per-member budget (the plugin sends at most 4 at
+              once, then 1 a second) and closes a removed member's
+              connection; the plugin does not reconnect after being removed
+              or declined. Nearby parties stay unavailable.
+- 2026-10-22  Announcements and the in-game events in Calendar come back
+              through the self-hosted relay: server/content holds both as
+              static JSON that the Worker serves behind the invite code, with
+              an ETag and no Durable Object. The plugin keeps a local copy,
+              checks again at most every 6 hours and only when Announcements
+              or Calendar is shown, sends no announcement notifications, and
+              keeps Announcements hidden with no request while no relay is
+              set.
+- 2026-10-22  Games "Play together" comes back through the self-hosted relay
+              as invite-based rooms: a GameRoom Durable Object in server/
+              referees Uno, Chess, Connect Four and Broadside itself, keeps
+              hands and fleets private, and closes the room when the host
+              leaves. The plugin connects only while a room is created or
+              joined, sends one move at a time under its own budget, and
+              hides 8-Ball Pool, Moogle War, Mini Golf, Lucky Draw, the
+              public room list, matchmaking and leaderboards while on the
+              relay.
+- 2026-10-22  Voice calls come back as invite-based call rooms in a new
+              Calls tab in Linkpearl: a CallRoom Durable Object in server/
+              forwards Opus frames between up to 4 members without decoding
+              or storing them, and only runs where CALLS_ENABLED is on (the
+              Docker compose setup; the Workers configuration keeps it off
+              and answers 403). The plugin connects only while a room is
+              open, closes the link as soon as the call is left, never
+              retries a server without calls, and keeps direct dialing,
+              ringing, the online list, the Control Center toggle, Spotlight
+              and the call command hidden.
+- 2026-10-22  MogCast fullscreen covers the game viewport in its own window
+              with fit and fill modes, a volume slider and controls that fade
+              when idle; the phone is not drawn while fullscreen. The screen
+              page gains Big Screen, which places a flat in-world screen in
+              front of the camera at 85 percent of the view. The landscape
+              theater mode is removed.
+- 2026-10-22  The assembly is renamed to Cyberphone with Cyberphone's own
+              SixLabors community licence; code namespaces stay
+              "Aetherphone". Legacy settings type names now migrate to the
+              Cyberphone assembly.
+- 2026-10-22  Music Jam on the relay regains join approval, guest
+              permissions, reactions and removing a member, and a removed
+              guest no longer reconnects. Watch parties and Jams can be
+              found nearby again: a host opts in per room (off by default),
+              and the relay's GET /rooms/nearby lists only those rooms in the
+              asker's territory and world, under a separate nearby code and
+              the host's character name, rate limited per address. Tapping a
+              listed room sends a join request that always waits for the
+              host's approval. A viewer's failed playback is reported to the
+              host only.
+- 2026-10-22  The Traditional Chinese client gets its own news through the
+              self-hosted relay: server/scripts/fetch-tw-news.mjs reads the
+              news lists of www.ffxiv.com.tw and keeps only titles, dates,
+              categories, links, a short summary and maintenance windows in
+              server/content/news-tw.json, which the Worker serves as
+              /content/news-tw behind the invite code with an ETag. News on
+              that client reads only this document, shows nothing instead of
+              North American Lodestone news while no relay is set, has no
+              Status tab, and checks again at most every 6 hours and only
+              while News is shown; the home widget reads the local copy only.
+              Lodestone portraits and lookups are off on that client, as on
+              the Chinese one.
+- 2026-10-22  Music Radio shows a curated station list from the relay's
+              /content/radio (server/content/radio.json: name, stream URL,
+              genre, homepage) in place of the community radio, only while a
+              relay is set and the Radio page is shown, cached for 6 hours.
+              The MogCast info page describes the relay watch party: invites,
+              and approving or denying who joins.
+- 2026-10-23  A relay watch party is listed nearby only when the host's
+              state carries nearbyOptIn beside discoverable, so hosts on
+              1.3.4.0 and earlier, which send discoverable by default, stay
+              unlisted. When the relay answers 404 for news, curated stations
+              or the nearby list, those pages say the relay does not support
+              the feature yet instead of reporting a connection failure.
 
 Corresponding source: the Git repository above, at the commit whose version
 matches the build. Upstream's original README is kept in

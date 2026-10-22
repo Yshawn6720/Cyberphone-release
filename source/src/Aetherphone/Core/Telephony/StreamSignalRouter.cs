@@ -62,7 +62,7 @@ internal sealed class StreamSignalRouter : IDisposable
     public bool RelayActive => calls.RelayActive;
     public PartyRelay Relay => calls.Relay;
 
-    public bool BeginRelay(string? code) => calls.BeginRelay(code);
+    public bool BeginRelay(string? code, bool nearby = false) => calls.BeginRelay(code, nearby);
 
     public void EndRelay() => calls.EndRelay();
 
@@ -88,6 +88,7 @@ internal sealed class StreamSignalRouter : IDisposable
             WorldId = publication.WorldId,
             ApprovalRequired = publication.ApprovalRequired,
             Discoverable = publication.Discoverable,
+            NearbyOptIn = publication.Discoverable,
             CodeEnabled = publication.CodeEnabled,
             GuestPermissions = publication.GuestPermissions,
             Members = publication.Members,

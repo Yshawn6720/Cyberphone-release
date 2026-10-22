@@ -1,7 +1,7 @@
 import { abortAllDurableObjects, evictDurableObject, reset, runInDurableObject } from "cloudflare:test";
 import { afterEach, describe, expect, it } from "vitest";
 import type { JamRoom, JamRoomState } from "../src/jam";
-import { CODE_ALPHABET, CloseCode, JAM_GUEST_PERMISSIONS } from "../src/protocol";
+import { CODE_ALPHABET, CloseCode, JAM_GUEST_PERMISSIONS, REACTION_RATE } from "../src/protocol";
 import { type Peer, connect, env, identity, realtimeRequest, self } from "./support";
 
 const SONG_A = { videoId: "aaaaaaaaaaa", title: "Song A", author: "Artist", thumbnailUrl: "https://i.ytimg.com/vi/a/hq.jpg", durationSeconds: 200 };
@@ -274,5 +274,157 @@ describe("jam", () => {
 
     expect(asParty.status).toBe(404);
     expect(unknown.status).toBe(400);
+  });
+});
+
+describe("jam host settings", () => {
+  it("tells everyone the host's settings and holds newcomers out while approval is on", async () => {
+    const { host, code } = await startJam();
+    host.send({ type: "jam.settings", approvalRequired: true, guestPermissions: 1, title: "Quiet hour" });
+    const settings = await host.next("jam.roster");
+
+    const guest = await connect(`kind=jam&code=${code}&${identity("Guest")}`);
+    guest.send({ type: "jam.join", code });
+    const pending = await guest.next("jam.joinPending");
+    const request = await host.next("jam.joinRequest");
+    host.send({ type: "jam.approve", userId: "Guest@伊弗利特" });
+    const joined = await guest.next("jam.joined");
+    const roster = await host.next("jam.roster");
+    const stored = await storedRoom(code);
+
+    expect(settings).toMatchObject({ title: "Quiet hour", approvalRequired: true, guestPermissions: 1, discoverable: false });
+    expect(pending.hostId).toBe("Host@伊弗利特");
+    expect(request).toMatchObject({ userId: "Guest@伊弗利特", from: { userId: "Guest@伊弗利特", displayName: "Guest" } });
+    expect(joined).toMatchObject({ code, approvalRequired: true, guestPermissions: 1 });
+    expect(roster.jamMembers).toEqual([
+      expect.objectContaining({ userId: "Host@伊弗利特", permissions: JAM_GUEST_PERMISSIONS }),
+      expect.objectContaining({ userId: "Guest@伊弗利特", permissions: 1 }),
+    ]);
+    expect(stored?.admitted).toEqual(["Guest@伊弗利特"]);
+  });
+
+  it("lets waiting guests in once the host turns approval off", async () => {
+    const { host, code } = await startJam();
+    host.send({ type: "jam.settings", approvalRequired: true });
+    await host.next("jam.roster");
+    const guest = await connect(`kind=jam&code=${code}&${identity("Guest")}`);
+    guest.send({ type: "jam.join", code });
+    await host.next("jam.joinRequest");
+
+    host.send({ type: "jam.settings", approvalRequired: false });
+    const joined = await guest.next("jam.joined");
+
+    expect(joined).toMatchObject({ code, approvalRequired: false });
+  });
+
+  it("ignores settings, approvals and removals sent by a guest", async () => {
+    const { host, code } = await startJam();
+    const { guest } = await joinJam(host, code, "Guest");
+    const { guest: other } = await joinJam(host, code, "Other");
+    await guest.next("jam.roster");
+
+    guest.send({ type: "jam.settings", guestPermissions: 0, approvalRequired: true });
+    guest.send({ type: "jam.kick", userId: "Other@伊弗利特" });
+    guest.send({ type: "jam.queueAdd", track: SONG_A, mode: "end" });
+    const queue = await host.next("jam.queue");
+
+    expect(queue.entries).toHaveLength(1);
+    expect(other.closeCode).toBeNull();
+    expect(host.inbox.some((message) => message.type === "jam.roster")).toBe(false);
+  });
+
+  it("enforces the guest permissions the host narrowed", async () => {
+    const { host, code } = await startJam();
+    host.send({ type: "jam.queueAdd", track: SONG_A, mode: "end" });
+    await host.next("jam.queue");
+    host.send({ type: "jam.queueAdd", track: SONG_B, mode: "end" });
+    await host.next("jam.queue");
+    const { guest } = await joinJam(host, code, "Guest");
+    host.send({ type: "jam.settings", guestPermissions: 0 });
+    await guest.next("jam.roster");
+
+    guest.send({ type: "jam.queueAdd", track: SONG_C, mode: "end" });
+    guest.send({ type: "jam.control", action: "pause" });
+    guest.send({ type: "jam.queueMove", entryId: 2, toIndex: 0 });
+    host.send({ type: "jam.queueAdd", track: SONG_C, mode: "end" });
+    const queue = await guest.next("jam.queue");
+
+    expect(queue.entries).toEqual([
+      expect.objectContaining({ entryId: 1 }),
+      expect.objectContaining({ entryId: 2 }),
+      expect.objectContaining({ entryId: 3, addedByUserId: "Host@伊弗利特" }),
+    ]);
+    expect(host.inbox.some((message) => message.type === "jam.controlRequest")).toBe(false);
+  });
+
+  it("removes a guest with a kicked notice, tells the room, and makes them ask again while approval is on", async () => {
+    const { host, code } = await startJam();
+    host.send({ type: "jam.settings", approvalRequired: true });
+    await host.next("jam.roster");
+    const guest = await connect(`kind=jam&code=${code}&${identity("Guest")}`);
+    guest.send({ type: "jam.join", code });
+    await host.next("jam.joinRequest");
+    host.send({ type: "jam.approve", userId: "Guest@伊弗利特" });
+    await guest.next("jam.joined");
+    await host.next("jam.roster");
+
+    host.send({ type: "jam.kick", userId: "Guest@伊弗利特" });
+    const kicked = await guest.next("jam.kicked");
+    const roster = await host.next("jam.roster");
+    const back = await connect(`kind=jam&code=${code}&${identity("Guest")}`);
+    back.send({ type: "jam.join", code });
+    const pending = await back.next("jam.joinPending");
+
+    expect(kicked).toMatchObject({ userId: "Guest@伊弗利特", hostId: "Host@伊弗利特" });
+    expect(await guest.closed()).toBe(CloseCode.kicked);
+    expect(roster.jamMembers).toHaveLength(1);
+    expect(pending.hostId).toBe("Host@伊弗利特");
+  });
+
+  it("hands waiting requests to the new host after a transfer", async () => {
+    const { host, code } = await startJam();
+    const { guest } = await joinJam(host, code, "Next");
+    host.send({ type: "jam.settings", approvalRequired: true });
+    await guest.next("jam.roster");
+    const waiting = await connect(`kind=jam&code=${code}&${identity("Waiting")}`);
+    waiting.send({ type: "jam.join", code });
+    await host.next("jam.joinRequest");
+
+    host.send({ type: "jam.transfer", userId: "Next@伊弗利特" });
+    const request = await guest.next("jam.joinRequest");
+
+    expect(request).toMatchObject({ userId: "Waiting@伊弗利特", hostId: "Next@伊弗利特" });
+  });
+});
+
+describe("jam reactions", () => {
+  it("forwards a reaction to everyone else and ignores kinds outside the eight", async () => {
+    const { host, code } = await startJam();
+    const { guest } = await joinJam(host, code, "Guest");
+
+    guest.send({ type: "jam.react", reaction: 8 });
+    guest.send({ type: "jam.react", reaction: 7 });
+    const reaction = await host.next("jam.reaction");
+
+    expect(reaction).toMatchObject({ reaction: 7, userId: "Guest@伊弗利特" });
+    expect(guest.inbox.some((message) => message.type === "jam.reaction")).toBe(false);
+    expect(host.inbox.some((message) => message.type === "jam.reaction")).toBe(false);
+  });
+
+  it("drops reactions beyond their own budget without spending the guest's control budget", async () => {
+    const { host, code } = await startJam();
+    const { guest } = await joinJam(host, code, "Guest");
+
+    for (let index = 0; index < REACTION_RATE.capacity + 3; index++) {
+      guest.send({ type: "jam.react", reaction: 1 });
+    }
+
+    guest.send({ type: "jam.control", action: "pause" });
+    const request = await host.next("jam.controlRequest");
+    const reactions = host.inbox.filter((message) => message.type === "jam.reaction").length;
+
+    expect(request.action).toBe("pause");
+    expect(reactions).toBeLessThanOrEqual(REACTION_RATE.capacity + 1);
+    expect(guest.closeCode).toBeNull();
   });
 });

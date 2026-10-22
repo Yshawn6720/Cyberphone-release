@@ -13,7 +13,7 @@ public sealed class ConfigMigrationsTests
     public void RewritesLegacyStarredMessageTypeName()
     {
         var rewritten = ConfigMigrations.RewriteTypeNames(LegacyJson);
-        Assert.Contains("Aetherphone.Core.Message.StarredMessage, Aetherphone", rewritten);
+        Assert.Contains("Aetherphone.Core.Message.StarredMessage, Cyberphone", rewritten);
         Assert.DoesNotContain("Aetherphone.Apps.DirectMessages.StarredMessage", rewritten);
     }
 

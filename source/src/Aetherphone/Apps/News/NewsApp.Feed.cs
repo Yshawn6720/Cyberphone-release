@@ -1,6 +1,7 @@
 using System.Globalization;
 using Aetherphone.Core;
 using Aetherphone.Core.Apps;
+using Aetherphone.Core.Game;
 using Aetherphone.Core.Localization;
 using Aetherphone.Core.News;
 using Aetherphone.Core.Notifications;
@@ -45,7 +46,7 @@ internal sealed partial class NewsApp
     private const string StoryAnchor = "news.story";
     private const string MetaSeparator = " · ";
 
-    private static readonly string[] RegionKeys = { "na", "eu", "fr", "de", "jp", "cn" };
+    private static readonly string[] RegionKeys = { "na", "eu", "fr", "de", "jp", "cn", "tw" };
 
     private readonly PullToRefresh feedRefresh = new();
     private readonly NavBarButton[] rootButtons = new NavBarButton[1];
@@ -172,9 +173,25 @@ internal sealed partial class NewsApp
 
     private void DrawFeedState(Rect body, NewsFeed feed, float scale)
     {
+        if (feed.State == NewsState.Unconfigured)
+        {
+            NewsArt.StatePanel(body, ui, FontAwesomeIcon.Server, Loc.T(L.News.RelayNeeded),
+                Loc.T(L.News.RelayNeededHint), string.Empty);
+            return;
+        }
+
+        if (feed.State == NewsState.Unsupported)
+        {
+            NewsArt.StatePanel(body, ui, FontAwesomeIcon.Server, Loc.T(L.News.NoNews),
+                Loc.T(L.News.RelayUnsupportedHint), string.Empty);
+            return;
+        }
+
+        var relayServed = IsRelayServed(locale);
         if (feed.State == NewsState.Failed)
         {
-            if (NewsArt.StatePanel(body, ui, FontAwesomeIcon.Wifi, Loc.T(L.News.CouldntReach),
+            if (NewsArt.StatePanel(body, ui, FontAwesomeIcon.Wifi,
+                    Loc.T(relayServed ? L.News.CouldntReachRelay : L.News.CouldntReach),
                     Loc.T(L.News.CouldntReachHint), Loc.T(L.News.TryAgain)))
             {
                 UiFeedback.Play(UiSound.Refresh);
@@ -186,8 +203,8 @@ internal sealed partial class NewsApp
 
         if (feed.State == NewsState.Empty)
         {
-            NewsArt.StatePanel(body, ui, FontAwesomeIcon.Newspaper, Loc.T(L.News.NoNews), Loc.T(L.News.NoNewsHint),
-                string.Empty);
+            NewsArt.StatePanel(body, ui, FontAwesomeIcon.Newspaper, Loc.T(L.News.NoNews),
+                Loc.T(relayServed ? L.News.NoNewsRelayHint : L.News.NoNewsHint), string.Empty);
             return;
         }
 
@@ -647,6 +664,9 @@ internal sealed partial class NewsApp
         return 0;
     }
 
+    private static bool IsRelayServed(string region) =>
+        string.Equals(region, GameData.TaiwanLocale, StringComparison.Ordinal);
+
     private static string RegionLabel(string region) =>
         region switch
         {
@@ -655,6 +675,7 @@ internal sealed partial class NewsApp
             "de" => Loc.T(L.News.RegionGermany),
             "eu" => Loc.T(L.News.RegionEurope),
             "cn" => Loc.T(L.News.RegionChina),
+            "tw" => Loc.T(L.News.RegionTraditionalChinese),
             _ => Loc.T(L.News.RegionNorthAmerica),
         };
 }

@@ -9,6 +9,8 @@ internal sealed class JamSignalRouter : IDisposable
     private readonly CallSignalRouter calls;
     private readonly PartyRelay relay;
     private readonly RealtimeConnection relayConnection;
+    private readonly SendBudget reactionBudget = new(CallSignalRouter.ReactionBurst,
+        CallSignalRouter.ReactionRefillMilliseconds);
 
     public JamSignalRouter(CallSignalRouter calls, PartyRelay relay)
     {
@@ -17,7 +19,7 @@ internal sealed class JamSignalRouter : IDisposable
         relayConnection = new RealtimeConnection(relay.Endpoint);
         calls.Connection.ControlReceived += OnControl;
         calls.ConnectedChanged += OnConnectedChanged;
-        relayConnection.ControlReceived += OnControl;
+        relayConnection.ControlReceived += OnRelayControl;
         relayConnection.ConnectedChanged += OnRelayConnectedChanged;
         relayConnection.Failed += OnRelayFailed;
     }
@@ -34,10 +36,10 @@ internal sealed class JamSignalRouter : IDisposable
 
     public PartyRelay Relay => relay;
 
-    public bool BeginRelay(string? code)
+    public bool BeginRelay(string? code, bool nearby = false)
     {
         relayConnection.Stop();
-        if (!relay.Begin(code))
+        if (!relay.Begin(code, nearby))
         {
             relay.End();
             return false;
@@ -130,6 +132,11 @@ internal sealed class JamSignalRouter : IDisposable
             return false;
         }
 
+        if (control.Type == SignalType.JamReact && !reactionBudget.TryTake(Environment.TickCount64))
+        {
+            return false;
+        }
+
         _ = relayConnection.SendControlAsync(control);
         return true;
     }
@@ -137,7 +144,8 @@ internal sealed class JamSignalRouter : IDisposable
     private static bool IsRelayUplink(string type) => type is SignalType.JamStart or SignalType.JamJoin
         or SignalType.JamLeave or SignalType.JamEnd or SignalType.JamState or SignalType.JamControl
         or SignalType.JamTransfer or SignalType.JamQueueAdd or SignalType.JamQueueAdvance
-        or SignalType.JamQueueRemove or SignalType.JamQueueMove;
+        or SignalType.JamQueueRemove or SignalType.JamQueueMove or SignalType.JamApprove or SignalType.JamDeny
+        or SignalType.JamKick or SignalType.JamReact or SignalType.JamSettings or SignalType.JamNearby;
 
     private void OnControl(CallControl message)
     {
@@ -145,6 +153,16 @@ internal sealed class JamSignalRouter : IDisposable
         {
             Received?.Invoke(message);
         }
+    }
+
+    private void OnRelayControl(CallControl message)
+    {
+        if (message.Type is SignalType.JamKicked or SignalType.JamDeclined)
+        {
+            relay.StopReconnecting();
+        }
+
+        OnControl(message);
     }
 
     private void OnConnectedChanged(bool connected)
@@ -169,7 +187,7 @@ internal sealed class JamSignalRouter : IDisposable
     {
         calls.Connection.ControlReceived -= OnControl;
         calls.ConnectedChanged -= OnConnectedChanged;
-        relayConnection.ControlReceived -= OnControl;
+        relayConnection.ControlReceived -= OnRelayControl;
         relayConnection.ConnectedChanged -= OnRelayConnectedChanged;
         relayConnection.Failed -= OnRelayFailed;
         relayConnection.Dispose();

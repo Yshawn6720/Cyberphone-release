@@ -6,6 +6,7 @@ using Aetherphone.Core.Apps;
 using Aetherphone.Core.Confirm;
 using Aetherphone.Core.Localization;
 using Aetherphone.Core.Maps;
+using Aetherphone.Core.Net;
 using Aetherphone.Core.Telephony;
 using Aetherphone.Core.Telephony.Contracts;
 using Aetherphone.Windows.Components;
@@ -18,7 +19,8 @@ internal sealed record WatchAlongParticipant(string UserId, string DisplayName, 
     internal bool CanHost => (Flags & StreamPermission.CanHost) != 0;
 }
 
-internal sealed record NearbyStream(string HostId, string DisplayName, string Handle, string? AvatarUrl);
+internal sealed record NearbyStream(string HostId, string DisplayName, string Handle, string? AvatarUrl, string Code,
+    int MemberCount);
 
 internal sealed record PendingJoinRequest(string UserId, string DisplayName, string? AvatarUrl);
 
@@ -69,6 +71,7 @@ internal sealed class WatchAlongSession : IDisposable
     private readonly AetherStreamQueue queue;
     private readonly StreamSignalRouter stream;
     private readonly ScreenController screen;
+    private readonly RelayNearbyQuery relayNearby;
     private readonly ServerClock serverClock = new();
     private readonly PlaybackSyncController sync = new();
     private readonly ConcurrentDictionary<string, int> grants = new(StringComparer.Ordinal);
@@ -139,9 +142,11 @@ internal sealed class WatchAlongSession : IDisposable
     private bool awaitingHostAck;
     private bool partyOpen;
     private string? accountToken;
+    private bool relayDiscoverable;
 
     internal WatchAlongSession(AethernetSession session, Configuration configuration, ConfirmService confirm,
-        VideoPlayer video, AetherStreamQueue queue, StreamSignalRouter stream, ScreenController screen)
+        VideoPlayer video, AetherStreamQueue queue, StreamSignalRouter stream, ScreenController screen,
+        HttpService http)
     {
         this.session = session;
         this.configuration = configuration;
@@ -150,6 +155,7 @@ internal sealed class WatchAlongSession : IDisposable
         this.queue = queue;
         this.stream = stream;
         this.screen = screen;
+        relayNearby = new RelayNearbyQuery(http, configuration, PartyRelayKind.Party);
         accountToken = session.Token;
         session.Changed += OnSessionChanged;
         queue.Changed += RequestPublish;
@@ -209,7 +215,14 @@ internal sealed class WatchAlongSession : IDisposable
 
     internal float IdleGraceSeconds => PartyIdle.RemainingSeconds(idleSinceTicks, Environment.TickCount64);
 
-    internal PartyPolicy Policy => policyAdopted ? adoptedPolicy : PartyPolicy.From(configuration);
+    internal PartyPolicy Policy
+    {
+        get
+        {
+            var policy = policyAdopted ? adoptedPolicy : PartyPolicy.From(configuration);
+            return HiddenApps.AethernetEnabled ? policy : policy with { Discoverable = relayDiscoverable };
+        }
+    }
 
     internal int GuestPermissions => Policy.GuestPermissions;
 
@@ -249,13 +262,34 @@ internal sealed class WatchAlongSession : IDisposable
         return Roster;
     }
 
-    internal void RequestNearbyStreams() =>
-        stream.RequestNearby(Plugin.ClientState.TerritoryType, LocationShare.CurrentWorldId());
+    internal bool CanRefreshNearby =>
+        HiddenApps.AethernetEnabled || relayNearby.CanAsk(Environment.TickCount64);
+
+    internal bool NearbyLoading => !HiddenApps.AethernetEnabled && relayNearby.Loading;
+
+    internal bool NearbyUnsupported => !HiddenApps.AethernetEnabled && relayNearby.Unsupported;
+
+    internal void RequestNearbyStreams()
+    {
+        if (HiddenApps.AethernetEnabled)
+        {
+            stream.RequestNearby(Plugin.ClientState.TerritoryType, LocationShare.CurrentWorldId());
+            return;
+        }
+
+        relayNearby.TryAsk(Plugin.ClientState.TerritoryType, LocationShare.CurrentWorldId(), Environment.TickCount64);
+    }
 
     private void RequestPublish() => publishRequested = true;
 
     internal void SetPolicy(PartyPolicy policy)
     {
+        if (!HiddenApps.AethernetEnabled)
+        {
+            relayDiscoverable = policy.Discoverable;
+            policy = policy with { Discoverable = configuration.VideoStreamDiscoverable };
+        }
+
         if (policyAdopted)
         {
             adoptedPolicy = policy;
@@ -306,7 +340,9 @@ internal sealed class WatchAlongSession : IDisposable
             : PartyRelayLink.Format(configuration.PartyRelayUrl, configuration.PartyRelayInvite, code);
     }
 
-    private PartyInviteOutcome JoinByCode(string code)
+    internal PartyInviteOutcome JoinNearby(string nearbyCode) => JoinByCode(nearbyCode, nearby: true);
+
+    private PartyInviteOutcome JoinByCode(string code, bool nearby = false)
     {
         if (code.Length == 0)
         {
@@ -321,7 +357,7 @@ internal sealed class WatchAlongSession : IDisposable
         PrepareToJoin();
         joinHostId = null;
         joinCode = code;
-        BeginRelaySession(code);
+        BeginRelaySession(code, nearby);
         stream.JoinByCode(code);
         return PartyInviteOutcome.Joining;
     }
@@ -346,18 +382,19 @@ internal sealed class WatchAlongSession : IDisposable
         }
 
         partyOpen = true;
+        relayDiscoverable = false;
         RequestPublish();
         BeginRelaySession(null);
     }
 
-    private void BeginRelaySession(string? code)
+    private void BeginRelaySession(string? code, bool nearby = false)
     {
         if (HiddenApps.AethernetEnabled || !stream.Relay.RelayReady)
         {
             return;
         }
 
-        if (stream.BeginRelay(code))
+        if (stream.BeginRelay(code, nearby))
         {
             resumePending = true;
         }
@@ -867,6 +904,11 @@ internal sealed class WatchAlongSession : IDisposable
 
     private void DrainSocketWork()
     {
+        if (relayNearby.TryTake(out var nearbyAnswer))
+        {
+            OnNearby(nearbyAnswer);
+        }
+
         if (Interlocked.Exchange(ref pendingRelayFailure, null) is { } relayFailure)
         {
             ApplyRelayFailure(relayFailure.Value);
@@ -1226,7 +1268,7 @@ internal sealed class WatchAlongSession : IDisposable
             serverFeatures = features;
         }
 
-        roomCode = message.Code;
+        AdoptRoomCode(message.Code);
         remoteGuestPermissions = message.GuestPermissions ?? 0;
         remoteMembers = message.Members;
     }
@@ -1281,6 +1323,11 @@ internal sealed class WatchAlongSession : IDisposable
 
         AbsorbServerClock(message);
         AbsorbRoom(message);
+        if (joinCode is not null && message.Code is { Length: > 0 } code)
+        {
+            joinCode = code;
+        }
+
         Mode = WatchAlongMode.Viewing;
         IsAwaitingApproval = false;
         joinRequested = false;
@@ -1634,14 +1681,18 @@ internal sealed class WatchAlongSession : IDisposable
             serverFeatures = features;
         }
 
-        roomCode = message.Code;
-        if (stream.RelayActive && message.Code is { Length: > 0 } code)
+        AdoptRoomCode(message.Code);
+        remoteMembers = message.Members;
+        RebuildRoster();
+    }
+
+    private void AdoptRoomCode(string? code)
+    {
+        roomCode = code;
+        if (stream.RelayActive && code is { Length: > 0 })
         {
             stream.SetRelayCode(code);
         }
-
-        remoteMembers = message.Members;
-        RebuildRoster();
     }
 
     private void OnHostChanged(CallControl message)
@@ -1746,6 +1797,7 @@ internal sealed class WatchAlongSession : IDisposable
             message.CodeEnabled ?? message.Code is { Length: > 0 },
             (message.GuestPermissions ?? 0) & PartyPolicy.GuestMask);
         policyAdopted = true;
+        relayDiscoverable = false;
         roomHostId = SelfId;
 
         ClearViewingState();
@@ -2047,7 +2099,8 @@ internal sealed class WatchAlongSession : IDisposable
         {
             var entry = streams[index];
             result[index] = new NearbyStream(entry.HostId, entry.DisplayName,
-                entry.Handle.Length > 0 ? "@" + entry.Handle : string.Empty, entry.AvatarUrl);
+                entry.Handle.Length > 0 ? "@" + entry.Handle : string.Empty, entry.AvatarUrl,
+                entry.Code ?? string.Empty, entry.MemberCount);
         }
 
         Nearby = result;

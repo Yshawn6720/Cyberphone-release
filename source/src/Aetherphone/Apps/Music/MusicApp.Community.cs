@@ -79,6 +79,14 @@ internal sealed partial class MusicApp
                     ? Loc.T(L.Music.CommunityOffline)
                     : Loc.T(L.Music.StationSignedOut);
 
+        if (DrawShelfStatusLine(scale, label, retryable))
+        {
+            community.RetryDirectory();
+        }
+    }
+
+    private bool DrawShelfStatusLine(float scale, string label, bool retryable)
+    {
         var width = ScrollLayout.StableContentWidth();
         var height = CommunityShelfStatusHeight * scale;
         var origin = ImGui.GetCursorScreenPos();
@@ -104,10 +112,7 @@ internal sealed partial class MusicApp
         }
 
         ImGui.Dummy(new Vector2(width, height));
-        if (retryable && UiInteract.Click(min, max, hovered))
-        {
-            community.RetryDirectory();
-        }
+        return retryable && UiInteract.Click(min, max, hovered);
     }
 
     private static LiveGroup GroupOf(CommunityStationDto station)

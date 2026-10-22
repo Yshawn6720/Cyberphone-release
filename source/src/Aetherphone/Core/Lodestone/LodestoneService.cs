@@ -121,7 +121,8 @@ internal sealed class LodestoneService : IDisposable
 
     public AvatarHandle AvatarById(string id, float drawnPixels)
     {
-        if (!configuration.ShowLodestonePortraits || gameData.IsChineseGameClient() || id.Length == 0)
+        if (!configuration.ShowLodestonePortraits || gameData.IsChineseGameClient() ||
+            gameData.IsTraditionalChineseGameClient() || id.Length == 0)
         {
             return AvatarHandle.Disabled;
         }
@@ -163,8 +164,8 @@ internal sealed class LodestoneService : IDisposable
 
     private AvatarHandle Image(string? name, string? world, bool fullBody, float drawnPixels)
     {
-        if (!configuration.ShowLodestonePortraits || gameData.IsChineseGameClient() || string.IsNullOrEmpty(name) ||
-            string.IsNullOrEmpty(world))
+        if (!configuration.ShowLodestonePortraits || gameData.IsChineseGameClient() ||
+            gameData.IsTraditionalChineseGameClient() || string.IsNullOrEmpty(name) || string.IsNullOrEmpty(world))
         {
             return AvatarHandle.Disabled;
         }

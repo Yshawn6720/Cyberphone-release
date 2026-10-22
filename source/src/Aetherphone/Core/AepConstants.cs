@@ -21,7 +21,7 @@ internal static class AepConstants
     public const string AliasCommand = "/cphone";
     #endif
 
-    // Every configuration ships Cyberphone.dll with this InternalName (see Aetherphone.csproj TargetName).
+    // Every configuration ships Cyberphone.dll with this InternalName (see Aetherphone.csproj AssemblyName).
     public const string InternalName = "Cyberphone";
 
     #if DEBUG || BETA

@@ -62,5 +62,6 @@ internal static class NewsCategories
     }
 
     public static bool AvailableFor(NewsCategory category, string locale) =>
-        category != NewsCategory.Status || !string.Equals(locale, Game.GameData.ChineseLocale, StringComparison.Ordinal);
+        category != NewsCategory.Status || !(string.Equals(locale, Game.GameData.ChineseLocale, StringComparison.Ordinal)
+            || string.Equals(locale, Game.GameData.TaiwanLocale, StringComparison.Ordinal));
 }

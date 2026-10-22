@@ -43,6 +43,12 @@ export const MEDIA_VERSION = 1;
 export const MEDIA_SLOT_OFFSET = 17;
 export const MEDIA_HEADER_BYTES = 20;
 export const MAX_CALL_FRAME_BYTES = MEDIA_HEADER_BYTES + 1275;
+// Nearby lists answer one query at a time per client address: a burst of 4, then one every 15 seconds. The plugin
+// asks only when its nearby page opens or on an explicit refresh, at most once per 15 seconds, so one player never
+// meets this limit; it only stops a script from turning the list into a poll.
+export const NEARBY_RATE: RateProfile = { capacity: 4, refillMs: 15 * 1000 };
+export const MAX_NEARBY_ROOMS = 20;
+export const MAX_LOCATION_ID = 0xffffffff;
 
 export const CloseCode = {
   ended: 1000,
@@ -93,6 +99,9 @@ export const SignalType = {
   queueApprove: "stream.queueApprove",
   queueDeny: "stream.queueDeny",
   queueSuggestionResult: "stream.queueSuggestionResult",
+  playbackFailed: "stream.playbackFailed",
+  viewerFailed: "stream.viewerFailed",
+  nearbyRoster: "stream.nearby.roster",
 } as const;
 
 export const CONTROL_ACTIONS: Readonly<Record<string, true>> = { play: true, pause: true, seek: true, next: true };
@@ -101,6 +110,7 @@ export const REACTION_KINDS = 6;
 export const MAX_ADMITTED = 8;
 export const MAX_PENDING_SUGGESTIONS = 8;
 export const MAX_SUGGESTION_URL = 2048;
+export const MAX_FAILURE_REASON = 200;
 
 export const JamSignal = {
   start: "jam.start",
@@ -121,6 +131,18 @@ export const JamSignal = {
   queueAdvance: "jam.queueAdvance",
   queueRemove: "jam.queueRemove",
   queueMove: "jam.queueMove",
+  joinPending: "jam.joinPending",
+  joinRequest: "jam.joinRequest",
+  joinCancelled: "jam.joinCancelled",
+  approve: "jam.approve",
+  deny: "jam.deny",
+  kick: "jam.kick",
+  kicked: "jam.kicked",
+  react: "jam.react",
+  reaction: "jam.reaction",
+  settings: "jam.settings",
+  nearby: "jam.nearby",
+  nearbyRoster: "jam.nearby.roster",
 } as const;
 
 export const JAM_CONTROL_ACTIONS: Readonly<Record<string, true>> = {
@@ -131,8 +153,11 @@ export const JAM_CONTROL_ACTIONS: Readonly<Record<string, true>> = {
   previous: true,
 };
 
-// Guests may add songs and steer playback; the relay has no settings message to narrow this yet.
+// A new Jam lets guests add songs and steer playback; the host narrows it with jam.settings.
 export const JAM_GUEST_PERMISSIONS = 1 | 2;
+export const JAM_PERMISSION_ADD = 1;
+export const JAM_PERMISSION_CONTROL = 2;
+export const JAM_REACTION_KINDS = 8;
 export const MAX_JAM_QUEUE = 50;
 export const MAX_JAM_TITLE = 64;
 export const MAX_TRACK_TEXT = 200;
@@ -226,4 +251,23 @@ export function randomCode(slot: number): string {
 export function slotOfCode(code: string, roomCount: number): number | null {
   const slot = CODE_ALPHABET.indexOf(code[0]);
   return slot >= 0 && slot < roomCount ? slot : null;
+}
+
+// A discoverable room is listed under a second code that leads to the same slot (its first letter names the slot,
+// like every room code) but only ever opens a join request, so the real code stays with the people the host invited.
+export function nearbyCode(roomCode: string): string {
+  const slot = CODE_ALPHABET.indexOf(roomCode[0]);
+  let code = randomCode(slot);
+  while (code === roomCode) {
+    code = randomCode(slot);
+  }
+
+  return code;
+}
+
+export function locationId(value: unknown): number | null {
+  const parsed = typeof value === "string" ? Number(value) : value;
+  return typeof parsed === "number" && Number.isInteger(parsed) && parsed > 0 && parsed <= MAX_LOCATION_ID
+    ? parsed
+    : null;
 }

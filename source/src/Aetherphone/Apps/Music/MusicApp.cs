@@ -51,6 +51,7 @@ internal sealed partial class MusicApp : IResumableApp
     private readonly AethernetApi aethernet;
     private readonly RadioLauncher launcher;
     private readonly CommunityRadioService community;
+    private readonly RelayRadioStations relayRadio;
     private readonly SocialNotificationService socialNotifications;
     private readonly ReportService report;
     private readonly PhotoLibrary photoLibrary;
@@ -83,7 +84,7 @@ internal sealed partial class MusicApp : IResumableApp
         JamSession jam, JamLauncher jamLauncher, ContactBook contacts,
         RadioRoomSession room, DownloadStore downloads,
         LyricsService lyrics, WindowsMediaSessions windowsMedia, ListeningPresence listening,
-        ConductGateService conduct)
+        ConductGateService conduct, RelayRadioStations relayRadio)
     {
         this.radio = radio;
         this.songSearch = songSearch;
@@ -115,6 +116,7 @@ internal sealed partial class MusicApp : IResumableApp
         this.windowsMedia = windowsMedia;
         this.listening = listening;
         this.conduct = conduct;
+        this.relayRadio = relayRadio;
         PastedLinkHandler = TryHandlePastedLink;
         community = new CommunityRadioService(aethernet, session);
         kit = new MusicKit(ui, images, playback, library) { Downloads = downloads };

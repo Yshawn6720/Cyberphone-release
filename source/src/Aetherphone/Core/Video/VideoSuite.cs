@@ -11,7 +11,7 @@ internal sealed class VideoSuite : IDisposable
         Library = new VideoLibrary(configuration);
         Queue = new AetherStreamQueue(Player, services.VideoMetadata, Library, configuration);
         WatchAlong = new WatchAlongSession(services.AethernetSession, configuration, services.Confirm, Player, Queue,
-            services.StreamSignals, Screen);
+            services.StreamSignals, Screen, services.Http);
         Suggestions = new StreamSuggestionNotifier(WatchAlong, services.Notifications);
         ChatFeed = new ScreenChatFeed(chatGui, configuration, Screen.Engine);
         ApplySettings(configuration);

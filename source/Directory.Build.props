@@ -6,7 +6,7 @@
   -->
 
   <PropertyGroup Label="Identity">
-    <Version>1.3.4.0</Version>
+    <Version>1.3.5.0</Version>
     <!-- Cyberphone is a fork; upstream copyright stays, the project and repository URLs are the fork's. -->
     <Authors>XeldarAlz; Cyberphone fork by Yshawn6720</Authors>
     <Copyright>Copyright (c) XeldarAlz; modifications Copyright (c) 2026 Yshawn6720</Copyright>
@@ -43,7 +43,7 @@
   <!--
     SixLabors.ImageSharp validates an assembly-scoped license before compiling
     any project that references it directly. The community license at the
-    repository root covers the Aetherphone assembly until 2028-01-09; Six
+    repository root covers the Cyberphone assembly until 2028-01-20; Six
     Labors opens renewal 90 days before expiry, and an expired key fails every
     Release build, old tags included.
   -->

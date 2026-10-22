@@ -17,12 +17,17 @@ internal sealed partial class MusicApp
     {
         var scale = UiScale.Current;
         var stations = Array.Empty<CommunityStationDto>();
+        var relayStations = false;
         if (HiddenApps.AethernetEnabled)
         {
             community.EnsureFresh(true);
             community.EnsureMine();
             stations = community.Stations;
             ApplyTagFilter(stations);
+        }
+        else
+        {
+            relayStations = relayRadio.EnsureFresh();
         }
 
         var frame = BeginPage(context);
@@ -43,6 +48,10 @@ internal sealed partial class MusicApp
                     DrawLiveGroup(scale, LiveGroup.Followed, Loc.T(L.Music.FollowingSection));
                     DrawLiveGroup(scale, LiveGroup.Resting, Loc.T(L.Music.AllStationsSection));
                 }
+            }
+            else if (relayStations)
+            {
+                DrawRelayRadioSection(scale);
             }
 
             DrawLiveDjsSection(scale);

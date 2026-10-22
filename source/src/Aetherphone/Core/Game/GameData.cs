@@ -15,6 +15,8 @@ internal sealed class GameData
     public const int ChineseSimplifiedClientLanguage = 4;
     private const uint ChinaRegionId = 5;
     public const string ChineseLocale = "cn";
+    private const uint TaiwanRegionId = 8;
+    public const string TaiwanLocale = "tw";
     private const uint PoeticsItemId = 28;
 
     private readonly IDataManager data;
@@ -29,6 +31,7 @@ internal sealed class GameData
     private Dictionary<uint, uint[]>? classJobIdsByCategory;
     private Dictionary<string, string>? worldRegionCodes;
     private bool? chineseGameClient;
+    private bool? traditionalChineseGameClient;
 
     public GameData(IDataManager data, IObjectTable objectTable, IFramework framework)
     {
@@ -303,6 +306,28 @@ internal sealed class GameData
         return chineseGameClient.Value;
     }
 
+    public bool IsTraditionalChineseGameClient()
+    {
+        if (traditionalChineseGameClient is { } known)
+        {
+            return known;
+        }
+
+        if (!framework.IsInFrameworkUpdateThread)
+        {
+            return false;
+        }
+
+        var regionId = RegionId();
+        if (regionId == 0)
+        {
+            return false;
+        }
+
+        traditionalChineseGameClient = regionId == TaiwanRegionId;
+        return traditionalChineseGameClient.Value;
+    }
+
     public string RegionCodeForWorld(string? worldName)
     {
         if (string.IsNullOrEmpty(worldName))
@@ -353,12 +378,15 @@ internal sealed class GameData
             _ => string.Empty,
         };
 
-    public string LodestoneLocale() =>
-        RegionId() switch
+    public string LodestoneLocale() => LocaleFor(RegionId(), data.Language);
+
+    public static string LocaleFor(uint regionId, ClientLanguage language) =>
+        regionId switch
         {
             1 => "jp",
-            3 => EuropeanLocale(),
+            3 => EuropeanLocale(language),
             ChinaRegionId => ChineseLocale,
+            TaiwanRegionId => TaiwanLocale,
             _ => "na",
         };
 
@@ -379,8 +407,8 @@ internal sealed class GameData
         return 0;
     }
 
-    private string EuropeanLocale() =>
-        data.Language switch
+    private static string EuropeanLocale(ClientLanguage language) =>
+        language switch
         {
             ClientLanguage.French => "fr",
             ClientLanguage.German => "de",

@@ -50,14 +50,14 @@ internal sealed partial class JamSession
     private void OnRelayFailed(RelayFailure failure) =>
         Interlocked.Exchange(ref pendingRelayFailure, new StrongBox<RelayFailure>(failure));
 
-    private bool OpenRelay(string? code)
+    private bool OpenRelay(string? code, bool nearby)
     {
         if (!RelayMode)
         {
             return true;
         }
 
-        if (!signals.BeginRelay(code))
+        if (!signals.BeginRelay(code, nearby))
         {
             Decline(JamDeclineReason.ServerMissing);
             return false;

@@ -170,6 +170,7 @@ internal sealed class PhoneServices : IDisposable
     public required MarketWatchlist MarketWatchlist { get; init; }
     public required NewsService News { get; init; }
     public required RadioService Radio { get; init; }
+    public required RelayRadioStations RelayRadio { get; init; }
     public required RadioPlayer RadioPlayer { get; init; }
     public required SongSearchService SongSearch { get; init; }
     public required VideoUrlResolver VideoMetadata { get; init; }
@@ -341,8 +342,11 @@ internal sealed class PhoneServices : IDisposable
         var marketLauncher = new MarketLauncher();
         var marketAlerts = new MarketAlertService(market, notifications, configuration, installer.Gate("market"));
         var marketWatchlist = new MarketWatchlist(market, configuration, gameData);
-        var news = new NewsService(http, aethernetSession);
+        var news = new NewsService(http, aethernetSession, new TaiwanNewsSource(http, configuration,
+            Path.Combine(configDirectory.FullName, TaiwanNewsSource.CacheFileName)));
         var radio = new RadioService(http);
+        var relayRadio = new RelayRadioStations(http, configuration,
+            Path.Combine(configDirectory.FullName, RelayRadioStations.CacheFileName));
         var radioPlayer = new RadioPlayer();
         var youtube = new YoutubeClient(Aetherphone.Core.Net.OfficialHostGuard.CreateClient());
         var audioRoot = new DirectoryInfo(Path.Combine(cacheRoot.FullName, "audio"));
@@ -421,7 +425,8 @@ internal sealed class PhoneServices : IDisposable
         var streamSignals = new StreamSignalRouter(calls.Router);
         var radioRooms = new RadioRoomRouter(realtimeSignals, aethernetSession, framework);
         var jamRelay = new PartyRelay(configuration, relayIdentity, PartyRelayKind.Jam, relayRefused);
-        var jam = new JamSession(calls.Router, jamRelay, playback, aethernetSession, notifications, framework);
+        var jam = new JamSession(calls.Router, jamRelay, new RelayNearbyQuery(http, configuration, PartyRelayKind.Jam),
+            playback, aethernetSession, notifications, framework);
         var musicUninstall = new MusicUninstallStop(installer, playback, jam);
         var listening = new ListeningPresence(aethernet.MusicListening, aethernetSession, playback, jam, configuration,
             framework);
@@ -599,6 +604,7 @@ internal sealed class PhoneServices : IDisposable
             MarketWatchlist = marketWatchlist,
             News = news,
             Radio = radio,
+            RelayRadio = relayRadio,
             RadioPlayer = radioPlayer,
             SongSearch = songSearch,
             VideoMetadata = videoMetadata,
@@ -720,6 +726,7 @@ internal sealed class PhoneServices : IDisposable
         VideoMetadata.Dispose();
         RadioPlayer.Dispose();
         Radio.Dispose();
+        RelayRadio.Dispose();
         ChatNotifier.Dispose();
         ChatCapture.Dispose();
         ChatInbox.Dispose();

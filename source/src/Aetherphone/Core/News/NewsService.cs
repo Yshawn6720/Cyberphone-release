@@ -12,6 +12,8 @@ internal enum NewsState : byte
     Ready,
     Empty,
     Failed,
+    Unconfigured,
+    Unsupported,
 }
 
 internal sealed class NewsEntry
@@ -29,17 +31,24 @@ internal sealed class NewsService : IDisposable
     private static readonly TimeSpan FreshFor = TimeSpan.FromMinutes(5);
     private readonly HttpService http;
     private readonly AethernetSession session;
+    private readonly TaiwanNewsSource taiwan;
     private readonly CancellationTokenSource cancellation = new();
     private readonly ConcurrentDictionary<(NewsCategory Category, string Locale), NewsEntry> entries = new();
 
-    public NewsService(HttpService http, AethernetSession session)
+    public NewsService(HttpService http, AethernetSession session, TaiwanNewsSource taiwan)
     {
         this.http = http;
         this.session = session;
+        this.taiwan = taiwan;
     }
 
     public NewsEntry Request(NewsCategory category, string locale, bool forceRefresh)
     {
+        if (IsTaiwan(locale))
+        {
+            return taiwan.Request(category, forceRefresh, true);
+        }
+
         var entry = entries.GetOrAdd((category, locale), static _ => new NewsEntry());
         if (entry.State == NewsState.Loading)
         {
@@ -55,6 +64,9 @@ internal sealed class NewsService : IDisposable
 
         return entry;
     }
+
+    public NewsEntry RequestWithoutRelay(NewsCategory category, string locale) =>
+        IsTaiwan(locale) ? taiwan.Request(category, false, false) : Request(category, locale, false);
 
     private async Task LoadAsync(NewsCategory category, string locale, NewsEntry entry)
     {
@@ -88,9 +100,10 @@ internal sealed class NewsService : IDisposable
         }
     }
 
-    // The Lodestone feed carries the international game only. The Chinese one runs its own build on its
-    // own maintenance and patch schedule under a different publisher, so those notices would name dates
-    // and versions a player there never sees. Aethernet serves that publisher's own news instead.
+    // The Lodestone feed carries the international game only. The Chinese and Traditional Chinese ones run
+    // their own builds on their own maintenance and patch schedules under different publishers, so those
+    // notices would name dates and versions a player there never sees. Aethernet serves the Chinese
+    // publisher's news and the self-hosted relay serves the Traditional Chinese one instead.
     private string FeedUrl(NewsCategory category, string locale)
     {
         if (string.Equals(locale, GameData.ChineseLocale, StringComparison.Ordinal))
@@ -101,9 +114,13 @@ internal sealed class NewsService : IDisposable
         return string.Concat(ApiRoot, "/", NewsCategories.Path(category), "?locale=", locale);
     }
 
+    private static bool IsTaiwan(string locale) =>
+        string.Equals(locale, GameData.TaiwanLocale, StringComparison.Ordinal);
+
     public void Dispose()
     {
         cancellation.Cancel();
         cancellation.Dispose();
+        taiwan.Dispose();
     }
 }

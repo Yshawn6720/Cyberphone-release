@@ -14,13 +14,11 @@
   </PropertyGroup>
 
   <!--
-    Every configuration ships Cyberphone.dll, so the Dalamud InternalName (which must equal the DLL file
-    name for repository installs) is Cyberphone. AssemblyName stays Aetherphone: the bundled SixLabors
-    licence is scoped to that assembly name, and only AssemblyName is checked, not TargetName.
+    Every configuration ships Cyberphone.dll: the Dalamud InternalName must equal the DLL file name for
+    repository installs, and the bundled SixLabors licence is scoped to the Cyberphone assembly name.
   -->
   <PropertyGroup>
-    <TargetName>Cyberphone</TargetName>
-    <ProjectDepsFileName>Cyberphone.deps.json</ProjectDepsFileName>
+    <AssemblyName>Cyberphone</AssemblyName>
   </PropertyGroup>
 
   <PropertyGroup Condition="'$(AetherphoneBeta)' == 'true'">

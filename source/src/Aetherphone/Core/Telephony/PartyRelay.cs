@@ -45,6 +45,7 @@ internal sealed class PartyRelay
     private string sessionInvite = string.Empty;
     private PartyRelayIdentity sessionIdentity;
     private string? sessionCode;
+    private bool sessionNearby;
     private PartyRelayRole sessionRole;
     private bool sessionRemoved;
     private volatile bool active;
@@ -141,7 +142,7 @@ internal sealed class PartyRelay
 
     internal static bool IsUsableServer(string url) => RelayAddress.TryCreate(url, RealtimePath, true, out _);
 
-    public bool Begin(string? code)
+    public bool Begin(string? code, bool nearby = false)
     {
         lock (gate)
         {
@@ -161,6 +162,7 @@ internal sealed class PartyRelay
             sessionInvite = configuration.PartyRelayInvite.Trim();
             sessionIdentity = identity;
             sessionCode = code;
+            sessionNearby = nearby && code is not null;
             sessionRole = code is null ? PartyRelayRole.Host : PartyRelayRole.Viewer;
             sessionRemoved = false;
             selfId = string.Concat(identity.Name, "@", identity.World);
@@ -179,6 +181,7 @@ internal sealed class PartyRelay
             sessionServer = string.Empty;
             sessionInvite = string.Empty;
             sessionCode = null;
+            sessionNearby = false;
             sessionRole = PartyRelayRole.Host;
             sessionRemoved = false;
         }
@@ -215,6 +218,7 @@ internal sealed class PartyRelay
         lock (gate)
         {
             sessionCode = code;
+            sessionNearby = false;
         }
     }
 
@@ -280,7 +284,8 @@ internal sealed class PartyRelay
             var name = Uri.EscapeDataString(sessionIdentity.Name);
             var world = Uri.EscapeDataString(sessionIdentity.World);
             var query = sessionCode is { } code
-                ? string.Concat(kindQuery, "code=", Uri.EscapeDataString(code), "&name=", name, "&world=", world)
+                ? string.Concat(kindQuery, sessionNearby ? "nearby=" : "code=", Uri.EscapeDataString(code), "&name=",
+                    name, "&world=", world)
                 : string.Concat(kindQuery, "create=1&name=", name, "&world=", world);
             return new Uri(sessionUri.AbsoluteUri + query);
         }

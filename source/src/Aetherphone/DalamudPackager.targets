@@ -3,7 +3,7 @@
   <!--
     Replaces DalamudPackager's own Debug/Release defaults, which are skipped
     once this file exists. Every configuration packages and zips Cyberphone:
-    the packager reads the manifest named after TargetName (Cyberphone.json).
+    the packager reads the manifest named after the assembly (Cyberphone.json).
   -->
 
   <Target Name="PackagePlugin" AfterTargets="Build">

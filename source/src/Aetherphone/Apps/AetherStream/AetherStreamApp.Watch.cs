@@ -37,6 +37,8 @@ internal sealed partial class AetherStreamApp
     private readonly PanRail historyRail = new();
     private Spring heroActionsFade;
     private RefreshCadence nearbyCadence;
+    private int nearbyShownFrame = int.MinValue;
+    private TextCache[] nearbyWatchingText = [];
     private TextCache standbyText;
     private TextCache followingText;
     private TextCache upNextText;
@@ -354,11 +356,13 @@ internal sealed partial class AetherStreamApp
 
     private void DrawNearbyParties(float scale)
     {
-        if (!HiddenApps.AethernetEnabled || watchAlong.Mode != WatchAlongMode.None || watchAlong.IsJoining)
+        if (!(HiddenApps.AethernetEnabled || watchAlong.RelayReady) || watchAlong.Mode != WatchAlongMode.None
+            || watchAlong.IsJoining)
         {
             return;
         }
 
+        AskNearbyOnAppear();
         var nearby = watchAlong.Nearby;
         var count = Math.Min(nearby.Count, NearbyRowLimit);
         if (count == 0)
@@ -367,14 +371,54 @@ internal sealed partial class AetherStreamApp
         }
 
         Gap(Metrics.Space.Md);
-        SectionLabel(Loc.T(L.AetherStream.JoinNearbyHeader));
+        DrawNearbyHeader(scale);
         for (var index = 0; index < count; index++)
         {
-            DrawNearbyRow(nearby[index], scale);
+            DrawNearbyRow(nearby[index], index, scale);
         }
     }
 
-    private void DrawNearbyRow(NearbyStream row, float scale)
+    private void AskNearbyOnAppear()
+    {
+        if (HiddenApps.AethernetEnabled)
+        {
+            return;
+        }
+
+        var frame = ImGui.GetFrameCount();
+        if (nearbyShownFrame < frame - 1)
+        {
+            watchAlong.RequestNearbyStreams();
+        }
+
+        nearbyShownFrame = frame;
+    }
+
+    private void DrawNearbyHeader(float scale)
+    {
+        var label = Loc.T(L.AetherStream.JoinNearbyHeader);
+        if (HiddenApps.AethernetEnabled)
+        {
+            SectionLabel(label);
+            return;
+        }
+
+        var radius = RoundButton.SmallRadius * scale;
+        var row = BeginBlock(radius * 2f + Metrics.Space.Sm * scale);
+        var drawList = ImGui.GetWindowDrawList();
+        var center = new Vector2(row.Max.X - radius, row.Center.Y);
+        ListSection.PaintOverline(drawList, new Vector2(row.Min.X, row.Center.Y - ListSection.OverlineHeight * 0.5f),
+            label, Ink.MutedInk, MathF.Max(1f, center.X - radius - Metrics.Space.Sm * scale - row.Min.X));
+        if (RoundButton.Icon(drawList, center, radius, PhoneIcons.Refresh, ui.Ink, tooltip: Loc.T(L.Common.Refresh),
+                enabled: watchAlong.CanRefreshNearby))
+        {
+            watchAlong.RequestNearbyStreams();
+        }
+
+        EndBlock();
+    }
+
+    private void DrawNearbyRow(NearbyStream row, int index, float scale)
     {
         var drawList = ImGui.GetWindowDrawList();
         var cell = FeedCell.Begin(drawList, NearbyRowHeight * scale, ui.HoverWash);
@@ -390,25 +434,62 @@ internal sealed partial class AetherStreamApp
             bounds.Center.Y - LivePill.Height(scale) * 0.5f);
         LivePill.Draw(drawList, pillOrigin, liveLabel, theme.Danger, (float)ImGui.GetTime(), scale);
 
+        var subtitle = NearbySubtitle(row, index);
         var textLeft = avatarCenter.X + avatarRadius + Metrics.Space.Md * scale;
         var textWidth = pillOrigin.X - Metrics.Space.Md * scale - textLeft;
         var nameHeight = Typography.LineHeight(TextStyles.BodyEmphasized);
-        var handleHeight = row.Handle.Length > 0 ? Typography.LineHeight(TextStyles.Footnote) : 0f;
-        var top = bounds.Center.Y - (nameHeight + handleHeight) * 0.5f;
+        var subtitleHeight = subtitle.Length > 0 ? Typography.LineHeight(TextStyles.Footnote) : 0f;
+        var top = bounds.Center.Y - (nameHeight + subtitleHeight) * 0.5f;
         Typography.Draw(drawList, new Vector2(textLeft, top),
             Typography.FitText(row.DisplayName, textWidth, TextStyles.BodyEmphasized), Ink.TitleInk,
             TextStyles.BodyEmphasized);
-        if (row.Handle.Length > 0)
+        if (subtitle.Length > 0)
         {
             Typography.Draw(drawList, new Vector2(textLeft, top + nameHeight),
-                Typography.FitText(row.Handle, textWidth - 12f * scale, TextStyles.Footnote), Ink.MutedInk,
+                Typography.FitText(subtitle, textWidth - 12f * scale, TextStyles.Footnote), Ink.MutedInk,
                 TextStyles.Footnote);
         }
 
         FeedCell.End(drawList, cell, Ink.Hairline);
         if (cell.Tapped)
         {
+            JoinNearbyParty(row);
+        }
+    }
+
+    private string NearbySubtitle(NearbyStream row, int index)
+    {
+        if (HiddenApps.AethernetEnabled || row.Handle.Length > 0 || row.MemberCount <= 0)
+        {
+            return row.Handle;
+        }
+
+        if (index >= nearbyWatchingText.Length)
+        {
+            Array.Resize(ref nearbyWatchingText, index + 1);
+        }
+
+        return nearbyWatchingText[index].Format(Loc.T(L.AetherStream.WatchingCount), row.MemberCount);
+    }
+
+    private void JoinNearbyParty(NearbyStream row)
+    {
+        if (HiddenApps.AethernetEnabled)
+        {
             watchAlong.Join(row.HostId);
+            activeTab = StreamTab.Party;
+            return;
+        }
+
+        var outcome = watchAlong.JoinNearby(row.Code);
+        if (outcome == PartyInviteOutcome.ServerMissing)
+        {
+            ShellToast.Show(Loc.T(L.AetherStream.PartyRelaySetupHint));
+            return;
+        }
+
+        if (outcome == PartyInviteOutcome.Joining)
+        {
             activeTab = StreamTab.Party;
         }
     }

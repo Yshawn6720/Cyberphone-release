@@ -53,10 +53,12 @@ internal sealed partial class JamSession : IDisposable
     private long lastAddSentAtTicks;
     private volatile bool stopRequested;
 
-    public JamSession(CallSignalRouter calls, PartyRelay relay, PlaybackHub hub, AethernetSession session,
-        NotificationService? notifications, IFramework? framework, Func<JamLocation>? locate = null)
+    public JamSession(CallSignalRouter calls, PartyRelay relay, RelayNearbyQuery relayNearby, PlaybackHub hub,
+        AethernetSession session, NotificationService? notifications, IFramework? framework,
+        Func<JamLocation>? locate = null)
     {
         signals = new JamSignalRouter(calls, relay);
+        this.relayNearby = relayNearby;
         this.locate = locate ?? LocateLocalPlayer;
         this.hub = hub;
         this.session = session;
@@ -144,7 +146,7 @@ internal sealed partial class JamSession : IDisposable
             Leave();
         }
 
-        if (!OpenRelay(null))
+        if (!OpenRelay(null, false))
         {
             return false;
         }
@@ -162,7 +164,11 @@ internal sealed partial class JamSession : IDisposable
         return true;
     }
 
-    public bool Join(string input)
+    public bool Join(string input) => BeginJoin(input, false);
+
+    public bool JoinNearby(string input) => BeginJoin(input, RelayMode);
+
+    private bool BeginJoin(string input, bool nearby)
     {
         var code = PartyCode.Normalize(input);
         if (code.Length == 0)
@@ -186,7 +192,7 @@ internal sealed partial class JamSession : IDisposable
             Leave();
         }
 
-        if (!OpenRelay(code))
+        if (!OpenRelay(code, nearby))
         {
             return false;
         }
@@ -498,6 +504,7 @@ internal sealed partial class JamSession : IDisposable
     {
         awaitingSinceTicks = 0;
         disconnectedSinceTicks = 0;
+        reportedLocation = default;
         var incomingJamId = message.JamId ?? string.Empty;
         var sameJam = jamId.Length > 0 && string.Equals(jamId, incomingJamId, StringComparison.Ordinal);
         jamId = incomingJamId;

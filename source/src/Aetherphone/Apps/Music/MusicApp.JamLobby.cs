@@ -111,7 +111,7 @@ internal sealed partial class MusicApp
 
         SectionHeader.Draw(ui, Loc.T(L.Music.Jam.JoinHeader), false);
         DrawJamCodeJoin(scale);
-        if (!jam.RelayMode)
+        if (signedIn)
         {
             DrawJamNearby(scale);
         }

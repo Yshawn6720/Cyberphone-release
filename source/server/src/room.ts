@@ -1,5 +1,6 @@
 import { DurableObject } from "cloudflare:workers";
 import type { Env } from "./index";
+import type { JamTrack } from "./jam";
 import {
   ALONE_TIMEOUT_MS,
   CONTROL_ACTIONS,
@@ -8,6 +9,7 @@ import {
   FEATURE_PARTY,
   HOST_RATE,
   MAX_ADMITTED,
+  MAX_FAILURE_REASON,
   MAX_MEMBERS,
   MAX_MESSAGE_BYTES,
   MAX_PENDING_SUGGESTIONS,
@@ -20,14 +22,17 @@ import {
   ROOM_LIFETIME_MS,
   SignalType,
   VIEWER_RATE,
+  locationId,
+  nearbyCode,
   normalizeCode,
 } from "./protocol";
-import { type Bucket, type Message, OPEN, charge, exceedsUtf8Bytes, freshBucket, parseMessage, send } from "./wire";
+import { type Bucket, type Message, OPEN, cappedText, charge, exceedsUtf8Bytes, freshBucket, parseMessage, send } from "./wire";
 
 export const JOIN_HEADER = "X-Relay-Join";
 // The slot registry asks a room who holds its slot on this path; client requests reach rooms only as /rt.
 export const PROBE_PATH = "/probe";
 
+// nearby: the ticket came from a nearby list, so code is the room's nearby code and the join always needs approval.
 export interface JoinTicket {
   role: "host" | "viewer";
   code: string;
@@ -35,17 +40,33 @@ export interface JoinTicket {
   name: string;
   world: string;
   address: string;
+  nearby?: boolean;
+}
+
+// What a discoverable room shows in a nearby list: the code here is its nearby code, never the room code, and the
+// only name is the host's character name, which the host agreed to show by turning discovery on.
+export interface RoomListing {
+  code: string;
+  territoryId: number;
+  worldId: number;
+  hostName: string;
+  memberCount: number;
+  title: string | null;
+  jamId: string | null;
+  track: JamTrack | null;
 }
 
 // occupied: a host ticket from another character would be refused. hostId: the connected host. address: the
-// creator's client address, which keeps counting against that address for the room's whole life.
+// creator's client address, which keeps counting against that address for the room's whole life. listing: set only
+// while the host lets nearby players find the room.
 export interface SlotOccupant {
   occupied: boolean;
   hostId: string | null;
   address: string | null;
+  listing?: RoomListing | null;
 }
 
-export const VACANT: SlotOccupant = { occupied: false, hostId: null, address: null };
+export const VACANT: SlotOccupant = { occupied: false, hostId: null, address: null, listing: null };
 
 export function isProbe(request: Request): boolean {
   return new URL(request.url).pathname === PROBE_PATH;
@@ -55,11 +76,23 @@ export function occupantResponse(occupant: SlotOccupant): Response {
   return Response.json(occupant);
 }
 
+export function ticketMatches(ticket: JoinTicket, roomCode: string, nearby: string | null): boolean {
+  return ticket.nearby === true ? nearby !== null && ticket.code === nearby : ticket.code === roomCode;
+}
+
 interface Grant {
   userId: string;
   flags: number;
 }
 
+interface NearbySpot {
+  code: string;
+  territoryId: number;
+  worldId: number;
+}
+
+// nearby stays null until the host's state turns discovery on, so a private party keeps its attachment as small as
+// before.
 interface RoomState {
   code: string;
   address: string;
@@ -70,6 +103,7 @@ interface RoomState {
   nextSequence: number;
   approvalRequired: boolean;
   admitted: string[];
+  nearby: NearbySpot | null;
 }
 
 interface Member {
@@ -80,6 +114,7 @@ interface Member {
   joined: boolean;
   pendingJoin: boolean;
   awaiting: boolean;
+  nearby: boolean;
   gone: boolean;
   sequence: number;
   bucket: Bucket;
@@ -190,6 +225,23 @@ function suggestionUrl(value: unknown): string | null {
   return protocol === "https:" || protocol === "http:" ? value : null;
 }
 
+// The host's state decides discovery: true keeps (or mints) the nearby code, false drops the listing, and a state
+// without the flag keeps a listing that already exists. A state without a location keeps the last one reported.
+// discoverable counts only beside nearbyOptIn: 1.3.4.0 and earlier send discoverable: true by default and hide the
+// switch on a relay, so their hosts never chose to be listed.
+function nearbySpot(room: RoomState, message: Message): NearbySpot | null {
+  const discoverable = message.discoverable === true ? message.nearbyOptIn === true : message.discoverable;
+  if (discoverable === false || (discoverable !== true && room.nearby === null)) {
+    return null;
+  }
+
+  return {
+    code: room.nearby?.code ?? nearbyCode(room.code),
+    territoryId: locationId(message.territoryId) ?? room.nearby?.territoryId ?? 0,
+    worldId: locationId(message.worldId) ?? room.nearby?.worldId ?? 0,
+  };
+}
+
 export class PartyRoom extends DurableObject<Env> {
   async fetch(request: Request): Promise<Response> {
     if (isProbe(request)) {
@@ -229,13 +281,15 @@ export class PartyRoom extends DurableObject<Env> {
         nextSequence: 1,
         approvalRequired: false,
         admitted: [],
+        nearby: null,
       };
       const response = this.accept(this.newMember(ticket, "host", 0, now, room));
       await this.ctx.storage.setAlarm(roomDeadline(room));
       return response;
     }
 
-    if (host === undefined || host.member.room === null || host.member.room.code !== ticket.code) {
+    const joining = host?.member.room ?? null;
+    if (host === undefined || joining === null || !ticketMatches(ticket, joining.code, joining.nearby?.code ?? null)) {
       return new Response("room not found", { status: 404 });
     }
 
@@ -257,7 +311,7 @@ export class PartyRoom extends DurableObject<Env> {
       return new Response("party full", { status: 409 });
     }
 
-    const room = host.member.room;
+    const room = joining;
     const sequence = room.nextSequence;
     room.nextSequence++;
     host.socket.serializeAttachment(host.member);
@@ -336,6 +390,9 @@ export class PartyRoom extends DurableObject<Env> {
       case SignalType.queueDeny:
         this.onQueueDecision(member, message, "denied");
         return;
+      case SignalType.playbackFailed:
+        this.onPlaybackFailed(member, message);
+        return;
     }
   }
 
@@ -364,12 +421,44 @@ export class PartyRoom extends DurableObject<Env> {
   }
 
   private occupant(): SlotOccupant {
-    const host = this.connections().find((connection) => connection.member.role === "host");
+    const connections = this.connections();
+    const host = connections.find((connection) => connection.member.role === "host");
     if (host === undefined) {
       return VACANT;
     }
 
-    return { occupied: true, hostId: host.member.id, address: host.member.room?.address ?? null };
+    const room = host.member.room;
+    return {
+      occupied: true,
+      hostId: host.member.id,
+      address: room?.address ?? null,
+      listing: room === null ? null : this.listing(host.member, room, connections),
+    };
+  }
+
+  private listing(host: Member, room: RoomState, connections: Connection[]): RoomListing | null {
+    const nearby = room.nearby;
+    if (nearby === null || nearby.territoryId === 0 || nearby.worldId === 0) {
+      return null;
+    }
+
+    let memberCount = 1;
+    for (const connection of connections) {
+      if (connection.member.role === "viewer" && connection.member.joined) {
+        memberCount++;
+      }
+    }
+
+    return {
+      code: nearby.code,
+      territoryId: nearby.territoryId,
+      worldId: nearby.worldId,
+      hostName: host.name,
+      memberCount,
+      title: null,
+      jamId: null,
+      track: null,
+    };
   }
 
   private newMember(ticket: JoinTicket, role: "host" | "viewer", sequence: number, now: number, room: RoomState | null): Member {
@@ -382,6 +471,7 @@ export class PartyRoom extends DurableObject<Env> {
       joined: role === "host",
       pendingJoin: false,
       awaiting: false,
+      nearby: role === "viewer" && ticket.nearby === true,
       gone: false,
       sequence,
       bucket: freshBucket(rate, now),
@@ -481,6 +571,8 @@ export class PartyRoom extends DurableObject<Env> {
       room.approvalRequired = message.approvalRequired;
     }
 
+    room.nearby = nearbySpot(room, message);
+
     const transferTo = room.pendingTransfer;
     if (transferTo !== null) {
       const target = connections.find((connection) => connection.member.id === transferTo
@@ -500,7 +592,7 @@ export class PartyRoom extends DurableObject<Env> {
     let approvalLifted = false;
     for (const connection of connections) {
       const candidate = connection.member;
-      const lifted = candidate.awaiting && !room.approvalRequired;
+      const lifted = candidate.awaiting && !candidate.nearby && !room.approvalRequired;
       if (candidate.pendingJoin || lifted) {
         approvalLifted ||= lifted;
         candidate.pendingJoin = false;
@@ -549,7 +641,7 @@ export class PartyRoom extends DurableObject<Env> {
       return;
     }
 
-    if (!member.pendingJoin && room.approvalRequired && !room.admitted.includes(member.id)) {
+    if (!member.pendingJoin && (room.approvalRequired || member.nearby) && !room.admitted.includes(member.id)) {
       member.awaiting = true;
       socket.serializeAttachment(member);
       send(socket, { type: SignalType.joinPending, hostId: host.member.id });
@@ -700,6 +792,30 @@ export class PartyRoom extends DurableObject<Env> {
       userId: member.id,
       action: message.action,
       positionSeconds: typeof message.positionSeconds === "number" ? message.positionSeconds : null,
+      from: participant(member, member.sequence),
+    });
+  }
+
+  // Only the host learns who could not play the video, so it can pick another link; the rest of the room hears
+  // nothing.
+  private onPlaybackFailed(member: Member, message: Message): void {
+    const url = message.url;
+    if (member.role !== "viewer" || !member.joined || typeof url !== "string" || url.length === 0
+      || url.length > MAX_SUGGESTION_URL) {
+      return;
+    }
+
+    const host = this.connections().find((connection) => connection.member.role === "host");
+    if (host === undefined) {
+      return;
+    }
+
+    send(host.socket, {
+      type: SignalType.viewerFailed,
+      hostId: host.member.id,
+      userId: member.id,
+      url,
+      reason: cappedText(message.reason, MAX_FAILURE_REASON),
       from: participant(member, member.sequence),
     });
   }

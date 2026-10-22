@@ -1,5 +1,7 @@
 import announcements from "../content/announcements.json";
 import calendar from "../content/calendar.json";
+import newsTaiwan from "../content/news-tw.json";
+import radio from "../content/radio.json";
 
 export const CONTENT_MAX_AGE_SECONDS = 6 * 60 * 60;
 const ETAG_BYTES = 16;
@@ -57,3 +59,5 @@ export class StaticDocument {
 
 export const ANNOUNCEMENTS = new StaticDocument(announcements);
 export const CALENDAR = new StaticDocument(calendar);
+export const NEWS_TAIWAN = new StaticDocument(newsTaiwan);
+export const RADIO = new StaticDocument(radio);

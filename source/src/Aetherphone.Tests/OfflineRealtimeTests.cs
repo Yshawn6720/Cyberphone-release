@@ -13,12 +13,12 @@ public sealed class OfflineRealtimeTests
         SignalType.StreamState, SignalType.StreamJoin, SignalType.StreamLeave, SignalType.StreamControl,
         SignalType.StreamTransfer, SignalType.StreamApprove, SignalType.StreamDeny, SignalType.StreamKick,
         SignalType.StreamReact, SignalType.StreamQueueSuggest, SignalType.StreamQueueApprove,
-        SignalType.StreamQueueDeny,
+        SignalType.StreamQueueDeny, SignalType.StreamPlaybackFailed,
     ];
 
     private static readonly string[] RelayRefused =
     [
-        SignalType.JamNearby, SignalType.Invite, SignalType.StreamNearby, SignalType.StreamPlaybackFailed,
+        SignalType.JamNearby, SignalType.Invite, SignalType.StreamNearby,
     ];
 
     [Theory]

@@ -67,8 +67,7 @@ internal sealed partial class NewsApp
         }
 
         articleButtons[0] = new NavBarButton(IconGlyph.Of(FontAwesomeIcon.Link), Loc.T(L.News.CopyLink));
-        articleButtons[1] = new NavBarButton(IconGlyph.Of(FontAwesomeIcon.ExternalLinkAlt),
-            Loc.T(L.News.ReadOnLodestone));
+        articleButtons[1] = new NavBarButton(IconGlyph.Of(FontAwesomeIcon.ExternalLinkAlt), ReadOriginalLabel());
         var pressed = AppHeader.EndLargeTitle(in frame, context, ArticleNavId, story.Item.Title, NavBarStyle.From(ui),
             articleButtons, backTitle, back);
         if (pressed == 0)
@@ -77,7 +76,7 @@ internal sealed partial class NewsApp
         }
         else if (pressed == 1)
         {
-            OpenOnLodestone(story);
+            OpenOriginal(story);
         }
     }
 
@@ -143,9 +142,15 @@ internal sealed partial class NewsApp
                 TextStyles.Body, width);
         }
 
-        if (paragraphs.Length == 0)
+        if (paragraphs.Length == 0 || IsRelayServed(locale))
         {
-            cursorY += Typography.DrawWrappedLeft(new Vector2(left, cursorY), Loc.T(L.News.FullPostHint), ui.MutedInk,
+            if (paragraphs.Length > 0)
+            {
+                cursorY += ParagraphGap * scale;
+            }
+
+            cursorY += Typography.DrawWrappedLeft(new Vector2(left, cursorY),
+                Loc.T(IsRelayServed(locale) ? L.News.FullPostOfficialSiteHint : L.News.FullPostHint), ui.MutedInk,
                 TextStyles.Subheadline, width);
         }
 
@@ -157,9 +162,9 @@ internal sealed partial class NewsApp
         cursorY += ActionGap * scale;
         var action = new Rect(new Vector2(left, cursorY), new Vector2(left + width, cursorY + ActionHeight * scale));
         if (story.Item.Url.Length > 0 &&
-            Button.Draw(drawList, action, Loc.T(L.News.ReadOnLodestone), ui.Ink, id: ReadButtonId))
+            Button.Draw(drawList, action, ReadOriginalLabel(), ui.Ink, id: ReadButtonId))
         {
-            OpenOnLodestone(story);
+            OpenOriginal(story);
         }
 
         cursorY = action.Max.Y;
@@ -202,7 +207,10 @@ internal sealed partial class NewsApp
         toast.Show(Loc.T(L.Common.Copied));
     }
 
-    private static void OpenOnLodestone(NewsStory story)
+    private string ReadOriginalLabel() =>
+        Loc.T(IsRelayServed(locale) ? L.News.ReadOnOfficialSite : L.News.ReadOnLodestone);
+
+    private static void OpenOriginal(NewsStory story)
     {
         if (story.Item.Url.Length == 0)
         {

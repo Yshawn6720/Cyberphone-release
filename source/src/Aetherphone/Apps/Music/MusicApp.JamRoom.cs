@@ -32,20 +32,17 @@ internal sealed partial class MusicApp
         DrawJamStatusBanner(scale);
         DrawJamCodeCard(scale);
         DrawJamNowPlayingRow(scale);
-        if (jam.RelayMode)
-        {
-            DrawJamMembers(scale);
-            DrawJamExitButtons(scale);
-            return;
-        }
-
         DrawJamReactionBlock(scale);
         if (jam.IsHost && jam.JoinRequests.Length > 0)
         {
             DrawJamRequests(scale);
         }
 
-        DrawJamChat(scale);
+        if (!jam.RelayMode)
+        {
+            DrawJamChat(scale);
+        }
+
         DrawJamMembers(scale);
         if (jam.IsHost)
         {

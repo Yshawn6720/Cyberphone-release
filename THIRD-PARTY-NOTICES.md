@@ -243,12 +243,12 @@ redistributed in binary form.
 
 - Source: https://github.com/SixLabors/ImageSharp
 - License: Six Labors Split License, version 1.0
-  (https://github.com/SixLabors/ImageSharp/blob/main/LICENSE). Aetherphone is
+  (https://github.com/SixLabors/ImageSharp/blob/main/LICENSE). Cyberphone is
   an open-source project consuming the package unmodified, which the Split
   License covers under the terms of the Apache License, Version 2.0
   (https://www.apache.org/licenses/LICENSE-2.0). Six Labors granted the
-  project an assembly-scoped Community license for the Aetherphone assembly
-  (`sixlabors.lic` in the repository root, valid until 2028-01-09), which the
+  project an assembly-scoped Community license for the Cyberphone assembly
+  (`sixlabors.lic` in the repository root, valid until 2028-01-20), which the
   package validates at build time.
 
 ## Bouncy Castle

@@ -13,13 +13,13 @@ public sealed class JamRelayLoopbackTests
     [
         SignalType.JamStart, SignalType.JamJoin, SignalType.JamLeave, SignalType.JamEnd, SignalType.JamState,
         SignalType.JamControl, SignalType.JamTransfer, SignalType.JamQueueAdd, SignalType.JamQueueAdvance,
-        SignalType.JamQueueRemove, SignalType.JamQueueMove,
+        SignalType.JamQueueRemove, SignalType.JamQueueMove, SignalType.JamApprove, SignalType.JamDeny,
+        SignalType.JamKick, SignalType.JamReact, SignalType.JamSettings, SignalType.JamNearby,
     ];
 
     private static readonly string[] JamRefused =
     [
-        SignalType.JamNearby, SignalType.JamInvite, SignalType.JamReact, SignalType.JamKick, SignalType.JamSettings,
-        SignalType.JamApprove, SignalType.StreamState,
+        SignalType.JamInvite, SignalType.JamChat, SignalType.JamDeleteMessage, SignalType.StreamState,
     ];
 
     private static JamSignalRouter CreateRouter(string relayUrl)
@@ -61,6 +61,20 @@ public sealed class JamRelayLoopbackTests
         Assert.True(await LoopbackRelayServer.WaitUntilAsync(() => router.Connected, PartyRelayLoopbackTests.Patience));
         var request = Assert.Single(server.Requests);
         Assert.StartsWith("GET /rt?kind=jam&create=1&", LoopbackRelayServer.RequestLine(request),
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task JoiningFromTheNearbyListAsksWithTheNearbyCode()
+    {
+        using var server = new LoopbackRelayServer();
+        using var router = CreateRouter(server.Url);
+
+        Assert.True(router.BeginRelay("ABC234", nearby: true));
+
+        Assert.True(await LoopbackRelayServer.WaitUntilAsync(() => router.Connected, PartyRelayLoopbackTests.Patience));
+        var request = Assert.Single(server.Requests);
+        Assert.StartsWith("GET /rt?kind=jam&nearby=ABC234&", LoopbackRelayServer.RequestLine(request),
             StringComparison.Ordinal);
     }
 

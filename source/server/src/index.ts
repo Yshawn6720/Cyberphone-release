@@ -1,12 +1,24 @@
 import { bearerOf, inviteCodes, matchingInvite, parseIdentity, signToken, verifyAnyToken, type Identity } from "./auth";
-import { ANNOUNCEMENTS, CALENDAR, type StaticDocument } from "./content";
-import { CLAIM_PATH, RELEASE_PATH, roomsOf, slotStub, type SlotClaim, type SlotDecision, type SlotRelease } from "./registry";
-import { JOIN_HEADER, type JoinTicket } from "./room";
+import { ANNOUNCEMENTS, CALENDAR, NEWS_TAIWAN, RADIO, type StaticDocument } from "./content";
+import {
+  CLAIM_PATH,
+  NEARBY_PATH,
+  RELEASE_PATH,
+  roomsOf,
+  slotStub,
+  type NearbyAnswer,
+  type NearbyQuery,
+  type SlotClaim,
+  type SlotDecision,
+  type SlotRelease,
+} from "./registry";
+import { JOIN_HEADER, type JoinTicket, type RoomListing } from "./room";
 import {
   RATE_RETRY_AFTER_SECONDS,
   REFUSED_SIGNAL,
   RefusalClose,
   callsEnabled,
+  locationId,
   maxRooms,
   maxRoomsPerAddress,
   normalizeCode,
@@ -212,6 +224,65 @@ function refuse(reason: RefusalReason, details: Record<string, number> = {}): Re
   return new Response(null, { status: 101, webSocket: client });
 }
 
+function nearbyEntry(kind: RoomKind, listing: RoomListing): Record<string, unknown> {
+  return kind === "party"
+    ? {
+      hostId: "",
+      name: listing.hostName,
+      world: "",
+      displayName: listing.hostName,
+      handle: "",
+      avatarUrl: null,
+      code: listing.code,
+      memberCount: listing.memberCount,
+    }
+    : {
+      jamId: listing.jamId,
+      code: listing.code,
+      title: listing.title,
+      hostId: "",
+      hostDisplayName: listing.hostName,
+      hostHandle: "",
+      hostAvatarUrl: null,
+      memberCount: listing.memberCount,
+      track: listing.track,
+    };
+}
+
+// Lists the discoverable parties or Jams whose host stands in the asker's zone. Only the host's character name and
+// the room's nearby code leave the relay; joining with that code always waits for the host's approval.
+async function nearbyRooms(request: Request, env: Env, url: URL, invites: readonly string[]): Promise<Response> {
+  const bearer = bearerOf(request);
+  if (bearer === null || await matchingInvite(bearer, invites) === null) {
+    return json({ error: "unauthorized" }, 401);
+  }
+
+  const kind = roomKind(url.searchParams.get("kind"));
+  const territoryId = locationId(url.searchParams.get("territory"));
+  const worldId = locationId(url.searchParams.get("world"));
+  if ((kind !== "party" && kind !== "jam") || territoryId === null || worldId === null) {
+    return json({ error: "bad_request" }, 400);
+  }
+
+  const query: NearbyQuery = { kind, territoryId, worldId, address: addressOf(request), roomCount: maxRoomsFor(env, kind) };
+  const response = await registryOf(env, kind).fetch(`https://relay.internal${NEARBY_PATH}`, {
+    method: "POST",
+    body: JSON.stringify(query),
+  });
+  const answer = await response.json() as NearbyAnswer;
+  if ("retryAfterSeconds" in answer) {
+    return new Response(JSON.stringify({ error: "rate_limited", retryAfterSeconds: answer.retryAfterSeconds }), {
+      status: 429,
+      headers: { "Content-Type": "application/json", "Retry-After": `${answer.retryAfterSeconds}` },
+    });
+  }
+
+  const entries = answer.listings.map((listing) => nearbyEntry(kind, listing));
+  return json(kind === "party"
+    ? { type: "stream.nearby.roster", nearbyStreams: entries }
+    : { type: "jam.nearby.roster", nearbyJams: entries });
+}
+
 async function realtime(request: Request, env: Env, url: URL, invites: readonly string[]): Promise<Response> {
   if (request.headers.get("Upgrade") !== "websocket") {
     return json({ error: "upgrade_required" }, 426);
@@ -227,9 +298,10 @@ async function realtime(request: Request, env: Env, url: URL, invites: readonly 
     return refuse("calls_disabled");
   }
 
-  const code = normalizeCode(url.searchParams.get("code"));
+  const nearby = normalizeCode(url.searchParams.get("nearby"));
+  const code = nearby ?? normalizeCode(url.searchParams.get("code"));
   const create = url.searchParams.get("create") === "1";
-  if (kind === null || (code === null && !create)) {
+  if (kind === null || (code === null && !create) || (nearby !== null && kind !== "party" && kind !== "jam")) {
     return json({ error: "bad_request" }, 400);
   }
 
@@ -246,7 +318,7 @@ async function realtime(request: Request, env: Env, url: URL, invites: readonly 
       return json({ error: "room_not_found" }, 404);
     }
 
-    return forward(request, rooms, slot, { role: "viewer", code, address, ...identity });
+    return forward(request, rooms, slot, { role: "viewer", code, address, nearby: nearby !== null, ...identity });
   }
 
   const perAddress = maxRoomsPerAddress(env.MAX_ROOMS_PER_ADDRESS);
@@ -287,10 +359,16 @@ export default {
         return me(request, invites);
       case "GET /rt":
         return realtime(request, env, url, invites);
+      case "GET /rooms/nearby":
+        return nearbyRooms(request, env, url, invites);
       case "GET /content/announcements":
         return content(request, invites, ANNOUNCEMENTS);
       case "GET /content/calendar":
         return content(request, invites, CALENDAR);
+      case "GET /content/news-tw":
+        return content(request, invites, NEWS_TAIWAN);
+      case "GET /content/radio":
+        return content(request, invites, RADIO);
       default:
         return json({ error: "not_found" }, 404);
     }

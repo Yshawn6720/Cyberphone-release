@@ -13,6 +13,7 @@ internal enum RelayContentStatus : byte
     Revalidated,
     Fetched,
     Failed,
+    Unsupported,
 }
 
 internal readonly record struct RelayContentResult<T>(RelayContentStatus Status, T? Value, AepFailure Failure)
@@ -30,6 +31,7 @@ internal sealed class RelayContentFeed<T> where T : class
 {
     public static readonly TimeSpan RefreshInterval = TimeSpan.FromHours(6);
     private const string ContentPathPrefix = "/content/";
+    private const int NotFoundStatus = 404;
 
     private readonly HttpService http;
     private readonly Configuration configuration;
@@ -124,7 +126,8 @@ internal sealed class RelayContentFeed<T> where T : class
         if (response is not { } answer)
         {
             var failure = reported.Failed ? reported : AepFailure.Transport(AepFailureKind.Offline);
-            return new RelayContentResult<T>(RelayContentStatus.Failed, cached?.Value, failure);
+            var status = failure.StatusCode == NotFoundStatus ? RelayContentStatus.Unsupported : RelayContentStatus.Failed;
+            return new RelayContentResult<T>(status, cached?.Value, failure);
         }
 
         var checkedAt = now.ToUnixTimeMilliseconds();

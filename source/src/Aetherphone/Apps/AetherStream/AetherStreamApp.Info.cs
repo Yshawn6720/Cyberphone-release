@@ -21,6 +21,7 @@ internal sealed partial class AetherStreamApp
     private static readonly Vector4 InfoCodesTint = new(0.98f, 0.48f, 0.72f, 1f);
     private static readonly Vector4 InfoFailuresTint = new(1f, 0.62f, 0.26f, 1f);
     private static readonly Vector4 InfoVpnTint = new(0.30f, 0.78f, 0.86f, 1f);
+    private static readonly Vector4 InfoApprovalTint = new(0.98f, 0.78f, 0.30f, 1f);
 
     private static readonly string[] PlayingSites = ["YouTube", "Twitch", "Kick", "Dailymotion", "Bilibili", "Niconico"];
 
@@ -43,15 +44,23 @@ internal sealed partial class AetherStreamApp
             Gap(Metrics.Space.Sm);
             DrawSitesCard(scale);
 
+            Gap(Metrics.Space.Lg);
+            SectionLabel(Loc.T(L.AetherStream.InfoSectionTogether));
+            DrawInfoCard(FontAwesomeIcon.Users, InfoPartiesTint, L.AetherStream.InfoPartiesTitle,
+                L.AetherStream.InfoPartiesBody);
+            Gap(Metrics.Space.Sm);
             if (HiddenApps.AethernetEnabled)
             {
-                Gap(Metrics.Space.Lg);
-                SectionLabel(Loc.T(L.AetherStream.InfoSectionTogether));
-                DrawInfoCard(FontAwesomeIcon.Users, InfoPartiesTint, L.AetherStream.InfoPartiesTitle,
-                    L.AetherStream.InfoPartiesBody);
-                Gap(Metrics.Space.Sm);
                 DrawInfoCard(FontAwesomeIcon.TicketAlt, InfoCodesTint, L.AetherStream.InfoCodesTitle,
                     L.AetherStream.InfoCodesBody);
+            }
+            else
+            {
+                DrawInfoCard(FontAwesomeIcon.TicketAlt, InfoCodesTint, L.AetherStream.InfoRelayInviteTitle,
+                    L.AetherStream.InfoRelayInviteBody);
+                Gap(Metrics.Space.Sm);
+                DrawInfoCard(FontAwesomeIcon.UserCheck, InfoApprovalTint, L.AetherStream.InfoRelayApprovalTitle,
+                    L.AetherStream.InfoRelayApprovalBody);
             }
 
             Gap(Metrics.Space.Lg);

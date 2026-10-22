@@ -37,6 +37,15 @@ export function parseMessage(raw: string): Message | null {
   return typeof parsed === "object" && parsed !== null && !Array.isArray(parsed) ? parsed as Message : null;
 }
 
+export function cappedText(value: unknown, limit: number): string | null {
+  if (typeof value !== "string") {
+    return null;
+  }
+
+  const text = value.trim();
+  return text.length === 0 ? null : text.slice(0, limit);
+}
+
 export function exceedsUtf8Bytes(text: string, limit: number): boolean {
   if (text.length > limit) {
     return true;

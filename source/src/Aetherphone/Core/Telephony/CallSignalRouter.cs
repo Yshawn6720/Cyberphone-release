@@ -74,10 +74,10 @@ internal sealed class CallSignalRouter : IDisposable
         return true;
     }
 
-    public bool BeginRelay(string? code)
+    public bool BeginRelay(string? code, bool nearby = false)
     {
         relayConnection.Stop();
-        if (!relay.Begin(code))
+        if (!relay.Begin(code, nearby))
         {
             relay.End();
             return false;
@@ -105,7 +105,8 @@ internal sealed class CallSignalRouter : IDisposable
     private static bool IsRelayUplink(string type) => type is SignalType.StreamState or SignalType.StreamJoin
         or SignalType.StreamLeave or SignalType.StreamControl or SignalType.StreamTransfer
         or SignalType.StreamApprove or SignalType.StreamDeny or SignalType.StreamKick or SignalType.StreamReact
-        or SignalType.StreamQueueSuggest or SignalType.StreamQueueApprove or SignalType.StreamQueueDeny;
+        or SignalType.StreamQueueSuggest or SignalType.StreamQueueApprove or SignalType.StreamQueueDeny
+        or SignalType.StreamPlaybackFailed;
 
     private void OnConnected(bool isConnected)
     {

@@ -5,19 +5,19 @@ internal static class ConfigMigrations
     private static readonly (string Old, string New)[] TypeRenames =
     {
         ("Aetherphone.Apps.DirectMessages.StarredMessage, Aetherphone",
-            "Aetherphone.Core.Message.StarredMessage, Aetherphone"),
+            "Aetherphone.Core.Message.StarredMessage, Cyberphone"),
         ("Aetherphone.Apps.Message.StarredMessage, Aetherphone",
-            "Aetherphone.Core.Message.StarredMessage, Aetherphone"),
+            "Aetherphone.Core.Message.StarredMessage, Cyberphone"),
         ("Aetherphone.Apps.Calendar.CalendarCustomEvent, Aetherphone",
-            "Aetherphone.Core.Calendar.CalendarCustomEvent, Aetherphone"),
+            "Aetherphone.Core.Calendar.CalendarCustomEvent, Cyberphone"),
         ("Aetherphone.Apps.Notes.PhoneNote, Aetherphone",
-            "Aetherphone.Core.Notes.PhoneNote, Aetherphone"),
+            "Aetherphone.Core.Notes.PhoneNote, Cyberphone"),
         ("Aetherphone.Apps.Notes.ReminderItem, Aetherphone",
-            "Aetherphone.Core.Notes.ReminderItem, Aetherphone"),
+            "Aetherphone.Core.Notes.ReminderItem, Cyberphone"),
         ("Aetherphone.Apps.Clock.WorldClockEntry, Aetherphone",
-            "Aetherphone.Core.Clock.WorldClockEntry, Aetherphone"),
+            "Aetherphone.Core.Clock.WorldClockEntry, Cyberphone"),
         ("Aetherphone.Apps.Clock.AlarmEntry, Aetherphone",
-            "Aetherphone.Core.Clock.AlarmEntry, Aetherphone"),
+            "Aetherphone.Core.Clock.AlarmEntry, Cyberphone"),
     };
 
     public static string RewriteTypeNames(string json)

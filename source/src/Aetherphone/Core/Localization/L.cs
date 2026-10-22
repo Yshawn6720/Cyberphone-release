@@ -6108,6 +6108,14 @@ internal static class L
         public static readonly LocString CommunityEmpty = new("music.communityEmpty", "No community stations yet");
         public static readonly LocString CommunityOffline = new("music.communityOffline",
             "Could not load stations");
+        public static readonly LocString RelayStations = new("music.relayStations", "Curated stations");
+        public static readonly LocString RelayStationsOffline = new("music.relayStationsOffline",
+            "Could not load stations from your server");
+        public static readonly LocString RelayStationsEmpty = new("music.relayStationsEmpty",
+            "Your server lists no stations yet");
+        public static readonly LocString RelayStationsUnsupported = new("music.relayStationsUnsupported",
+            "Your party server doesn't offer curated stations yet. Ask whoever runs it to update it.");
+        public static readonly LocString OpenStationSite = new("music.openStationSite", "Open station website");
         public static readonly LocString StationGone = new("music.stationGone", "Station unavailable");
         public static readonly LocString StationGoneSub = new("music.stationGoneSub",
             "It may have been closed or hidden by its host");
@@ -6424,6 +6432,8 @@ internal static class L
                 "Let people nearby find this Jam");
             public static readonly LocString DiscoverableHint = new("music.jam.discoverableHint",
                 "Players in your zone on this world see it under Nearby Jams and can join with one tap");
+            public static readonly LocString DiscoverableRelayHint = new("music.jam.discoverableRelayHint",
+                "Players in your zone on this world see it under Nearby Jams. Tapping it sends you a join request, and they get in only after you approve. Off for every new Jam.");
             public static readonly LocString NearbyHeader = new("music.jam.nearbyHeader", "Nearby Jams");
             public static readonly LocString NearbyIdle = new("music.jam.nearbyIdle", "Nothing playing yet");
             public static readonly LocPlural NearbyCount =
@@ -7739,6 +7749,9 @@ internal static class L
         public static readonly LocString SettingsDiscoverableHint = new(
             "aetherstream.settingsDiscoverableHint",
             "Players in the same zone can find your stream under Nearby. Off keeps it to people you invite, though the screen itself stays visible.");
+        public static readonly LocString SettingsDiscoverableRelayHint = new(
+            "aetherstream.settingsDiscoverableRelayHint",
+            "Players in the same zone can find this party under Nearby. Tapping it sends you a join request, and they get in only after you approve. Off for every new party.");
         public static readonly LocString SettingsHardwareDecoding = new("aetherstream.settingsHardwareDecoding",
             "Hardware decoding");
         public static readonly LocString SettingsHardwareDecodingHint = new(
@@ -7754,6 +7767,10 @@ internal static class L
             "Couldn't reach the server. Check your connection and try again.");
         public static readonly LocString JoinNearbyHeader = new("aetherstream.joinNearbyHeader",
             "Parties nearby");
+        public static readonly LocString NearbyEmpty = new("aetherstream.nearbyEmpty",
+            "No parties nearby right now. Parties appear here when their host lists them in this zone.");
+        public static readonly LocString NearbyUnsupported = new("aetherstream.nearbyUnsupported",
+            "Your party server doesn't support nearby lists yet. Ask whoever runs it to update it.");
         public static readonly LocString JoinSearchFailedTitle = new("aetherstream.joinSearchFailedTitle",
             "Search unavailable");
         public static readonly LocString StreamUnavailableTitle = new("aetherstream.streamUnavailableTitle",
@@ -7830,6 +7847,14 @@ internal static class L
         public static readonly LocString InfoPartiesTitle = new("aetherstream.infoPartiesTitle", "Watch parties");
         public static readonly LocString InfoPartiesBody = new("aetherstream.infoPartiesBody",
             "Everyone plays the same link on their own phone, so it has to be reachable for every viewer. For a file from your own machine, each viewer picks their own copy of the same file.");
+        public static readonly LocString InfoRelayInviteTitle = new("aetherstream.infoRelayInviteTitle",
+            "Inviting friends");
+        public static readonly LocString InfoRelayInviteBody = new("aetherstream.infoRelayInviteBody",
+            "Add your server's connection code in MogCast Settings, start a party, then tap Copy code and send the invite to your friends. They paste it on the Party page to join from any world or data center, with nothing to set up, and each person gets a screen where they are standing.");
+        public static readonly LocString InfoRelayApprovalTitle = new("aetherstream.infoRelayApprovalTitle",
+            "Choosing who joins");
+        public static readonly LocString InfoRelayApprovalBody = new("aetherstream.infoRelayApprovalBody",
+            "Turn on Require approval to join in Party Settings, and new viewers wait under Waiting to join until you approve or deny them. Anyone you remove from the party does not rejoin on their own.");
 
         public static readonly LocString KickedTitle = new("aetherstream.kickedTitle", "Removed from the party");
         public static readonly LocString KickedBody = new("aetherstream.kickedBody",
@@ -8142,7 +8167,7 @@ internal static class L
             "This connection code can't be used. Paste the whole code from your server's owner, like party.example.com#CODE.");
         public static readonly LocString SettingsRelayServer = new("aetherstream.settingsRelayServer", "Server: {0}");
         public static readonly LocString SettingsRelayContentHint = new("aetherstream.settingsRelayContentHint",
-            "The same server also brings Announcements and the in-game events in Calendar.");
+            "The same server also brings Announcements, the in-game events in Calendar, the curated stations in Music Radio, and news for the Traditional Chinese client.");
         public static readonly LocString PartyRelaySetupHint = new("aetherstream.partyRelaySetupHint",
             "Paste the invite a friend sent you below to join. To host your own party, add a connection code in MogCast Settings.");
         public static readonly LocString InviteShape = new("aetherstream.inviteShape",
@@ -8831,6 +8856,8 @@ internal static class L
         public static readonly LocString RegionGermany = new("news.regionGermany", "Germany");
         public static readonly LocString RegionJapan = new("news.regionJapan", "Japan");
         public static readonly LocString RegionChina = new("news.regionChina", "China");
+        public static readonly LocString RegionTraditionalChinese = new("news.regionTraditionalChinese",
+            "Traditional Chinese");
         public static readonly LocString Status = new("news.status", "Status");
         public static readonly LocString Refresh = new("news.refresh", "Refresh");
         public static readonly LocString CouldntReachHint = new("news.couldntReachHint", "Check your connection, then try again.");
@@ -8850,6 +8877,18 @@ internal static class L
         public static readonly LocString FullPostHint = new("news.fullPostHint", "The full post is on the Lodestone.");
         public static readonly LocString CopyLink = new("news.copyLink", "Copy Link");
         public static readonly LocString ReadOnLodestone = new("news.readOnLodestone", "Read on the Lodestone");
+        public static readonly LocString ReadOnOfficialSite = new("news.readOnOfficialSite", "Read on the official site");
+        public static readonly LocString FullPostOfficialSiteHint = new("news.fullPostOfficialSiteHint",
+            "The full post is on the official site.");
+        public static readonly LocString RelayNeeded = new("news.relayNeeded", "Add a party server for news");
+        public static readonly LocString RelayNeededHint = new("news.relayNeededHint",
+            "News for the Traditional Chinese client comes through your own party server. Add its connection code in MogCast Settings to see it here.");
+        public static readonly LocString CouldntReachRelay = new("news.couldntReachRelay",
+            "Couldn't reach your party server");
+        public static readonly LocString NoNewsRelayHint = new("news.noNewsRelayHint",
+            "New posts from the official site show up here.");
+        public static readonly LocString RelayUnsupportedHint = new("news.relayUnsupportedHint",
+            "Your party server doesn't offer Traditional Chinese news yet. Ask whoever runs it to update it.");
     }
 
     internal static class Wallet

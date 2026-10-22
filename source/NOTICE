@@ -112,6 +112,50 @@ Modifications (AGPL-3.0 section 5(a)), first made 2026-10-21:
               retries a server without calls, and keeps direct dialing,
               ringing, the online list, the Control Center toggle, Spotlight
               and the call command hidden.
+- 2026-10-22  MogCast fullscreen covers the game viewport in its own window
+              with fit and fill modes, a volume slider and controls that fade
+              when idle; the phone is not drawn while fullscreen. The screen
+              page gains Big Screen, which places a flat in-world screen in
+              front of the camera at 85 percent of the view. The landscape
+              theater mode is removed.
+- 2026-10-22  The assembly is renamed to Cyberphone with Cyberphone's own
+              SixLabors community licence; code namespaces stay
+              "Aetherphone". Legacy settings type names now migrate to the
+              Cyberphone assembly.
+- 2026-10-22  Music Jam on the relay regains join approval, guest
+              permissions, reactions and removing a member, and a removed
+              guest no longer reconnects. Watch parties and Jams can be
+              found nearby again: a host opts in per room (off by default),
+              and the relay's GET /rooms/nearby lists only those rooms in the
+              asker's territory and world, under a separate nearby code and
+              the host's character name, rate limited per address. Tapping a
+              listed room sends a join request that always waits for the
+              host's approval. A viewer's failed playback is reported to the
+              host only.
+- 2026-10-22  The Traditional Chinese client gets its own news through the
+              self-hosted relay: server/scripts/fetch-tw-news.mjs reads the
+              news lists of www.ffxiv.com.tw and keeps only titles, dates,
+              categories, links, a short summary and maintenance windows in
+              server/content/news-tw.json, which the Worker serves as
+              /content/news-tw behind the invite code with an ETag. News on
+              that client reads only this document, shows nothing instead of
+              North American Lodestone news while no relay is set, has no
+              Status tab, and checks again at most every 6 hours and only
+              while News is shown; the home widget reads the local copy only.
+              Lodestone portraits and lookups are off on that client, as on
+              the Chinese one.
+- 2026-10-22  Music Radio shows a curated station list from the relay's
+              /content/radio (server/content/radio.json: name, stream URL,
+              genre, homepage) in place of the community radio, only while a
+              relay is set and the Radio page is shown, cached for 6 hours.
+              The MogCast info page describes the relay watch party: invites,
+              and approving or denying who joins.
+- 2026-10-23  A relay watch party is listed nearby only when the host's
+              state carries nearbyOptIn beside discoverable, so hosts on
+              1.3.4.0 and earlier, which send discoverable by default, stay
+              unlisted. When the relay answers 404 for news, curated stations
+              or the nearby list, those pages say the relay does not support
+              the feature yet instead of reporting a connection failure.
 
 Corresponding source: the Git repository above, at the commit whose version
 matches the build. Upstream's original README is kept in
