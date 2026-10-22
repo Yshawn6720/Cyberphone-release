@@ -114,9 +114,8 @@ internal sealed partial class GamesApp : IPhoneApp, ITabRouteTarget, INameplateA
 
     private static readonly string[] TabIds = [HomeTabRoute, TogetherTabRoute, LibraryTabRoute, ProfileTabRoute];
 
-    private static readonly GamesTab[] VisibleTabs = HiddenApps.AethernetEnabled
-        ? [GamesTab.Home, GamesTab.Together, GamesTab.Library, GamesTab.Profile]
-        : [GamesTab.Home, GamesTab.Library, GamesTab.Profile];
+    private static readonly GamesTab[] VisibleTabs =
+        [GamesTab.Home, GamesTab.Together, GamesTab.Library, GamesTab.Profile];
 
     private readonly GameStatsStore stats;
     private readonly Configuration configuration;
@@ -256,7 +255,7 @@ internal sealed partial class GamesApp : IPhoneApp, ITabRouteTarget, INameplateA
             new TempoApp(),
         };
         library = new GamesLibrary(games, stats, HiddenApps.AethernetEnabled ? leaderboard : null,
-            HiddenApps.AethernetEnabled);
+            OnlineGameArt.HostableKinds);
         countLabels = new string[library.Entries.Length + 1];
         RebuildLayout();
         router = new ViewRouter<GamesRoute>(GamesRoute.Root);
@@ -417,8 +416,7 @@ internal sealed partial class GamesApp : IPhoneApp, ITabRouteTarget, INameplateA
 
         TourHolds.Release(Id);
         ConsumePendingRoute();
-        if (HiddenApps.AethernetEnabled && !router.IsTransitioning
-            && router.Current.Screen is GamesScreen.Root or GamesScreen.Shelf)
+        if (!router.IsTransitioning && router.Current.Screen is GamesScreen.Root or GamesScreen.Shelf)
         {
             onlineHub.Consume();
         }

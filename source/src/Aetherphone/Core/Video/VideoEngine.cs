@@ -739,6 +739,8 @@ internal sealed class VideoEngine : IDisposable
 
     internal int FrameVersion => renderer?.FrameVersion ?? 0;
 
+    internal float VideoAspect => renderer?.VideoAspect ?? 0f;
+
     internal nint ScreenViewHandle
     {
         get
@@ -803,6 +805,19 @@ internal sealed class VideoEngine : IDisposable
     {
         SpawnScreenInFrontOfLocalPlayer();
         NotePlacementEdited();
+    }
+
+    internal bool PlaceLargeScreen()
+    {
+        if (!ScreenPainter.TryLargeScreenPose(out var pose))
+        {
+            return false;
+        }
+
+        ScreenSpawnAnchor = pose.Position;
+        ScreenCurve = 0f;
+        SetScreenTransform(pose.Position, pose.Yaw, pose.Pitch, pose.Roll, pose.Scale);
+        return true;
     }
 
     internal void FaceLocalPlayer()

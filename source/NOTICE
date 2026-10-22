@@ -66,6 +66,52 @@ Modifications (AGPL-3.0 section 5(a)), first made 2026-10-21:
               when a party is started or joined. Host heartbeat relaxed from
               8 to 30 seconds. Party features the relay does not implement
               are hidden while using it.
+- 2026-10-22  The in-world video screen is drawn from Dalamud's UI draw
+              callback instead of a DirectX Present hook, so turning the
+              plugin off and on leaves no hook behind in the game's present
+              call; the screen now hides whenever Dalamud hides plugin
+              windows. ScreenPainter logs why a frame was not drawn, only
+              when the reason changes.
+- 2026-10-22  Music Jam runs through the same self-hosted relay: a JamRoom
+              Durable Object in server/, the shared relay address and invite
+              code from MogCast settings, and a connection only while a Jam
+              is started or joined. Host heartbeat relaxed from 8 to 30
+              seconds; the relay ends the Jam when the host leaves.
+- 2026-10-22  The MogCast relay party regains join approval, queue
+              suggestions, reactions and removing a member. The relay holds
+              newcomers until the host approves, passes suggestions to the
+              host and the answer back to the author, forwards reactions on
+              a separate per-member budget (the plugin sends at most 4 at
+              once, then 1 a second) and closes a removed member's
+              connection; the plugin does not reconnect after being removed
+              or declined. Nearby parties stay unavailable.
+- 2026-10-22  Announcements and the in-game events in Calendar come back
+              through the self-hosted relay: server/content holds both as
+              static JSON that the Worker serves behind the invite code, with
+              an ETag and no Durable Object. The plugin keeps a local copy,
+              checks again at most every 6 hours and only when Announcements
+              or Calendar is shown, sends no announcement notifications, and
+              keeps Announcements hidden with no request while no relay is
+              set.
+- 2026-10-22  Games "Play together" comes back through the self-hosted relay
+              as invite-based rooms: a GameRoom Durable Object in server/
+              referees Uno, Chess, Connect Four and Broadside itself, keeps
+              hands and fleets private, and closes the room when the host
+              leaves. The plugin connects only while a room is created or
+              joined, sends one move at a time under its own budget, and
+              hides 8-Ball Pool, Moogle War, Mini Golf, Lucky Draw, the
+              public room list, matchmaking and leaderboards while on the
+              relay.
+- 2026-10-22  Voice calls come back as invite-based call rooms in a new
+              Calls tab in Linkpearl: a CallRoom Durable Object in server/
+              forwards Opus frames between up to 4 members without decoding
+              or storing them, and only runs where CALLS_ENABLED is on (the
+              Docker compose setup; the Workers configuration keeps it off
+              and answers 403). The plugin connects only while a room is
+              open, closes the link as soon as the call is left, never
+              retries a server without calls, and keeps direct dialing,
+              ringing, the online list, the Control Center toggle, Spotlight
+              and the call command hidden.
 
 Corresponding source: the Git repository above, at the commit whose version
 matches the build. Upstream's original README is kept in

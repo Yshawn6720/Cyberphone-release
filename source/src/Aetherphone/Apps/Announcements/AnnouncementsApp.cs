@@ -6,6 +6,7 @@ using Aetherphone.Core.Animation;
 using Aetherphone.Core.Announcements;
 using Aetherphone.Core.Apps;
 using Aetherphone.Core.Localization;
+using Aetherphone.Core.Net;
 using Aetherphone.Core.Notifications;
 using Aetherphone.Core.Onboarding;
 using Aetherphone.Core.Runtime;
@@ -28,6 +29,7 @@ internal sealed partial class AnnouncementsApp : IResumableApp
     public int BadgeCount => store.UnreadCount;
     public bool HasBadge => true;
     public bool WantsSystemTheme => true;
+    public bool IsAvailable => store.Available;
 
     private readonly AnnouncementsStore store;
     private readonly FailureSlot listFailure = new();
@@ -55,11 +57,11 @@ internal sealed partial class AnnouncementsApp : IResumableApp
     private DateTime entriesDay;
     private bool anyUnread;
 
-    public AnnouncementsApp(AethernetSession session, AnnouncementsClient client, NotificationService notifications,
-        Configuration configuration, AnnouncementsLauncher launcher, PhoneVisibility visibility,
-        RealtimeSignalBus signals)
+    public AnnouncementsApp(AethernetSession session, AnnouncementsClient client, HttpService http,
+        NotificationService notifications, Configuration configuration, AnnouncementsLauncher launcher,
+        PhoneVisibility visibility, RealtimeSignalBus signals)
     {
-        store = new AnnouncementsStore(session, client, notifications, configuration, visibility, signals);
+        store = new AnnouncementsStore(session, client, http, notifications, configuration, visibility, signals);
         this.launcher = launcher;
         router = new ViewRouter<AnnouncementsRoute>(AnnouncementsRoute.List);
         drawView = DrawView;
@@ -130,7 +132,7 @@ internal sealed partial class AnnouncementsApp : IResumableApp
         var screen = SceneChrome.ScreenFrom(context.Content, theme, scale);
         ui.Backdrop(screen);
 
-        if (!store.IsSignedIn)
+        if (!store.CanRead)
         {
             TourHolds.Hold(Id);
             DrawSignedOut(context);
@@ -185,7 +187,7 @@ internal sealed partial class AnnouncementsApp : IResumableApp
 
     private void TickRefresh()
     {
-        if (store.PushCovered)
+        if (store.PushCovered || AnnouncementsStore.RelayMode)
         {
             sinceRefresh = 0f;
             return;

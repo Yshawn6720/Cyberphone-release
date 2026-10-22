@@ -403,14 +403,25 @@ internal sealed class PhoneServices : IDisposable
         var encryptionGuide = new EncryptionGuide(keyVault, aethernetSession, notifications);
         Windows.UrlActions.Configure(confirm);
         var contacts = new ContactBook(aethernet.Contacts, aethernetSession);
-        var partyRelay = new PartyRelay(configuration, () => gameData.LocalPlayer is { } player
+        Func<PartyRelayIdentity?> relayIdentity = () => gameData.LocalPlayer is { } player
             ? new PartyRelayIdentity(player.Name.TextValue, gameData.WorldName(gameData.LocalHomeWorldId))
-            : null);
+            : null;
+        Action<RelayFailure> relayRefused = failure =>
+        {
+            if (failure.Refusal == RelayRefusal.RateLimited)
+            {
+                http.PauseHost(RelayAddress.Host(configuration.PartyRelayUrl),
+                    TimeSpan.FromSeconds(failure.RetryAfterSeconds));
+            }
+        };
+        var partyRelay = new PartyRelay(configuration, relayIdentity, PartyRelayKind.Party, relayRefused);
         var calls = new CallHub(configuration, aethernetSession, notifications, sound, playback, realtimeSignals,
-            confirm, installer.Gate("message"), contacts, partyRelay);
+            confirm, installer.Gate("message"), contacts, partyRelay,
+            new PartyRelay(configuration, relayIdentity, PartyRelayKind.Call, relayRefused));
         var streamSignals = new StreamSignalRouter(calls.Router);
         var radioRooms = new RadioRoomRouter(realtimeSignals, aethernetSession, framework);
-        var jam = new JamSession(calls.Router, playback, aethernetSession, notifications, framework);
+        var jamRelay = new PartyRelay(configuration, relayIdentity, PartyRelayKind.Jam, relayRefused);
+        var jam = new JamSession(calls.Router, jamRelay, playback, aethernetSession, notifications, framework);
         var musicUninstall = new MusicUninstallStop(installer, playback, jam);
         var listening = new ListeningPresence(aethernet.MusicListening, aethernetSession, playback, jam, configuration,
             framework);
@@ -439,7 +450,7 @@ internal sealed class PhoneServices : IDisposable
             casinoVenue, notifications, Apps.AppAccents.For("casino"));
         var casinoFloor = new Casino.CasinoFloorStore(aethernetSession, casinoApi.Casino, casino, realtimeSignals);
         var gameRooms = new Games.GameRoomsStore(aethernetSession, aethernet.Games, visibility,
-            realtimeSignals);
+            realtimeSignals, new PartyRelay(configuration, relayIdentity, PartyRelayKind.Game, relayRefused));
         var leaderboard = new Games.LeaderboardStore(configuration, aethernetSession, aethernet.Scores,
             realtimeSignals);
         var musters = new MusterStore(aethernetSession, aethernet.Musters, notifications, configuration,

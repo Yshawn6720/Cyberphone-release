@@ -488,10 +488,9 @@ internal sealed partial class AetherStreamApp
             AddAction(MemberActionMakeHost, Loc.T(L.AetherStream.MakeHost), PhoneIcons.Crown);
         }
 
-        var aethernet = HiddenApps.AethernetEnabled;
         var grants = watchAlong.GrantsFor(member.UserId);
         var policy = watchAlong.Policy;
-        if (aethernet && !policy.GuestsCanAdd)
+        if (!policy.GuestsCanAdd)
         {
             AddAction(MemberActionToggleAdd, Loc.T(L.AetherStream.AllowAdd),
                 selected: PartyPermissions.Allows(grants, StreamPermission.AddToQueue), checkable: true);
@@ -503,17 +502,7 @@ internal sealed partial class AetherStreamApp
                 selected: PartyPermissions.Allows(grants, StreamPermission.ControlPlayback), checkable: true);
         }
 
-        if (aethernet)
-        {
-            AddAction(MemberActionRemove, Loc.T(L.AetherStream.WatchingKick), PhoneIcons.X, true);
-        }
-
-        if (actionCount == 0)
-        {
-            actionMember = null;
-            return;
-        }
-
+        AddAction(MemberActionRemove, Loc.T(L.AetherStream.WatchingKick), PhoneIcons.X, true);
         actions.Open();
     }
 
@@ -581,49 +570,38 @@ internal sealed partial class AetherStreamApp
             var policy = watchAlong.Policy;
             var partyRows = !watchAlong.ServerLacksParty;
             var aethernet = HiddenApps.AethernetEnabled;
-            var canAdd = policy.GuestsCanAdd;
+            SettingsSection.Header(Loc.T(L.AetherStream.PartySettingsGuests), accentedTheme);
+            var guests = GroupCard.Begin(accentedTheme, partyRows ? 2 : 1);
+            var canAdd = SettingsRow.Bool(guests.NextRow(), Loc.T(L.AetherStream.GuestsCanAdd),
+                policy.GuestsCanAdd, accentedTheme, hint: Loc.T(L.AetherStream.GuestsCanAddHint));
             var canControl = policy.GuestsCanControl;
-            var guestRows = (aethernet ? 1 : 0) + (partyRows ? 1 : 0);
-            if (guestRows > 0)
+            if (partyRows)
             {
-                SettingsSection.Header(Loc.T(L.AetherStream.PartySettingsGuests), accentedTheme);
-                var guests = GroupCard.Begin(accentedTheme, guestRows);
-                if (aethernet)
-                {
-                    canAdd = SettingsRow.Bool(guests.NextRow(), Loc.T(L.AetherStream.GuestsCanAdd), canAdd,
-                        accentedTheme, hint: Loc.T(L.AetherStream.GuestsCanAddHint));
-                }
-
-                if (partyRows)
-                {
-                    canControl = SettingsRow.Bool(guests.NextRow(), Loc.T(L.AetherStream.GuestsCanControl),
-                        canControl, accentedTheme, hint: Loc.T(L.AetherStream.GuestsCanControlHint));
-                }
-
-                guests.End();
-                Gap(Metrics.Space.Md);
+                canControl = SettingsRow.Bool(guests.NextRow(), Loc.T(L.AetherStream.GuestsCanControl), canControl,
+                    accentedTheme, hint: Loc.T(L.AetherStream.GuestsCanControlHint));
             }
 
+            guests.End();
+            Gap(Metrics.Space.Md);
+            SettingsSection.Header(Loc.T(L.AetherStream.PartySettingsJoining), accentedTheme);
+            var joining = GroupCard.Begin(accentedTheme, aethernet ? (partyRows ? 3 : 2) : 1);
             var codeEnabled = policy.CodeEnabled;
-            var approval = policy.ApprovalRequired;
+            if (aethernet && partyRows)
+            {
+                codeEnabled = SettingsRow.Bool(joining.NextRow(), Loc.T(L.AetherStream.InviteCode), codeEnabled,
+                    accentedTheme, hint: Loc.T(L.AetherStream.InviteCodeHint));
+            }
+
+            var approval = SettingsRow.Bool(joining.NextRow(), Loc.T(L.AetherStream.SettingsApprovalRequired),
+                policy.ApprovalRequired, accentedTheme, hint: Loc.T(L.AetherStream.SettingsApprovalRequiredHint));
             var discoverable = policy.Discoverable;
             if (aethernet)
             {
-                SettingsSection.Header(Loc.T(L.AetherStream.PartySettingsJoining), accentedTheme);
-                var joining = GroupCard.Begin(accentedTheme, partyRows ? 3 : 2);
-                if (partyRows)
-                {
-                    codeEnabled = SettingsRow.Bool(joining.NextRow(), Loc.T(L.AetherStream.InviteCode), codeEnabled,
-                        accentedTheme, hint: Loc.T(L.AetherStream.InviteCodeHint));
-                }
-
-                approval = SettingsRow.Bool(joining.NextRow(), Loc.T(L.AetherStream.SettingsApprovalRequired),
-                    approval, accentedTheme, hint: Loc.T(L.AetherStream.SettingsApprovalRequiredHint));
                 discoverable = SettingsRow.Bool(joining.NextRow(), Loc.T(L.AetherStream.SettingsDiscoverable),
                     discoverable, accentedTheme, hint: Loc.T(L.AetherStream.SettingsDiscoverableHint));
-                joining.End();
             }
 
+            joining.End();
             var updated = new PartyPolicy(approval, discoverable, codeEnabled,
                 (canAdd ? StreamPermission.AddToQueue : 0) | (canControl ? StreamPermission.ControlPlayback : 0));
             if (updated != policy)

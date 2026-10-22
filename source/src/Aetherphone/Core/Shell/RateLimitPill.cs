@@ -22,20 +22,32 @@ internal sealed class RateLimitPill
 
     private readonly HttpService http;
     private readonly AethernetSession session;
+    private readonly Configuration configuration;
     private Spring presence;
     private string cachedBaseUrl = string.Empty;
     private string cachedHost = string.Empty;
+    private string cachedRelayUrl = string.Empty;
+    private string cachedRelayHost = string.Empty;
     private int lastSeconds = 1;
+    private LocString labelTemplate = L.Common.RateLimited;
+    private string labelText = string.Empty;
+    private string? labelKey;
+    private int labelSeconds;
+    private LanguageInfo? labelLanguage;
 
-    public RateLimitPill(HttpService http, AethernetSession session)
+    public RateLimitPill(HttpService http, AethernetSession session, Configuration configuration)
     {
         this.http = http;
         this.session = session;
+        this.configuration = configuration;
     }
 
     public void Draw(Rect screen, PhoneTheme theme, float delta)
     {
-        var remaining = http.PauseRemaining(ApiHost());
+        var apiRemaining = http.PauseRemaining(ApiHost());
+        var relayRemaining = http.PauseRemaining(RelayHost());
+        var relayLonger = relayRemaining > apiRemaining;
+        var remaining = relayLonger ? relayRemaining : apiRemaining;
         presence.Step(remaining > TimeSpan.Zero ? 1f : 0f, Motion.Appear, delta);
         var alpha = Math.Clamp(presence.Value, 0f, 1f);
         if (alpha < 0.02f)
@@ -46,10 +58,11 @@ internal sealed class RateLimitPill
         if (remaining > TimeSpan.Zero)
         {
             lastSeconds = Math.Max(1, (int)Math.Ceiling(remaining.TotalSeconds));
+            labelTemplate = relayLonger ? L.Relay.RateLimitedPill : L.Common.RateLimited;
         }
 
         var scale = UiScale.Current;
-        var label = Loc.T(L.Common.RateLimited, lastSeconds);
+        var label = Label();
         var textSize = Typography.Measure(label, TextScale);
         var iconSize = textSize.Y * 0.86f;
         var width = PadX * 2f * scale + iconSize + IconGap * scale + textSize.X;
@@ -87,5 +100,34 @@ internal sealed class RateLimitPill
         cachedBaseUrl = baseUrl;
         cachedHost = Uri.TryCreate(baseUrl, UriKind.Absolute, out var parsed) ? parsed.Host : string.Empty;
         return cachedHost;
+    }
+
+    private string Label()
+    {
+        var language = Loc.Current;
+        if (lastSeconds == labelSeconds && ReferenceEquals(labelTemplate.Key, labelKey)
+            && ReferenceEquals(language, labelLanguage))
+        {
+            return labelText;
+        }
+
+        labelSeconds = lastSeconds;
+        labelKey = labelTemplate.Key;
+        labelLanguage = language;
+        labelText = Loc.T(labelTemplate, lastSeconds);
+        return labelText;
+    }
+
+    private string RelayHost()
+    {
+        var relayUrl = configuration.PartyRelayUrl;
+        if (string.Equals(relayUrl, cachedRelayUrl, StringComparison.Ordinal))
+        {
+            return cachedRelayHost;
+        }
+
+        cachedRelayUrl = relayUrl;
+        cachedRelayHost = RelayAddress.Host(relayUrl);
+        return cachedRelayHost;
     }
 }

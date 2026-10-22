@@ -145,8 +145,9 @@ internal sealed partial class GamesApp
             if (HiddenApps.AethernetEnabled)
             {
                 y = DrawHomeJoin(left, y, width, scale);
-                y = DrawHomeRoom(drawList, left, y, width, scale);
             }
+
+            y = DrawHomeRoom(drawList, left, y, width, scale);
 
             y = DrawHomeRecent(drawList, left, y, width, scale);
             y = DrawHomeLatest(drawList, left, y, width, scale);
@@ -299,7 +300,7 @@ internal sealed partial class GamesApp
     private void SyncHeroPages()
     {
         var today = GameStatsStore.TodayIndex;
-        var signedIn = HiddenApps.AethernetEnabled && gameRooms.AccountId.Length > 0;
+        var signedIn = gameRooms.AccountId.Length > 0;
         if (homeHeroVersion == library.Version && homeHeroDay == today && homeHeroFeatured == featuredIndex
             && homeHeroSignedIn == signedIn)
         {
@@ -474,7 +475,7 @@ internal sealed partial class GamesApp
 
     private static void DrawHeroTogetherIcons(ImDrawListPtr drawList, Rect card, float textTop, float scale)
     {
-        var kinds = OnlineGameArt.Kinds;
+        var kinds = OnlineGameArt.HostableKinds;
         var count = Math.Min(HeroTogetherIcons, kinds.Length);
         var area = MathF.Min(card.Height * HeroArtFraction, textTop - Metrics.Space.Md * scale - card.Min.Y);
         var side = MathF.Min(HeroTogetherIcon * scale, area - Metrics.Space.Xs * 2f * scale);

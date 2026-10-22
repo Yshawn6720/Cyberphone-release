@@ -9,6 +9,7 @@ using Aetherphone.Core.Localization;
 using Aetherphone.Core.Media;
 using Aetherphone.Core.Notifications;
 using Aetherphone.Core.Theme;
+using Aetherphone.Core.Video;
 using Aetherphone.Windows.Components;
 using Dalamud.Bindings.ImGui;
 using Dalamud.Interface;
@@ -57,7 +58,7 @@ internal sealed class OnlineHub
     private readonly Action<string, string> openRoom;
     private readonly Action refreshNow;
     private readonly PullToRefresh refresh = new();
-    private readonly string?[] playerLabels = new string?[OnlineGameArt.Infos.Length];
+    private readonly string?[] playerLabels = new string?[OnlineGameArt.Hostable.Length];
 
     private string codeBuffer = string.Empty;
     private string inlineReason = string.Empty;
@@ -131,26 +132,41 @@ internal sealed class OnlineHub
     {
         if (store.AccountId.Length == 0)
         {
-            DrawSignedOut(body, ui, navigation);
+            DrawSignedOut(body, ui, navigation, store.RelayMode);
             return;
         }
 
-        RefreshWhenShown();
-        refresh.Draw(body, pull, dragging, store.LoadingRooms, ui.MutedInk, refreshNow);
+        var relay = store.RelayMode;
+        if (!relay)
+        {
+            RefreshWhenShown();
+            refresh.Draw(body, pull, dragging, store.LoadingRooms, ui.MutedInk, refreshNow);
+        }
+
         var scale = UiScale.Current;
         var drawList = ImGui.GetWindowDrawList();
         var origin = ImGui.GetCursorScreenPos();
         var width = ScrollLayout.StableContentWidth();
         var left = origin.X;
-        var y = DrawHeader(drawList, ui, left, origin.Y, width, Loc.T(L.Games.OnlineMyRooms), scale);
-        y = DrawRooms(drawList, ui, left, y, width, scale);
-        y = DrawHeader(drawList, ui, left, y + HubMetrics.SectionGap * scale, width,
-            Loc.T(L.Games.OnlineJoinHeading), scale);
-        y = DrawJoinByCode(drawList, ui, left, y, width, scale);
+        var y = origin.Y;
+        if (!relay || store.Rooms.Length > 0)
+        {
+            y = DrawHeader(drawList, ui, left, y, width, Loc.T(L.Games.OnlineMyRooms), scale);
+            y = DrawRooms(drawList, ui, left, y, width, scale) + HubMetrics.SectionGap * scale;
+        }
+
+        if (relay && !store.RelayConfigured)
+        {
+            y = DrawNotice(drawList, ui, left, y, width, Loc.T(L.Games.OnlineRelaySetupHint),
+                FontAwesomeIcon.InfoCircle, ui.MutedInk, 0f, scale) + HubMetrics.SectionGap * scale;
+        }
+
+        y = DrawHeader(drawList, ui, left, y, width, Loc.T(L.Games.OnlineJoinHeading), scale);
+        y = DrawJoinByCode(drawList, ui, left, y, width, scale, relay);
         if (inlineReason.Length > 0)
         {
             y = DrawNotice(drawList, ui, left, y + Metrics.Space.Md * scale, width,
-                Loc.T(GamesOnlineText.ReasonMessage(inlineReason)), FontAwesomeIcon.ExclamationCircle,
+                GamesOnlineText.ReasonText(inlineReason, store.LastRelayRefusal), FontAwesomeIcon.ExclamationCircle,
                 ui.Theme.Danger, 0f, scale);
         }
 
@@ -161,8 +177,14 @@ internal sealed class OnlineHub
         ImGui.Dummy(new Vector2(width, Metrics.Space.Xl * scale));
     }
 
-    private static void DrawSignedOut(Rect body, AppSkin ui, INavigator navigation)
+    private static void DrawSignedOut(Rect body, AppSkin ui, INavigator navigation, bool relay)
     {
+        if (relay)
+        {
+            EmptyState.Draw(body, ui, PhoneIcons.Users, Loc.T(L.Games.OnlineRelaySignIn), string.Empty);
+            return;
+        }
+
         var title = Loc.T(L.GamesHub.SignInTitle);
         var hint = Loc.T(L.Games.OnlineSignIn);
         if (!navigation.IsAvailable(SettingsAppId))
@@ -343,7 +365,8 @@ internal sealed class OnlineHub
         return max.Y;
     }
 
-    private float DrawJoinByCode(ImDrawListPtr drawList, AppSkin ui, float left, float top, float width, float scale)
+    private float DrawJoinByCode(ImDrawListPtr drawList, AppSkin ui, float left, float top, float width, float scale,
+        bool relay)
     {
         var height = GlassField.HeightUnits * scale;
         var label = Loc.T(L.Games.OnlineJoin);
@@ -352,8 +375,9 @@ internal sealed class OnlineHub
         var field = new Rect(new Vector2(left, top),
             new Vector2(left + width - buttonWidth - JoinGap * scale, top + height));
         SearchBar.Surface(drawList, field, ui.Ink);
-        var submitted = GlassField.Text(field, CodeFieldId, Loc.T(L.Games.OnlineJoinHint), ref codeBuffer,
-            ui.Theme, scale, CodeBufferLength, false, ImGuiInputTextFlags.EnterReturnsTrue);
+        var submitted = GlassField.Text(field, CodeFieldId,
+            Loc.T(relay ? L.Games.OnlineRelayJoinHint : L.Games.OnlineJoinHint), ref codeBuffer, ui.Theme, scale,
+            relay ? PartyRelayLink.MaxLength : CodeBufferLength, false, ImGuiInputTextFlags.EnterReturnsTrue);
         var trimmed = codeBuffer.AsSpan().Trim();
         var ready = trimmed.Length > 0 && !store.IntentInFlight;
         var buttonTop = top + (height - buttonHeight) * 0.5f;
@@ -382,7 +406,7 @@ internal sealed class OnlineHub
         var gap = CardGap * scale;
         var tileWidth = HubMetrics.GridTile(width, HostColumns, gap);
         var tileHeight = HostTileHeightFor(scale);
-        var infos = OnlineGameArt.Infos;
+        var infos = OnlineGameArt.Hostable;
         var tapped = -1;
         for (var index = 0; index < infos.Length; index++)
         {
@@ -425,7 +449,7 @@ internal sealed class OnlineHub
 
     private bool DrawHostTile(ImDrawListPtr drawList, Rect rect, int kindIndex, bool busy, float scale)
     {
-        ref readonly var info = ref OnlineGameArt.Infos[kindIndex];
+        ref readonly var info = ref OnlineGameArt.Hostable[kindIndex];
         var pending = busy && string.Equals(info.Kind, pendingKind, StringComparison.Ordinal);
         var hovered = !busy && UiInteract.Hover(rect.Min, rect.Max);
         var card = RoomCard.Pose(rect, hovered, out var hover);
@@ -492,7 +516,7 @@ internal sealed class OnlineHub
             return label;
         }
 
-        var most = OnlineGameArt.Infos[kindIndex].MaxPlayers;
+        var most = OnlineGameArt.Hostable[kindIndex].MaxPlayers;
         label = most <= OnlineGameArt.MinPlayers
             ? Loc.Plural(L.GamesHub.PlayerCount, most)
             : Loc.T(L.GamesHub.PlayerRange, GameNumber.Label(OnlineGameArt.MinPlayers), GameNumber.Label(most));

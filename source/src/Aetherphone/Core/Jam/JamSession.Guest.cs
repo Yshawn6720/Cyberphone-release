@@ -7,8 +7,8 @@ namespace Aetherphone.Core.Jam;
 
 internal sealed partial class JamSession
 {
-    // Past the server's own stale window there is nothing trustworthy left to chase.
-    private const double StaleStateSeconds = 30.0;
+    // Two host heartbeats plus slack; past that the host is gone or stalled and there is nothing left to chase.
+    private const double StaleStateSeconds = 65.0;
 
     private readonly ServerClock serverClock = new();
     private readonly JamDriftController drift = new();

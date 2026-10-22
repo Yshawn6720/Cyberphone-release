@@ -74,7 +74,7 @@ internal sealed class GameRoomSession
 
     private const long UnreachableAfterMilliseconds = 12_000;
 
-    private readonly RealtimeSignalBus signals;
+    private readonly GameSignalRouter router;
     private readonly object gate = new();
 
     private volatile GameRoomState? state;
@@ -90,9 +90,9 @@ internal sealed class GameRoomSession
     private long motionSerial;
     private bool skewAnchored;
 
-    public GameRoomSession(RealtimeSignalBus signals)
+    public GameRoomSession(GameSignalRouter router)
     {
-        this.signals = signals;
+        this.router = router;
     }
 
     public GameRoomState? State => state;
@@ -161,6 +161,22 @@ internal sealed class GameRoomSession
             resyncAskedAtUnixMs = 0;
             Touch();
             Send(SignalType.GameAttach, nextRoomId);
+        }
+    }
+
+    public void Adopt(string nextRoomId)
+    {
+        lock (gate)
+        {
+            roomId = nextRoomId;
+            state = null;
+            privateState = null;
+            motion = null;
+            closedReason = string.Empty;
+            attached = false;
+            awaitingSnapshot = true;
+            resyncAskedAtUnixMs = 0;
+            Touch();
         }
     }
 
@@ -752,7 +768,7 @@ internal sealed class GameRoomSession
             return;
         }
 
-        signals.TrySend(new CallControl
+        router.Send(new CallControl
         {
             Type = SignalType.GameMotion,
             Game = new GamePayload { RoomId = current, Motion = values },
@@ -779,7 +795,7 @@ internal sealed class GameRoomSession
 
     private void Send(string type, string targetRoomId)
     {
-        signals.TrySend(new CallControl
+        router.Send(new CallControl
         {
             Type = type,
             Game = new GamePayload { RoomId = targetRoomId },

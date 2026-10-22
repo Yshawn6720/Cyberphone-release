@@ -136,7 +136,6 @@ internal sealed partial class AetherStreamApp : IResumableApp
             return;
         }
 
-        ExitTheater();
         router.Reset();
         CloseSheets();
         activeTab = StreamTab.Library;
@@ -146,7 +145,6 @@ internal sealed partial class AetherStreamApp : IResumableApp
     public void OnClosed()
     {
         FlushScreenSave();
-        ExitTheater();
         CloseSheets();
     }
 
@@ -165,17 +163,6 @@ internal sealed partial class AetherStreamApp : IResumableApp
         var scale = UiScale.Current;
         screenRect = SceneChrome.ScreenFrom(context.Content, context.Theme, scale);
         ui.Backdrop(screenRect);
-        if (TheaterActive && !video.HasMedia && CurrentEntry is null)
-        {
-            ExitTheater();
-        }
-
-        if (TheaterActive && screenRect.IsLandscape())
-        {
-            DrawTheater(screenRect, scale);
-            return;
-        }
-
         actions.Gate();
         SaveWhenDue();
         ConsumePickedFiles();

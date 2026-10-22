@@ -173,6 +173,11 @@ internal sealed partial class AetherStreamApp
             Gap(Metrics.Space.Sm);
             SettingsSection.Hint(relayServerLine.Format(Loc.T(L.AetherStream.SettingsRelayServer), relayServerShown),
                 accentedTheme);
+            if (!HiddenApps.AethernetEnabled)
+            {
+                Gap(Metrics.Space.Sm);
+                SettingsSection.Hint(Loc.T(L.AetherStream.SettingsRelayContentHint), accentedTheme);
+            }
         }
     }
 

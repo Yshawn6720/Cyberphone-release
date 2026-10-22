@@ -20,6 +20,9 @@ importers:
       vitest:
         specifier: ^4.1.11
         version: 4.1.12(vite@8.3.5(esbuild@0.28.2))
+      workerd:
+        specifier: 1.20261019.1
+        version: 1.20261019.1
       wrangler:
         specifier: ^4.126.0
         version: 4.151.3(@cloudflare/workers-types@5.20261021.1)

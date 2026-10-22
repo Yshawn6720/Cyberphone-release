@@ -9,7 +9,7 @@ using Aetherphone.Core.Telephony.Contracts;
 
 namespace Aetherphone.Core.Telephony;
 
-internal sealed class CallHub : IDisposable
+internal sealed partial class CallHub : IDisposable
 {
     private const float IncomingTimeoutSeconds = 60f;
     private const float DialingTimeoutSeconds = 60f;
@@ -20,6 +20,7 @@ internal sealed class CallHub : IDisposable
     private readonly NotificationService notifications;
     private readonly SoundService sound;
     private readonly CallSignalRouter router;
+    private readonly CallRoomRouter rooms;
     private readonly CallAudioController audio;
     private readonly CallLogStore log;
     private readonly ConfirmService confirm;
@@ -42,7 +43,7 @@ internal sealed class CallHub : IDisposable
 
     public CallHub(Configuration configuration, AethernetSession session, NotificationService notifications,
         SoundService sound, PlaybackHub playback, RealtimeSignalBus signals, ConfirmService confirm,
-        AppGate installed, ContactBook contacts, PartyRelay partyRelay)
+        AppGate installed, ContactBook contacts, PartyRelay partyRelay, PartyRelay callRelay)
     {
         this.configuration = configuration;
         this.session = session;
@@ -52,7 +53,8 @@ internal sealed class CallHub : IDisposable
         this.installed = installed;
         this.contacts = contacts;
         router = new CallSignalRouter(session, signals, partyRelay);
-        audio = new CallAudioController(configuration, playback, router.Connection);
+        rooms = new CallRoomRouter(callRelay);
+        audio = new CallAudioController(configuration, playback, RelayMode ? rooms.Connection : router.Connection);
         log = new CallLogStore(configuration);
     }
 
@@ -63,15 +65,25 @@ internal sealed class CallHub : IDisposable
         Unavailable,
         NoAnswer,
         ConnectionLost,
+        Refused,
+        RoomNotFound,
+        RoomFull,
+        RoomsBusy,
+        Unreachable,
+        RoomClosed,
+        RoomAlone,
+        Denied,
+        HostAway,
     }
 
     public event Action? IncomingCallPresented;
     public bool Enabled => configuration.CallsEnabled;
     public bool SignedIn => session.IsSignedIn;
-    public bool Connected => router.Connected;
+    public bool Connected => RelayMode ? rooms.Connected : router.Connected;
 
     public CallSignalRouter Router => router;
-    public string LocalUserId => session.CurrentUser?.Id ?? string.Empty;
+    public CallRoomRouter Rooms => rooms;
+    public string LocalUserId => RelayMode ? rooms.Relay.SelfId ?? string.Empty : session.CurrentUser?.Id ?? string.Empty;
     public CallLogEntry[] CallLog => log.Entries;
     public int UnseenMissed => log.UnseenMissed;
 
@@ -86,6 +98,9 @@ internal sealed class CallHub : IDisposable
         router.EndedReceived += HandleEnded;
         router.HandledElsewhereReceived += HandleHandledElsewhere;
         router.ConnectedChanged += OnConnectedChanged;
+        rooms.Received += HandleRoomControl;
+        rooms.ConnectedChanged += OnRoomConnectedChanged;
+        rooms.Failed += OnRoomFailed;
         notifications.Added += OnNotificationAdded;
         session.Changed += Reconcile;
         Reconcile();
@@ -123,7 +138,8 @@ internal sealed class CallHub : IDisposable
             var seconds = state == CallState.Active ? audio.ElapsedSecondsLocked : 0;
             snapshotView = new CallView(state, audio.MutedLocked, audio.VolumeLocked, audio.MicLevelLocked,
                 audio.PeakMicLevelLocked, seconds, roster,
-                incomingFrom, router.Connected && connectionLostTicks == 0, localId, BuildPeerLabel(localId), others);
+                incomingFrom, Connected && connectionLostTicks == 0, localId, BuildPeerLabel(localId), others,
+                RelayMode && state == CallState.Connecting && rooms.AwaitingApproval);
             snapshotFrame = frame;
             return snapshotView;
         }
@@ -316,7 +332,15 @@ internal sealed class CallHub : IDisposable
             id = callId.ToString("D");
         }
 
-        router.Send(new CallControl { Type = SignalType.Leave, CallId = id });
+        if (RelayMode)
+        {
+            rooms.Leave();
+        }
+        else
+        {
+            router.Send(new CallControl { Type = SignalType.Leave, CallId = id });
+        }
+
         EndCall(reason);
     }
 
@@ -446,6 +470,12 @@ internal sealed class CallHub : IDisposable
 
     public void Advance(float deltaSeconds)
     {
+        if (RelayMode)
+        {
+            AdvanceRoom(deltaSeconds);
+            return;
+        }
+
         var declineTimeout = false;
         var dialTimeout = false;
         var reconnectTimeout = false;
@@ -734,7 +764,7 @@ internal sealed class CallHub : IDisposable
         }
     }
 
-    private void EndCall(CallEndReason reason)
+    private void EndCall(CallEndReason reason, RelayFailure refusal = default)
     {
         CallSession? toDispose;
         bool wasConnected;
@@ -755,6 +785,11 @@ internal sealed class CallHub : IDisposable
             toDispose = ClearLocked();
         }
 
+        if (RelayMode)
+        {
+            rooms.End();
+        }
+
         AepLog.Info($"[calls] ended from={priorState} reason={reason} connected={wasConnected} duration_ms={durationMs:F0}");
 
         sound.StopCallRing();
@@ -763,10 +798,10 @@ internal sealed class CallHub : IDisposable
             UiFeedback.Play(UiSound.CallEnd);
         }
         toDispose?.Dispose();
-        RaiseOutcome(reason, peerName);
+        RaiseOutcome(reason, peerName, refusal);
     }
 
-    private void RaiseOutcome(CallEndReason reason, string peerName)
+    private void RaiseOutcome(CallEndReason reason, string peerName, in RelayFailure refusal)
     {
         string title;
         string body;
@@ -787,6 +822,42 @@ internal sealed class CallHub : IDisposable
             case CallEndReason.ConnectionLost:
                 title = Loc.T(L.Phone.OutcomeDroppedTitle);
                 body = Loc.T(L.Phone.OutcomeDroppedBody);
+                break;
+            case CallEndReason.Refused:
+                title = RelayRefusalText.Title(refusal, PartyRelayKind.Call);
+                body = RelayRefusalText.Body(refusal, PartyRelayKind.Call);
+                break;
+            case CallEndReason.RoomNotFound:
+                title = Loc.T(L.Phone.RoomNotFoundTitle);
+                body = Loc.T(L.Phone.RoomNotFoundBody);
+                break;
+            case CallEndReason.RoomFull:
+                title = Loc.T(L.Phone.RoomFullTitle);
+                body = Loc.T(L.Phone.RoomFullBody);
+                break;
+            case CallEndReason.RoomsBusy:
+                title = Loc.T(L.Phone.RoomsBusyTitle);
+                body = Loc.T(L.Phone.RoomsBusyBody);
+                break;
+            case CallEndReason.Unreachable:
+                title = Loc.T(L.Phone.RoomUnreachableTitle);
+                body = Loc.T(L.Phone.RoomUnreachableBody);
+                break;
+            case CallEndReason.RoomClosed:
+                title = Loc.T(L.Phone.CallEnded);
+                body = Loc.T(L.Phone.RoomClosedBody);
+                break;
+            case CallEndReason.RoomAlone:
+                title = Loc.T(L.Phone.CallEnded);
+                body = Loc.T(L.Phone.RoomAloneBody);
+                break;
+            case CallEndReason.Denied:
+                title = Loc.T(L.Phone.RoomDeniedTitle);
+                body = Loc.T(L.Phone.RoomDeniedBody);
+                break;
+            case CallEndReason.HostAway:
+                title = Loc.T(L.Phone.RoomHostAwayTitle);
+                body = Loc.T(L.Phone.RoomHostAwayBody);
                 break;
             default:
                 return;
@@ -849,11 +920,11 @@ internal sealed class CallHub : IDisposable
             case CallState.Dialing:
                 return dialingTo is { } target
                     ? contacts.NameFor(target.UserId, target.DisplayName)
-                    : Loc.T(L.Phone.StatusCalling);
+                    : Loc.T(RelayMode ? L.Phone.RoomTitle : L.Phone.StatusCalling);
             case CallState.Ringing:
                 return incomingFrom is { } caller ? NameOf(caller) : Loc.T(L.Phone.IncomingCallBody);
             case CallState.Connecting:
-                return Loc.T(L.Phone.StatusConnecting);
+                return Loc.T(RelayMode ? L.Phone.RoomTitle : L.Phone.StatusConnecting);
             case CallState.Active:
                 ParticipantInfo? only = null;
                 var others = 0;
@@ -884,6 +955,11 @@ internal sealed class CallHub : IDisposable
 
     private void Reconcile()
     {
+        if (RelayMode)
+        {
+            return;
+        }
+
         if (!session.IsSignedIn)
         {
             EndCall(CallEndReason.None);
@@ -916,6 +992,9 @@ internal sealed class CallHub : IDisposable
         router.EndedReceived -= HandleEnded;
         router.HandledElsewhereReceived -= HandleHandledElsewhere;
         router.ConnectedChanged -= OnConnectedChanged;
+        rooms.Received -= HandleRoomControl;
+        rooms.ConnectedChanged -= OnRoomConnectedChanged;
+        rooms.Failed -= OnRoomFailed;
         notifications.Added -= OnNotificationAdded;
         session.Changed -= Reconcile;
         CallSession? toDispose;
@@ -926,5 +1005,6 @@ internal sealed class CallHub : IDisposable
 
         toDispose?.Dispose();
         router.Dispose();
+        rooms.Dispose();
     }
 }

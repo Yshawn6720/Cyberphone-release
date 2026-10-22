@@ -11,17 +11,21 @@ public sealed class OfflineRealtimeTests
     private static readonly string[] RelayUplinks =
     [
         SignalType.StreamState, SignalType.StreamJoin, SignalType.StreamLeave, SignalType.StreamControl,
-        SignalType.StreamTransfer,
+        SignalType.StreamTransfer, SignalType.StreamApprove, SignalType.StreamDeny, SignalType.StreamKick,
+        SignalType.StreamReact, SignalType.StreamQueueSuggest, SignalType.StreamQueueApprove,
+        SignalType.StreamQueueDeny,
     ];
 
     private static readonly string[] RelayRefused =
     [
-        SignalType.JamNearby, SignalType.Invite, SignalType.StreamReact, SignalType.StreamNearby,
+        SignalType.JamNearby, SignalType.Invite, SignalType.StreamNearby, SignalType.StreamPlaybackFailed,
     ];
 
     [Theory]
     [InlineData(SignalType.StreamState)]
     [InlineData(SignalType.StreamNearby)]
+    [InlineData(SignalType.StreamReact)]
+    [InlineData(SignalType.StreamKick)]
     [InlineData(SignalType.JamNearby)]
     [InlineData(SignalType.Invite)]
     public void NoRealtimeSendLeavesTheRouterWhileAethernetIsOff(string type)
@@ -41,6 +45,10 @@ public sealed class OfflineRealtimeTests
     [InlineData(SignalType.StreamLeave)]
     [InlineData(SignalType.StreamControl)]
     [InlineData(SignalType.StreamTransfer)]
+    [InlineData(SignalType.StreamApprove)]
+    [InlineData(SignalType.StreamKick)]
+    [InlineData(SignalType.StreamReact)]
+    [InlineData(SignalType.StreamQueueSuggest)]
     public void ConfiguredRelaySendsNothingBeforeAPartyBegins(string type)
     {
         using var server = new LoopbackRelayServer();
@@ -51,7 +59,7 @@ public sealed class OfflineRealtimeTests
     }
 
     [Fact]
-    public async Task BegunRelayCarriesOnlyTheFiveStreamUplinks()
+    public async Task BegunRelayCarriesOnlyTheWhitelistedStreamUplinks()
     {
         using var server = new LoopbackRelayServer();
         using var router = PartyRelayLoopbackTests.CreateRouter(server.Url);

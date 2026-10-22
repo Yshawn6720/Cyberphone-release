@@ -322,7 +322,7 @@ public sealed class IslandActivityTests
     }
 
     [Theory]
-    [InlineData((byte)IslandActivity.Call, "message")]
+    [InlineData((byte)IslandActivity.Call, "messages")]
     [InlineData((byte)IslandActivity.Session, "aetherstream")]
     [InlineData((byte)IslandActivity.Playback, "music")]
     [InlineData((byte)IslandActivity.PcMedia, "music")]
@@ -342,7 +342,7 @@ public sealed class IslandActivityTests
     [InlineData("muster", true)]
     [InlineData("timers", true)]
     [InlineData("fishing", true)]
-    [InlineData("message", false)]
+    [InlineData("messages", false)]
     [InlineData("notes", false)]
     [InlineData("", false)]
     public void OnlyNonCallActivitiesOfferAnIslandToggle(string appId, bool expected)

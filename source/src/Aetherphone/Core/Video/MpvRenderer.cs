@@ -218,6 +218,8 @@ internal sealed class MpvRenderer : IDisposable
 
     internal bool IsRunning => started && !disposed;
 
+    internal float VideoAspect { get; private set; }
+
     internal bool SawHttpForbidden => Volatile.Read(ref httpForbiddenHits) > 0;
 
     internal bool SawStreamError => Volatile.Read(ref streamErrorHits) > 0;
@@ -396,6 +398,7 @@ internal sealed class MpvRenderer : IDisposable
             }
         }
 
+        VideoAspect = 0f;
         currentUrl = url;
         Interlocked.Exchange(ref consecutiveRenderFailures, 0);
         return true;
@@ -511,6 +514,8 @@ internal sealed class MpvRenderer : IDisposable
             _ = mpv_get_property(mpvContext, "core-idle", FormatFlag, out int coreIdle);
             _ = mpv_get_property(mpvContext, "seeking", FormatFlag, out int seeking);
             _ = mpv_get_property(mpvContext, "paused-for-cache", FormatFlag, out int pausedForCache);
+            _ = mpv_get_property(mpvContext, "video-out-params/aspect", FormatDouble, out double videoAspect);
+            VideoAspect = (float)videoAspect;
             var hasAudioPosition = mpv_get_property(mpvContext, "audio-pts", FormatDouble, out double audioPosition) >= 0;
             var hasVideo = mpv_get_property(mpvContext, "vid", FormatInt64, out long _) >= 0;
             var videoIsStill = hasVideo

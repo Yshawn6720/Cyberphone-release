@@ -49,7 +49,7 @@ internal sealed partial class MusicApp
 
     private bool JamCapturesPointer => jamInviteSheet.CapturesPointer || jamMemberSheet.CapturesPointer;
 
-    private string MyJamUserId => jamAccount.CurrentUser?.Id ?? string.Empty;
+    private string MyJamUserId => jam.SelfId;
 
     private int JamOthersCount => jamMeIndex >= 0 ? jamMembers.Length - 1 : jamMembers.Length;
 
@@ -78,9 +78,9 @@ internal sealed partial class MusicApp
         if (jam.DeclineVersion != jamSeenDecline)
         {
             jamSeenDecline = jam.DeclineVersion;
-            if (JamMessages.Decline(jam.LastDecline) is { } decline)
+            if (JamMessages.Decline(jam.LastDecline, jam.LastRelayRefusal) is { } decline)
             {
-                ShellToast.Show(Loc.T(decline));
+                ShellToast.Show(decline);
             }
         }
 

@@ -6,16 +6,19 @@ namespace Aetherphone.Core.Telephony;
 
 internal sealed class RealtimeEndpoint
 {
-    public RealtimeEndpoint(Func<Uri> resolveUri, Action<ClientWebSocketOptions> configure, Func<int?> maxReconnects)
+    public RealtimeEndpoint(Func<Uri> resolveUri, Action<ClientWebSocketOptions> configure, Func<int?> maxReconnects,
+        Action<RelayFailure>? refused = null)
     {
         ResolveUri = resolveUri;
         Configure = configure;
         MaxReconnects = maxReconnects;
+        Refused = refused;
     }
 
     public Func<Uri> ResolveUri { get; }
     public Action<ClientWebSocketOptions> Configure { get; }
     public Func<int?> MaxReconnects { get; }
+    public Action<RelayFailure>? Refused { get; }
 
     public static RealtimeEndpoint Aethernet(AethernetSession session) => new(
         () => BuildUri(session.BaseUrl),

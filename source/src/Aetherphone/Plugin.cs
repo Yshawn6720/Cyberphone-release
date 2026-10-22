@@ -151,7 +151,7 @@ public sealed class Plugin : IDalamudPlugin
             shell = new PhoneShell(services, bundle);
             services.NameplateTitles.Bind(videoSuite.WatchAlong, () => shell.ForegroundApp, bundle.Apps);
             screenshotImport = new ScreenshotImportService(bundle.Photos, Cfg);
-            phoneWindow = new PhoneWindow(shell, Cfg);
+            phoneWindow = new PhoneWindow(shell, Cfg, screenWindow);
             commands = new PhoneCommands(services, phoneWindow, bundle.Apps, videoDebugWindow, ChatGui);
             Updates = new UpdateCheckService(services.Http, PluginInterface);
             updateChipWindow = new UpdateChipWindow(phoneWindow, Updates, services.Themes);

@@ -177,6 +177,59 @@ internal sealed class HttpService : IDisposable
             .ConfigureAwait(false);
     }
 
+    public async Task<ConditionalResponse?> GetIfChangedAsync(Uri uri, string bearer, string? etag,
+        CancellationToken token, Action<AepFailure>? onFailure = null)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Get, uri);
+        if (IsPollingPaused(request))
+        {
+            AepLog.Debug($"HTTP GET {uri} skipped; host is rate limit paused");
+            Report(onFailure, AepFailure.Transport(AepFailureKind.RateLimitPaused));
+            return null;
+        }
+
+        ApplyHeaders(request, bearer, null);
+        if (!string.IsNullOrEmpty(etag))
+        {
+            request.Headers.TryAddWithoutValidation("If-None-Match", etag);
+        }
+
+        try
+        {
+            using var scope = TimeoutScope(token, RequestTimeout);
+            using var response = await client.SendAsync(request, scope.Token).ConfigureAwait(false);
+            if (response.StatusCode == HttpStatusCode.TooManyRequests)
+            {
+                PauseIfPolling(request, response);
+                Report(onFailure, await DescribeAsync(response, scope.Token).ConfigureAwait(false));
+                return null;
+            }
+
+            if (response.StatusCode == HttpStatusCode.NotModified && !string.IsNullOrEmpty(etag))
+            {
+                return new ConditionalResponse(true, Array.Empty<byte>(), etag);
+            }
+
+            if (!await SucceededOrReportedAsync(request, response, onFailure, scope.Token).ConfigureAwait(false))
+            {
+                return null;
+            }
+
+            var body = await response.Content.ReadAsByteArrayAsync(scope.Token).ConfigureAwait(false);
+            return new ConditionalResponse(false, body, response.Headers.ETag?.ToString() ?? string.Empty);
+        }
+        catch (OperationCanceledException) when (token.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception exception)
+        {
+            AepLog.Warning(exception, $"HTTP GET failed for {uri}");
+            Report(onFailure, ClassifyException(exception, token));
+            return null;
+        }
+    }
+
     public Task<TResponse?> PostJsonAsync<TRequest, TResponse>(string url, TRequest body,
         JsonTypeInfo<TRequest> requestInfo, JsonTypeInfo<TResponse> responseInfo, string? bearer,
         CancellationToken token, Action<int>? onStatus = null, string? appScope = null,
@@ -468,6 +521,22 @@ internal sealed class HttpService : IDisposable
         }
     }
 
+    public void PauseHost(string host, TimeSpan pause)
+    {
+        if (host.Length == 0 || pause <= TimeSpan.Zero)
+        {
+            return;
+        }
+
+        var untilTicks = DateTime.UtcNow.Add(pause).Ticks;
+        var applied = pausedHostsUntilTicks.AddOrUpdate(host, untilTicks,
+            (_, existing) => existing > untilTicks ? existing : untilTicks);
+        if (applied == untilTicks)
+        {
+            AepLog.Warning($"{host} rate limited; holding requests for {pause.TotalSeconds:F0}s");
+        }
+    }
+
     public TimeSpan PauseRemaining(string host)
     {
         if (host.Length == 0 || !pausedHostsUntilTicks.TryGetValue(host, out var untilTicks))
@@ -566,14 +635,7 @@ internal sealed class HttpService : IDisposable
             return;
         }
 
-        var pause = ResolveRateLimitPause(response);
-        var untilTicks = DateTime.UtcNow.Add(pause).Ticks;
-        var applied = pausedHostsUntilTicks.AddOrUpdate(uri.Host, untilTicks,
-            (_, existing) => existing > untilTicks ? existing : untilTicks);
-        if (applied == untilTicks)
-        {
-            AepLog.Warning($"{uri.Host} rate limited; holding requests for {pause.TotalSeconds:F0}s");
-        }
+        PauseHost(uri.Host, ResolveRateLimitPause(response));
     }
 
     private static TimeSpan ResolveRateLimitPause(HttpResponseMessage response)
@@ -609,3 +671,5 @@ internal sealed class HttpService : IDisposable
 
     public void Dispose() => client.Dispose();
 }
+
+internal readonly record struct ConditionalResponse(bool NotModified, byte[] Body, string ETag);

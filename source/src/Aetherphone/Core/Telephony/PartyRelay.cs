@@ -1,4 +1,3 @@
-using System.Diagnostics.CodeAnalysis;
 using System.Net.WebSockets;
 using Aetherphone.Core.Net;
 
@@ -12,14 +11,24 @@ internal enum PartyRelayRole : byte
     Viewer,
 }
 
+internal enum PartyRelayKind : byte
+{
+    Party,
+    Jam,
+    Game,
+    Call,
+}
+
 internal sealed class PartyRelay
 {
+    private const string RealtimePath = "/rt";
     private const int MaxIdentityLength = 32;
     private const int ViewerReconnects = 3;
     private const long IdentityRefreshMilliseconds = 1000;
 
     private readonly Configuration configuration;
     private readonly Func<PartyRelayIdentity?> identitySource;
+    private readonly string kindQuery;
     private readonly object gate = new();
 
     private string? checkedUrl;
@@ -27,6 +36,7 @@ internal sealed class PartyRelay
     private Uri? configuredUri;
     private bool configured;
     private PartyRelayIdentity? cachedIdentity;
+    private string cachedIdentityId = string.Empty;
     private long identityReadAtTicks;
     private bool identityRead;
 
@@ -36,14 +46,23 @@ internal sealed class PartyRelay
     private PartyRelayIdentity sessionIdentity;
     private string? sessionCode;
     private PartyRelayRole sessionRole;
+    private bool sessionRemoved;
     private volatile bool active;
     private volatile string? selfId;
 
-    public PartyRelay(Configuration configuration, Func<PartyRelayIdentity?> identitySource)
+    public PartyRelay(Configuration configuration, Func<PartyRelayIdentity?> identitySource,
+        PartyRelayKind kind = PartyRelayKind.Party, Action<RelayFailure>? refused = null)
     {
         this.configuration = configuration;
         this.identitySource = identitySource;
-        Endpoint = new RealtimeEndpoint(ResolveUri, Configure, MaxReconnects);
+        kindQuery = kind switch
+        {
+            PartyRelayKind.Jam => "?kind=jam&",
+            PartyRelayKind.Game => "?kind=game&",
+            PartyRelayKind.Call => "?kind=call&",
+            _ => "?",
+        };
+        Endpoint = new RealtimeEndpoint(ResolveUri, Configure, MaxReconnects, refused);
     }
 
     public RealtimeEndpoint Endpoint { get; }
@@ -80,60 +99,47 @@ internal sealed class PartyRelay
     {
         get
         {
-            var now = Environment.TickCount64;
             lock (gate)
             {
                 RefreshConfiguration();
-                if (!configured)
-                {
-                    return false;
-                }
-
-                if (!identityRead || now - identityReadAtTicks >= IdentityRefreshMilliseconds)
-                {
-                    identityRead = true;
-                    identityReadAtTicks = now;
-                    cachedIdentity = Validate(identitySource());
-                }
-
-                return cachedIdentity is not null;
+                return configured && RefreshIdentity() is not null;
             }
         }
     }
 
-    internal static bool IsUsableServer(string url) => TryCreateRealtimeUri(url, out _);
-
-    private static bool TryCreateRealtimeUri(string? url, [NotNullWhen(true)] out Uri? realtimeUri)
+    public string LocalId
     {
-        realtimeUri = null;
-        if (string.IsNullOrWhiteSpace(url) || !Uri.TryCreate(url.Trim(), UriKind.Absolute, out var parsed))
+        get
         {
-            return false;
+            lock (gate)
+            {
+                RefreshIdentity();
+                return cachedIdentityId;
+            }
         }
-
-        string socketScheme;
-        if (parsed.Scheme == Uri.UriSchemeHttps)
-        {
-            socketScheme = "wss";
-        }
-        else if (parsed.Scheme == Uri.UriSchemeHttp && parsed.IsLoopback)
-        {
-            socketScheme = "ws";
-        }
-        else
-        {
-            return false;
-        }
-
-        if (OfficialHostGuard.IsBlocked(parsed.Host))
-        {
-            return false;
-        }
-
-        var withoutQuery = parsed.GetLeftPart(UriPartial.Path).TrimEnd('/');
-        realtimeUri = new Uri(string.Concat(socketScheme, withoutQuery.AsSpan(parsed.Scheme.Length), "/rt"));
-        return true;
     }
+
+    private PartyRelayIdentity? RefreshIdentity()
+    {
+        var now = Environment.TickCount64;
+        if (identityRead && now - identityReadAtTicks < IdentityRefreshMilliseconds)
+        {
+            return cachedIdentity;
+        }
+
+        identityRead = true;
+        identityReadAtTicks = now;
+        var identity = Validate(identitySource());
+        if (!Nullable.Equals(identity, cachedIdentity))
+        {
+            cachedIdentity = identity;
+            cachedIdentityId = identity is { } known ? string.Concat(known.Name, "@", known.World) : string.Empty;
+        }
+
+        return cachedIdentity;
+    }
+
+    internal static bool IsUsableServer(string url) => RelayAddress.TryCreate(url, RealtimePath, true, out _);
 
     public bool Begin(string? code)
     {
@@ -156,6 +162,7 @@ internal sealed class PartyRelay
             sessionIdentity = identity;
             sessionCode = code;
             sessionRole = code is null ? PartyRelayRole.Host : PartyRelayRole.Viewer;
+            sessionRemoved = false;
             selfId = string.Concat(identity.Name, "@", identity.World);
             active = true;
             return true;
@@ -173,6 +180,7 @@ internal sealed class PartyRelay
             sessionInvite = string.Empty;
             sessionCode = null;
             sessionRole = PartyRelayRole.Host;
+            sessionRemoved = false;
         }
     }
 
@@ -194,12 +202,33 @@ internal sealed class PartyRelay
         }
     }
 
+    public void StopReconnecting()
+    {
+        lock (gate)
+        {
+            sessionRemoved = true;
+        }
+    }
+
     public void SetCode(string code)
     {
         lock (gate)
         {
             sessionCode = code;
         }
+    }
+
+    public void SaveServer(string url, string invite)
+    {
+        if (string.Equals(url, configuration.PartyRelayUrl, StringComparison.Ordinal)
+            && string.Equals(invite, configuration.PartyRelayInvite, StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        configuration.PartyRelayUrl = url;
+        configuration.PartyRelayInvite = invite;
+        configuration.Save();
     }
 
     private void RefreshConfiguration()
@@ -213,7 +242,7 @@ internal sealed class PartyRelay
 
         checkedUrl = url;
         checkedInvite = invite;
-        configuredUri = TryCreateRealtimeUri(url, out var realtimeUri) ? realtimeUri : null;
+        configuredUri = RelayAddress.TryCreate(url, RealtimePath, true, out var realtimeUri) ? realtimeUri : null;
         configured = configuredUri is not null && !string.IsNullOrWhiteSpace(invite);
     }
 
@@ -251,8 +280,8 @@ internal sealed class PartyRelay
             var name = Uri.EscapeDataString(sessionIdentity.Name);
             var world = Uri.EscapeDataString(sessionIdentity.World);
             var query = sessionCode is { } code
-                ? string.Concat("?code=", Uri.EscapeDataString(code), "&name=", name, "&world=", world)
-                : string.Concat("?create=1&name=", name, "&world=", world);
+                ? string.Concat(kindQuery, "code=", Uri.EscapeDataString(code), "&name=", name, "&world=", world)
+                : string.Concat(kindQuery, "create=1&name=", name, "&world=", world);
             return new Uri(sessionUri.AbsoluteUri + query);
         }
     }
@@ -272,7 +301,9 @@ internal sealed class PartyRelay
     {
         lock (gate)
         {
-            return sessionRole == PartyRelayRole.Viewer && sessionCode is not null ? ViewerReconnects : 0;
+            return !sessionRemoved && sessionRole == PartyRelayRole.Viewer && sessionCode is not null
+                ? ViewerReconnects
+                : 0;
         }
     }
 }

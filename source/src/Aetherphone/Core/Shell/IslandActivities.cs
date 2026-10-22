@@ -1,4 +1,5 @@
 using Aetherphone.Core.Aethernet.Contracts;
+using Aetherphone.Core.Telephony;
 
 namespace Aetherphone.Core.Shell;
 
@@ -131,7 +132,7 @@ internal static class IslandActivities
         switch (activity)
         {
             case IslandActivity.Call:
-                return "message";
+                return CallHub.ScreenAppId;
             case IslandActivity.Session:
                 return "aetherstream";
             case IslandActivity.Playback:

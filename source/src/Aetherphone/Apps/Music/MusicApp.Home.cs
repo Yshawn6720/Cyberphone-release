@@ -102,9 +102,9 @@ internal sealed partial class MusicApp
             else
             {
                 DrawHomeTopPicks();
+                DrawJamHomeCard(scale);
                 if (HiddenApps.AethernetEnabled)
                 {
-                    DrawJamHomeCard(scale);
                     DrawFriendsListening(scale);
                 }
 
@@ -254,9 +254,9 @@ internal sealed partial class MusicApp
                 index == 0 ? ArtworkTile.LargeCard : ArtworkTile.Standard);
         }
 
+        DrawJamHomeCard(scale);
         if (HiddenApps.AethernetEnabled)
         {
-            DrawJamHomeCard(scale);
             DrawFriendsListening(scale);
         }
     }

@@ -46,8 +46,7 @@ internal sealed partial class GamesApp
     private const int SearchMaxLength = 40;
     private const float LibraryEmptyBandHeight = 300f;
 
-    private static readonly int LibraryFilterCount =
-        HiddenApps.AethernetEnabled ? GamesFilters.Count : (int)GamesFilter.Together;
+    private static readonly int LibraryFilterCount = GamesFilters.Count;
 
     private readonly ChipRail libraryFilterRail = new();
     private readonly DropdownMenu librarySortMenu = new();

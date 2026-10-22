@@ -6,10 +6,15 @@ namespace Aetherphone.Core.Telephony;
 
 internal sealed class CallSignalRouter : IDisposable
 {
+    // Below the relay's reaction bucket (6 at once, then 1 a second), so network jitter never gets a reaction dropped.
+    internal const int ReactionBurst = 4;
+    internal const long ReactionRefillMilliseconds = 1000;
+
     private readonly RealtimeConnection connection;
     private readonly RealtimeConnection relayConnection;
     private readonly PartyRelay relay;
     private readonly RealtimeSignalBus signals;
+    private readonly SendBudget reactionBudget = new(ReactionBurst, ReactionRefillMilliseconds);
 
     public CallSignalRouter(AethernetSession session, RealtimeSignalBus signals, PartyRelay relay)
     {
@@ -34,7 +39,7 @@ internal sealed class CallSignalRouter : IDisposable
     public event Action<bool>? ConnectedChanged;
     public event Action<CallControl>? RelayControlReceived;
     public event Action<bool>? StreamConnectedChanged;
-    public event Action<int?>? RelayFailed;
+    public event Action<RelayFailure>? RelayFailed;
 
     public bool Connected => connection.Connected;
     public RealtimeConnection Connection => connection;
@@ -56,6 +61,11 @@ internal sealed class CallSignalRouter : IDisposable
         }
 
         if (!IsRelayUplink(control.Type) || !relay.IsConfigured || !RelayConnected)
+        {
+            return false;
+        }
+
+        if (control.Type == SignalType.StreamReact && !reactionBudget.TryTake(Environment.TickCount64))
         {
             return false;
         }
@@ -93,7 +103,9 @@ internal sealed class CallSignalRouter : IDisposable
     public void SetRelayCode(string code) => relay.SetCode(code);
 
     private static bool IsRelayUplink(string type) => type is SignalType.StreamState or SignalType.StreamJoin
-        or SignalType.StreamLeave or SignalType.StreamControl or SignalType.StreamTransfer;
+        or SignalType.StreamLeave or SignalType.StreamControl or SignalType.StreamTransfer
+        or SignalType.StreamApprove or SignalType.StreamDeny or SignalType.StreamKick or SignalType.StreamReact
+        or SignalType.StreamQueueSuggest or SignalType.StreamQueueApprove or SignalType.StreamQueueDeny;
 
     private void OnConnected(bool isConnected)
     {
@@ -115,13 +127,20 @@ internal sealed class CallSignalRouter : IDisposable
 
     private void OnRelayControl(CallControl message)
     {
-        if (message.Type.StartsWith(SignalType.StreamPrefix, StringComparison.Ordinal))
+        if (!message.Type.StartsWith(SignalType.StreamPrefix, StringComparison.Ordinal))
         {
-            RelayControlReceived?.Invoke(message);
+            return;
         }
+
+        if (message.Type is SignalType.StreamKicked or SignalType.StreamDeclined)
+        {
+            relay.StopReconnecting();
+        }
+
+        RelayControlReceived?.Invoke(message);
     }
 
-    private void OnRelayFailed(int? status) => RelayFailed?.Invoke(status);
+    private void OnRelayFailed(RelayFailure failure) => RelayFailed?.Invoke(failure);
 
     private void OnControl(CallControl message)
     {

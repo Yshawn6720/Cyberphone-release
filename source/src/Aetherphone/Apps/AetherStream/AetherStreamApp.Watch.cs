@@ -62,9 +62,9 @@ internal sealed partial class AetherStreamApp
             Gap(idle ? Metrics.Space.Lg : FabClearance);
         }
 
-        if (!idle && !SuggestionsHidden && ComposeFab.Draw(TabBar.ContentArea(body, scale), "##aetherstreamAddFab",
-                ui.Accent, PhoneIcons.Plus, Loc.T(L.AetherStream.AddVideoTitle), "aetherstream.composer",
-                phoneGlyph: true))
+        if (!idle && ComposeFab.Draw(TabBar.ContentArea(body, scale), "##aetherstreamAddFab", ui.Accent,
+                PhoneIcons.Plus,
+                Loc.T(L.AetherStream.AddVideoTitle), "aetherstream.composer", phoneGlyph: true))
         {
             OpenAddSheet();
         }
@@ -124,11 +124,6 @@ internal sealed partial class AetherStreamApp
 
     private void DrawPromptCard(float scale)
     {
-        if (SuggestionsHidden)
-        {
-            return;
-        }
-
         var viewing = watchAlong.IsViewing;
         var title = Loc.T(viewing ? L.AetherStream.PromptSuggestTitle : L.AetherStream.PromptTitle);
         var hint = Loc.T(viewing ? L.AetherStream.PromptSuggestHint : L.AetherStream.PromptHint);
@@ -182,8 +177,7 @@ internal sealed partial class AetherStreamApp
 
     private void DrawCopiedLinkChip(float scale)
     {
-        if (SuggestionsHidden || copiedLink.Length == 0
-            || string.Equals(copiedLink, dismissedCopiedLink, StringComparison.Ordinal))
+        if (copiedLink.Length == 0 || string.Equals(copiedLink, dismissedCopiedLink, StringComparison.Ordinal))
         {
             return;
         }
@@ -515,7 +509,7 @@ internal sealed partial class AetherStreamApp
                 FontAwesomeIcon.Expand, StageBacking, WhiteInk, delta, eased, hovered,
                 Loc.T(L.AetherStream.Fullscreen)))
         {
-            EnterTheater();
+            EnterFullscreen();
         }
     }
 
@@ -596,10 +590,10 @@ internal sealed partial class AetherStreamApp
         switch (code)
         {
             case PlayerActionFullscreen:
-                EnterTheater();
+                EnterFullscreen();
                 return;
             case PlayerActionWindow:
-                screenWindow.IsOpen = true;
+                screenWindow.OpenWindow();
                 return;
             case PlayerActionTracks:
                 OpenTracksSheet();
@@ -613,10 +607,10 @@ internal sealed partial class AetherStreamApp
         }
     }
 
-    private void EnterTheater()
+    private void EnterFullscreen()
     {
         CloseSheets();
-        AppLandscape.Request(Id);
+        screenWindow.OpenFullscreen();
     }
 
     private void DrawProgress(float scale)
@@ -783,10 +777,8 @@ internal sealed partial class AetherStreamApp
         EndBlock();
     }
 
-    private bool ReactionsAvailable => HiddenApps.AethernetEnabled && watchAlong.ServerSupportsParty
-        && (watchAlong.IsViewing || (watchAlong.IsHosting && watchAlong.HasCompany));
-
-    private bool SuggestionsHidden => watchAlong.IsViewing && !HiddenApps.AethernetEnabled;
+    private bool ReactionsAvailable =>
+        watchAlong.ServerSupportsParty && (watchAlong.IsViewing || (watchAlong.IsHosting && watchAlong.HasCompany));
 
     private void DrawReactionBar(float scale)
     {

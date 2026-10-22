@@ -18,6 +18,7 @@ internal sealed class PhoneWindow : Window
     private const int ScaledStyleVarCount = 6;
     private readonly PhoneShell shell;
     private readonly Configuration configuration;
+    private readonly AetherStreamScreenWindow screenWindow;
     private int recenterFrames;
     private int pendingFrames;
     private int rotatePinFrames;
@@ -38,11 +39,12 @@ internal sealed class PhoneWindow : Window
     private Vector2? minimizedPosition;
     private Vector2? landscapePosition;
 
-    public PhoneWindow(PhoneShell shell, Configuration configuration)
+    public PhoneWindow(PhoneShell shell, Configuration configuration, AetherStreamScreenWindow screenWindow)
         : base(AepConstants.Name, BaseFlags)
     {
         this.shell = shell;
         this.configuration = configuration;
+        this.screenWindow = screenWindow;
         Size = PhoneSizeCatalog.SizeFor(configuration.PhoneWidth);
         SizeCondition = ImGuiCond.Always;
         RespectCloseHotkey = false;
@@ -57,7 +59,10 @@ internal sealed class PhoneWindow : Window
 
     public Vector2 LastSize { get; private set; }
 
-    public bool ShowsChrome => IsOpen && shell.MinimizePhase == MinimizePhase.None && LastSize.Y > 0f;
+    public bool ShowsChrome => IsOpen && !screenWindow.IsFullscreen
+        && shell.MinimizePhase == MinimizePhase.None && LastSize.Y > 0f;
+
+    public override bool DrawConditions() => !screenWindow.IsFullscreen;
 
     public void Maximize()
     {

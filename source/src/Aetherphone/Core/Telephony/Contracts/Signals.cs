@@ -6,7 +6,10 @@ namespace Aetherphone.Core.Telephony.Contracts;
 internal static class SignalType
 {
     public const string Hello = "hello";
+    public const string RelayRefused = "relay.refused";
+    public const string CallPrefix = "call.";
     public const string Start = "call.start";
+    public const string Join = "call.join";
     public const string Invite = "call.invite";
     public const string Accept = "call.accept";
     public const string Decline = "call.decline";
@@ -23,6 +26,11 @@ internal static class SignalType
     public const string Ended = "call.ended";
     public const string Handled = "call.handled";
     public const string Unavailable = "call.unavailable";
+    public const string CallApprove = "call.approve";
+    public const string CallDeny = "call.deny";
+    public const string CallJoinPending = "call.joinPending";
+    public const string CallJoinRequest = "call.joinRequest";
+    public const string CallJoinCancelled = "call.joinCancelled";
     public const string ContentRemoved = "content.removed";
     public const string KeysStale = "keys.stale";
     public const string KeysLinkPending = "keys.linkPending";
@@ -66,6 +74,13 @@ internal static class SignalType
     public const string GamePrivate = "game.private";
     public const string GameHandled = "game.handled";
     public const string GameEnded = "game.ended";
+    public const string GameCreate = "game.create";
+    public const string GameJoin = "game.join";
+    public const string GameAct = "game.act";
+    public const string GameActed = "game.acted";
+    public const string GameLeave = "game.leave";
+    public const string GameClose = "game.close";
+    public const string GameKick = "game.kick";
     public const string Error = "error";
 
     public const string StreamPrefix = "stream.";
@@ -399,6 +414,12 @@ internal sealed record CallControl
 
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public JamNearbyInfo[]? NearbyJams { get; init; }
+
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public int? RetryAfterSeconds { get; init; }
+
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public int? MaxRooms { get; init; }
 }
 
 internal sealed record CasinoPayload
@@ -451,4 +472,13 @@ internal sealed record GamePayload
 
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? From { get; init; }
+
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? GameKind { get; init; }
+
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public GameRoomActionRequest? Act { get; init; }
+
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? ClientActionId { get; init; }
 }

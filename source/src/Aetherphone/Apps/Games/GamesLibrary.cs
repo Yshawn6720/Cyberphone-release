@@ -220,12 +220,13 @@ internal sealed class GamesLibrary
 
     public int TotalStars { get; private set; }
 
-    public GamesLibrary(IMiniGame[] games, GameStatsStore stats, IRankSource? ranks = null, bool online = true)
+    public GamesLibrary(IMiniGame[] games, GameStatsStore stats, IRankSource? ranks = null,
+        string[]? onlineKinds = null)
     {
         this.games = games;
         this.stats = stats;
         this.ranks = ranks ?? NullRankSource.Instance;
-        var kinds = online ? OnlineGameArt.Kinds : Array.Empty<string>();
+        var kinds = onlineKinds ?? OnlineGameArt.Kinds;
         Entries = new GameEntry[games.Length + kinds.Length];
         for (var index = 0; index < games.Length; index++)
         {

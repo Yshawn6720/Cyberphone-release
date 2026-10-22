@@ -1,14 +1,45 @@
-import { bearerOf, inviteMatches, parseIdentity, signToken, verifyToken, type Identity } from "./auth";
+import { bearerOf, inviteCodes, matchingInvite, parseIdentity, signToken, verifyAnyToken, type Identity } from "./auth";
+import { ANNOUNCEMENTS, CALENDAR, type StaticDocument } from "./content";
+import { CLAIM_PATH, RELEASE_PATH, roomsOf, slotStub, type SlotClaim, type SlotDecision, type SlotRelease } from "./registry";
 import { JOIN_HEADER, type JoinTicket } from "./room";
-import { maxRooms, normalizeCode, randomCode, slotOfCode } from "./protocol";
+import {
+  RATE_RETRY_AFTER_SECONDS,
+  REFUSED_SIGNAL,
+  RefusalClose,
+  callsEnabled,
+  maxRooms,
+  maxRoomsPerAddress,
+  normalizeCode,
+  randomCode,
+  roomKind,
+  slotOfCode,
+  type RefusalReason,
+  type RoomKind,
+} from "./protocol";
 
+export { CallRoom } from "./call";
+export { GameRoom } from "./game";
+export { JamRoom } from "./jam";
 export { PartyRoom } from "./room";
+export { SlotRegistry } from "./registry";
 
 export interface Env {
   ROOMS: DurableObjectNamespace;
+  JAM_ROOMS: DurableObjectNamespace;
+  GAME_ROOMS: DurableObjectNamespace;
+  CALL_ROOMS: DurableObjectNamespace;
+  SLOT_REGISTRY: DurableObjectNamespace;
   CONNECT_LIMITER: RateLimit;
+  ADDRESS_LIMITER: RateLimit;
+  TOTAL_LIMITER: RateLimit;
   INVITE_CODE?: string;
+  MAX_ROOMS_PER_ADDRESS?: string;
   MAX_ROOMS?: string;
+  MAX_ROOMS_PARTY?: string;
+  MAX_ROOMS_JAM?: string;
+  MAX_ROOMS_GAME?: string;
+  MAX_ROOMS_CALL?: string;
+  CALLS_ENABLED?: string;
 }
 
 function json(body: unknown, status = 200): Response {
@@ -54,18 +85,24 @@ async function readBody(request: Request): Promise<Record<string, unknown> | nul
   return typeof parsed === "object" && parsed !== null ? parsed as Record<string, unknown> : null;
 }
 
-async function underLimit(env: Env): Promise<boolean> {
-  const outcome = await env.CONNECT_LIMITER.limit({ key: "relay" });
-  return outcome.success;
+function addressOf(request: Request): string {
+  return request.headers.get("CF-Connecting-IP") ?? "unknown";
 }
 
-async function challenge(request: Request, invite: string): Promise<Response> {
+async function underLimit(request: Request, env: Env, identity: Identity): Promise<boolean> {
+  return (await env.CONNECT_LIMITER.limit({ key: identity.id })).success
+    && (await env.ADDRESS_LIMITER.limit({ key: addressOf(request) })).success
+    && (await env.TOTAL_LIMITER.limit({ key: "relay" })).success;
+}
+
+async function challenge(request: Request, invites: readonly string[]): Promise<Response> {
   const body = await readBody(request);
   if (body === null || typeof body.invite !== "string") {
     return json({ error: "bad_request" }, 400);
   }
 
-  if (!await inviteMatches(body.invite, invite)) {
+  const invite = await matchingInvite(body.invite, invites);
+  if (invite === null) {
     return json({ error: "invite" }, 401);
   }
 
@@ -78,29 +115,38 @@ async function challenge(request: Request, invite: string): Promise<Response> {
   return json({ challengeId, code: "", instructions: "" });
 }
 
-async function verify(request: Request, invite: string): Promise<Response> {
+async function verify(request: Request, invites: readonly string[]): Promise<Response> {
   const body = await readBody(request);
   if (body === null || typeof body.challengeId !== "string") {
     return json({ error: "bad_request" }, 400);
   }
 
   const now = Date.now();
-  const identity = await verifyToken(invite, body.challengeId, "challenge", now);
-  if (identity === null) {
+  const verified = await verifyAnyToken(invites, body.challengeId, "challenge", now);
+  if (verified === null) {
     return json({ ok: false, reason: "expired" });
   }
 
-  const token = await signToken(invite, "session", identity, now);
-  return json({ ok: true, token, user: userOf(identity) });
+  const token = await signToken(verified.invite, "session", verified.identity, now);
+  return json({ ok: true, token, user: userOf(verified.identity) });
 }
 
-async function me(request: Request, invite: string): Promise<Response> {
+async function me(request: Request, invites: readonly string[]): Promise<Response> {
   const bearer = bearerOf(request);
-  const identity = bearer === null ? null : await verifyToken(invite, bearer, "session", Date.now());
-  return identity === null ? json({ error: "unauthorized" }, 401) : json(userOf(identity));
+  const verified = bearer === null ? null : await verifyAnyToken(invites, bearer, "session", Date.now());
+  return verified === null ? json({ error: "unauthorized" }, 401) : json(userOf(verified.identity));
 }
 
-async function realtimeIdentity(request: Request, url: URL, invite: string): Promise<Identity | null> {
+async function content(request: Request, invites: readonly string[], document: StaticDocument): Promise<Response> {
+  const bearer = bearerOf(request);
+  if (bearer === null || await matchingInvite(bearer, invites) === null) {
+    return json({ error: "unauthorized" }, 401);
+  }
+
+  return document.respond(request);
+}
+
+async function realtimeIdentity(request: Request, url: URL, invites: readonly string[]): Promise<Identity | null> {
   const bearer = bearerOf(request);
   if (bearer === null) {
     return null;
@@ -109,17 +155,31 @@ async function realtimeIdentity(request: Request, url: URL, invite: string): Pro
   const name = url.searchParams.get("name");
   const world = url.searchParams.get("world");
   if (name !== null || world !== null) {
-    return await inviteMatches(bearer, invite) ? parseIdentity(name, world) : null;
+    return await matchingInvite(bearer, invites) !== null ? parseIdentity(name, world) : null;
   }
 
-  return verifyToken(invite, bearer, "session", Date.now());
+  return (await verifyAnyToken(invites, bearer, "session", Date.now()))?.identity ?? null;
 }
 
-function forward(request: Request, env: Env, slot: number, ticket: JoinTicket): Promise<Response> {
+function forward(request: Request, rooms: DurableObjectNamespace, slot: number, ticket: JoinTicket): Promise<Response> {
   const headers = new Headers(request.headers);
   headers.set(JOIN_HEADER, encodeURIComponent(JSON.stringify(ticket)));
-  const stub = env.ROOMS.get(env.ROOMS.idFromName(`slot:${slot}`));
-  return stub.fetch(new Request(request.url, { method: "GET", headers }));
+  return slotStub(rooms, slot).fetch(new Request(request.url, { method: "GET", headers }));
+}
+
+function registryOf(env: Env, kind: RoomKind): DurableObjectStub {
+  return env.SLOT_REGISTRY.get(env.SLOT_REGISTRY.idFromName(kind));
+}
+
+async function claimSlot(env: Env, claim: SlotClaim): Promise<SlotDecision> {
+  const body = JSON.stringify(claim);
+  const response = await registryOf(env, claim.kind).fetch(`https://relay.internal${CLAIM_PATH}`, { method: "POST", body });
+  return await response.json() as SlotDecision;
+}
+
+async function releaseSlot(env: Env, kind: RoomKind, release: SlotRelease): Promise<void> {
+  const body = JSON.stringify(release);
+  await registryOf(env, kind).fetch(`https://relay.internal${RELEASE_PATH}`, { method: "POST", body });
 }
 
 function preferredSlot(id: string, roomCount: number): number {
@@ -131,52 +191,88 @@ function preferredSlot(id: string, roomCount: number): number {
   return hash % roomCount;
 }
 
-async function realtime(request: Request, env: Env, url: URL, invite: string): Promise<Response> {
+function maxRoomsFor(env: Env, kind: RoomKind): number {
+  switch (kind) {
+    case "jam":
+      return maxRooms(env.MAX_ROOMS_JAM, env.MAX_ROOMS);
+    case "game":
+      return maxRooms(env.MAX_ROOMS_GAME, env.MAX_ROOMS);
+    case "call":
+      return maxRooms(env.MAX_ROOMS_CALL, env.MAX_ROOMS);
+    case "party":
+      return maxRooms(env.MAX_ROOMS_PARTY, env.MAX_ROOMS);
+  }
+}
+
+function refuse(reason: RefusalReason, details: Record<string, number> = {}): Response {
+  const [client, server] = Object.values(new WebSocketPair());
+  server.accept();
+  server.send(JSON.stringify({ type: REFUSED_SIGNAL, reason, ...details }));
+  server.close(RefusalClose[reason], reason);
+  return new Response(null, { status: 101, webSocket: client });
+}
+
+async function realtime(request: Request, env: Env, url: URL, invites: readonly string[]): Promise<Response> {
   if (request.headers.get("Upgrade") !== "websocket") {
     return json({ error: "upgrade_required" }, 426);
   }
 
-  const identity = await realtimeIdentity(request, url, invite);
+  const identity = await realtimeIdentity(request, url, invites);
   if (identity === null) {
     return json({ error: "unauthorized" }, 401);
   }
 
-  const roomCount = maxRooms(env.MAX_ROOMS);
+  const kind = roomKind(url.searchParams.get("kind"));
+  if (kind === "call" && !callsEnabled(env.CALLS_ENABLED)) {
+    return refuse("calls_disabled");
+  }
+
   const code = normalizeCode(url.searchParams.get("code"));
   const create = url.searchParams.get("create") === "1";
-  if (code === null && !create) {
+  if (kind === null || (code === null && !create)) {
     return json({ error: "bad_request" }, 400);
   }
 
-  if (!await underLimit(env)) {
-    return json({ error: "rate_limited" }, 429);
+  const rooms = roomsOf(env, kind);
+  const roomCount = maxRoomsFor(env, kind);
+  if (!await underLimit(request, env, identity)) {
+    return refuse("rate_limited", { retryAfterSeconds: RATE_RETRY_AFTER_SECONDS });
   }
 
+  const address = addressOf(request);
   if (code !== null) {
     const slot = slotOfCode(code, roomCount);
     if (slot === null) {
       return json({ error: "room_not_found" }, 404);
     }
 
-    return forward(request, env, slot, { role: "viewer", code, ...identity });
+    return forward(request, rooms, slot, { role: "viewer", code, address, ...identity });
   }
 
+  const perAddress = maxRoomsPerAddress(env.MAX_ROOMS_PER_ADDRESS);
   const start = preferredSlot(identity.id, roomCount);
-  for (let offset = 0; offset < roomCount; offset++) {
-    const slot = (start + offset) % roomCount;
-    const response = await forward(request, env, slot, { role: "host", code: randomCode(slot), ...identity });
-    if (response.status !== 409) {
-      return response;
-    }
+  const decision = await claimSlot(env, { kind, id: identity.id, address, start, roomCount, perAddress });
+  if ("refused" in decision) {
+    return decision.refused === "rooms_full"
+      ? refuse("rooms_full", { maxRooms: roomCount })
+      : refuse("address_rooms", { maxRooms: perAddress });
   }
 
-  return json({ error: "rooms_full" }, 503);
+  const ticket: JoinTicket = { role: "host", code: randomCode(decision.slot), address, ...identity };
+  let response: Response;
+  try {
+    response = await forward(request, rooms, decision.slot, ticket);
+  } finally {
+    await releaseSlot(env, kind, { id: identity.id, slot: decision.slot });
+  }
+
+  return response.status === 409 ? refuse("rooms_full", { maxRooms: roomCount }) : response;
 }
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
-    const invite = env.INVITE_CODE;
-    if (invite === undefined || invite.length === 0) {
+    const invites = inviteCodes(env.INVITE_CODE);
+    if (invites.length === 0) {
       return json({ error: "not_configured" }, 500);
     }
 
@@ -184,13 +280,17 @@ export default {
     const route = `${request.method} ${url.pathname}`;
     switch (route) {
       case "POST /auth/challenge":
-        return challenge(request, invite);
+        return challenge(request, invites);
       case "POST /auth/verify":
-        return verify(request, invite);
+        return verify(request, invites);
       case "GET /me":
-        return me(request, invite);
+        return me(request, invites);
       case "GET /rt":
-        return realtime(request, env, url, invite);
+        return realtime(request, env, url, invites);
+      case "GET /content/announcements":
+        return content(request, invites, ANNOUNCEMENTS);
+      case "GET /content/calendar":
+        return content(request, invites, CALENDAR);
       default:
         return json({ error: "not_found" }, 404);
     }

@@ -200,6 +200,12 @@ internal sealed partial class MusicApp
 
         jamActionUserId = userId;
         jamActionName = name;
+        if (jam.RelayMode)
+        {
+            RunJamMemberAction(JamActionMakeHost);
+            return;
+        }
+
         jamMemberSheet.Open();
     }
 

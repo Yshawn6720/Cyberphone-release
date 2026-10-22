@@ -53,10 +53,10 @@ internal sealed partial class JamSession : IDisposable
     private long lastAddSentAtTicks;
     private volatile bool stopRequested;
 
-    public JamSession(CallSignalRouter calls, PlaybackHub hub, AethernetSession session,
+    public JamSession(CallSignalRouter calls, PartyRelay relay, PlaybackHub hub, AethernetSession session,
         NotificationService? notifications, IFramework? framework, Func<JamLocation>? locate = null)
     {
-        signals = new JamSignalRouter(calls);
+        signals = new JamSignalRouter(calls, relay);
         this.locate = locate ?? LocateLocalPlayer;
         this.hub = hub;
         this.session = session;
@@ -66,6 +66,7 @@ internal sealed partial class JamSession : IDisposable
         guestAuthority = new JamGuestAuthority(this);
         signals.Received += OnReceived;
         signals.ConnectedChanged += OnConnectedChanged;
+        signals.RelayFailed += OnRelayFailed;
         hub.TrackStarted += OnTrackStarted;
         if (framework is not null)
         {
@@ -122,7 +123,9 @@ internal sealed partial class JamSession : IDisposable
     public bool CanControlPlayback => JamPermission.Allows(MyPermissions, JamPermission.ControlPlayback);
     public bool CanAddToQueue => JamPermission.Allows(MyPermissions, JamPermission.AddToQueue);
 
-    private string MyUserId => session.CurrentUser?.Id ?? string.Empty;
+    private string MyUserId => RelayMode
+        ? signals.Relay.SelfId ?? string.Empty
+        : session.CurrentUser?.Id ?? string.Empty;
 
     public bool Start(string? title)
     {
@@ -141,12 +144,21 @@ internal sealed partial class JamSession : IDisposable
             Leave();
         }
 
+        if (!OpenRelay(null))
+        {
+            return false;
+        }
+
         Title = JamWire.NormalizeTitle(title);
         seedPending = hub.SongActive && hub.Queue.QueuedCount > 0;
         boundUserId = MyUserId;
         Mode = JamMode.Starting;
         awaitingSinceTicks = Environment.TickCount64;
-        signals.Start(Title.Length > 0 ? Title : null);
+        if (!handshakePending)
+        {
+            signals.Start(Title.Length > 0 ? Title : null);
+        }
+
         return true;
     }
 
@@ -174,11 +186,20 @@ internal sealed partial class JamSession : IDisposable
             Leave();
         }
 
+        if (!OpenRelay(code))
+        {
+            return false;
+        }
+
         SetCode(code);
         boundUserId = MyUserId;
         Mode = JamMode.Joining;
         awaitingSinceTicks = Environment.TickCount64;
-        signals.Join(code);
+        if (!handshakePending)
+        {
+            signals.Join(code);
+        }
+
         return true;
     }
 
@@ -316,6 +337,8 @@ internal sealed partial class JamSession : IDisposable
         }
 
         TrackConnection(now);
+        ApplyRelayFailure();
+        SendHandshake(now);
         TickTimeouts(now);
         if (stopRequested)
         {
@@ -345,6 +368,7 @@ internal sealed partial class JamSession : IDisposable
     {
         signals.Received -= OnReceived;
         signals.ConnectedChanged -= OnConnectedChanged;
+        signals.RelayFailed -= OnRelayFailed;
         hub.TrackStarted -= OnTrackStarted;
         if (framework is not null)
         {
@@ -377,12 +401,12 @@ internal sealed partial class JamSession : IDisposable
 
     private bool CanReachServer()
     {
-        if (signals.Connected && session.CurrentUser is not null)
+        if (RelayMode ? signals.Relay.RelayReady : signals.Connected && session.CurrentUser is not null)
         {
             return true;
         }
 
-        Decline(JamDeclineReason.Offline);
+        Decline(RelayMode ? JamDeclineReason.ServerMissing : JamDeclineReason.Offline);
         return false;
     }
 
@@ -495,10 +519,12 @@ internal sealed partial class JamSession : IDisposable
         if (string.Equals(hostId, MyUserId, StringComparison.Ordinal))
         {
             BecomeHost();
+            BindRelay(PartyRelayRole.Host);
             return;
         }
 
         BecomeGuest();
+        BindRelay(PartyRelayRole.Viewer);
         AnchorRemoteState(message, absorbClock: false);
         ApplyRemoteState();
     }
@@ -869,6 +895,9 @@ internal sealed partial class JamSession : IDisposable
 
     private void ExitLocal(JamDeclineReason reason)
     {
+        handshakePending = false;
+        signals.EndRelay();
+        seenDropCount = Volatile.Read(ref dropCount);
         ReleaseAuthority();
         ResetHostState();
         ResetGuestState();

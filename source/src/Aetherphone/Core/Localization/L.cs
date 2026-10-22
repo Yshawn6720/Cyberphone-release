@@ -1938,6 +1938,25 @@ internal static class L
         public static readonly LocString OutcomeDroppedBody = new("phone.outcomeDroppedBody", "The connection was lost.");
         public static readonly LocString OutcomeDismiss = new("phone.outcomeDismiss", "OK");
         public static readonly LocString End = new("phone.end", "End");
+        public static readonly LocString RoomTitle = new("phone.roomTitle", "Call room");
+        public static readonly LocString RoomWaiting = new("phone.roomWaiting", "Waiting for others…");
+        public static readonly LocString RoomUnsupportedTitle = new("phone.roomUnsupportedTitle", "Calls not available");
+        public static readonly LocString RoomUnsupportedBody = new("phone.roomUnsupportedBody", "This party server doesn't support voice calls. Only servers with calls turned on can host them.");
+        public static readonly LocString RoomNotFoundTitle = new("phone.roomNotFoundTitle", "Room not found");
+        public static readonly LocString RoomNotFoundBody = new("phone.roomNotFoundBody", "Check the invite or room code. The call may have already ended.");
+        public static readonly LocString RoomFullTitle = new("phone.roomFullTitle", "Room is full");
+        public static readonly LocString RoomFullBody = new("phone.roomFullBody", "A call room holds up to 4 people.");
+        public static readonly LocString RoomsBusyTitle = new("phone.roomsBusyTitle", "Server busy");
+        public static readonly LocString RoomsBusyBody = new("phone.roomsBusyBody", "The party server couldn't open the room right now. Try again in a moment.");
+        public static readonly LocString RoomUnreachableTitle = new("phone.roomUnreachableTitle", "Couldn't reach the server");
+        public static readonly LocString RoomUnreachableBody = new("phone.roomUnreachableBody", "Check the party server in MogCast Settings and your connection, then try again.");
+        public static readonly LocString RoomClosedBody = new("phone.roomClosedBody", "The room reached its time limit and closed.");
+        public static readonly LocString RoomAloneBody = new("phone.roomAloneBody", "No one joined for 30 minutes, so the room was closed.");
+        public static readonly LocString RoomAwaitingHost = new("phone.roomAwaitingHost", "Waiting for the host…");
+        public static readonly LocString RoomDeniedTitle = new("phone.roomDeniedTitle", "The host didn't let you in");
+        public static readonly LocString RoomDeniedBody = new("phone.roomDeniedBody", "Only people the host lets in can join this call.");
+        public static readonly LocString RoomHostAwayTitle = new("phone.roomHostAwayTitle", "The host isn't in the call");
+        public static readonly LocString RoomHostAwayBody = new("phone.roomHostAwayBody", "Only the host can let new people in. Try again once they're back in the call.");
     }
 
     internal static class Friends
@@ -6378,6 +6397,12 @@ internal static class L
                 "The Jam didn't respond. Try again");
             public static readonly LocString DeclineOffline = new("music.jam.declineOffline",
                 "Connect to Cyberphone to start or join a Jam");
+            public static readonly LocString DeclineInviteRejected = new("music.jam.declineInviteRejected",
+                "The party server didn't accept your connection code. Paste the host's invite again");
+            public static readonly LocString RelaySetupHint = new("music.jam.relaySetupHint",
+                "Paste a Jam invite from a friend below, or add a party server in MogCast Settings to start your own.");
+            public static readonly LocString RelayCodeHint = new("music.jam.relayCodeHint",
+                "Paste the invite the host shared. If you already use the same party server, the 6 character code is enough.");
             public static readonly LocString RefusalPlayback = new("music.jam.refusalPlayback",
                 "Only the host can control playback");
             public static readonly LocString RefusalQueue = new("music.jam.refusalQueue",
@@ -6943,6 +6968,29 @@ internal static class L
         public static readonly LocString ThisChat = new("linkpearl.thisChat", "This chat");
         public static readonly LocString ShowAsLog = new("linkpearl.showAsLog", "Show as a log");
         public static readonly LocString ShowAsBubbles = new("linkpearl.showAsBubbles", "Show as bubbles");
+        public static readonly LocString CallRoomSection = new("linkpearl.callRoomSection", "Voice call");
+        public static readonly LocString CallStart = new("linkpearl.callStart", "Start a call room");
+        public static readonly LocString CallStartHint = new("linkpearl.callStartHint", "Invite up to 3 friends");
+        public static readonly LocString CallNeedsServer = new("linkpearl.callNeedsServer", "Add a party server in MogCast Settings first");
+        public static readonly LocString CallLobbyNote = new("linkpearl.callLobbyNote", "Start a room and share the invite, then friends paste it below to join. No one can ring you, and nothing connects until you start or join a room.");
+        public static readonly LocString CallJoinSection = new("linkpearl.callJoinSection", "Join with an invite");
+        public static readonly LocString CallInviteHint = new("linkpearl.callInviteHint", "Paste an invite or room code");
+        public static readonly LocString CallPaste = new("linkpearl.callPaste", "Paste");
+        public static readonly LocString CallJoin = new("linkpearl.callJoin", "Join");
+        public static readonly LocString CallNotReady = new("linkpearl.callNotReady", "Log in to a character and add a party server in MogCast Settings first");
+        public static readonly LocString CallInvalidInvite = new("linkpearl.callInvalidInvite", "That invite doesn't look right");
+        public static readonly LocString CallBusy = new("linkpearl.callBusy", "You're already in a call");
+        public static readonly LocString CallPeople = new("linkpearl.callPeople", "In this call");
+        public static readonly LocString CallControls = new("linkpearl.callControls", "Controls");
+        public static readonly LocString CallMute = new("linkpearl.callMute", "Mute microphone");
+        public static readonly LocString CallCopyInvite = new("linkpearl.callCopyInvite", "Copy invite");
+        public static readonly LocString CallLeave = new("linkpearl.callLeave", "Leave call");
+        public static readonly LocString CallYou = new("linkpearl.callYou", "You");
+        public static readonly LocString CallWaitingNote = new("linkpearl.callWaitingNote", "Copy the invite and send it to friends. They paste it in the Calls tab of Linkpearl to join.");
+        public static readonly LocString CallAwaitingNote = new("linkpearl.callAwaitingNote", "The host needs to let you in. You join the call the moment they do.");
+        public static readonly LocString CallRequestsSection = new("linkpearl.callRequestsSection", "Waiting to join");
+        public static readonly LocString CallAdmit = new("linkpearl.callAdmit", "Let in");
+        public static readonly LocString CallDeny = new("linkpearl.callDeny", "Decline");
     }
 
     internal static class Character
@@ -7607,6 +7655,8 @@ internal static class L
             "Paste from clipboard");
         public static readonly LocString Fullscreen = new("aetherstream.fullscreen", "Fullscreen");
         public static readonly LocString ExitFullscreen = new("aetherstream.exitFullscreen", "Exit fullscreen");
+        public static readonly LocString FullscreenFit = new("aetherstream.fullscreenFit", "Fit entire video");
+        public static readonly LocString FullscreenFill = new("aetherstream.fullscreenFill", "Fill and crop");
         public static readonly LocString WatchingHostLabel = new("aetherstream.watchingHostLabel", "Host");
         public static readonly LocString PlayNow = new("aetherstream.playNow", "Play Now");
         public static readonly LocString AddToQueue = new("aetherstream.addToQueue", "Add to Queue");
@@ -8045,6 +8095,7 @@ internal static class L
         public static readonly LocString PlaceHandleTurn = new("aetherstream.placeHandleTurn", "Turn");
         public static readonly LocString PlaceHandleSize = new("aetherstream.placeHandleSize", "Size");
         public static readonly LocString FaceMe = new("aetherstream.faceMe", "Face Me");
+        public static readonly LocString LargeScreen = new("aetherstream.largeScreen", "Big Screen");
         public static readonly LocString FineTune = new("aetherstream.fineTune", "Fine tune");
         public static readonly LocString StepSmall = new("aetherstream.stepSmall", "Small");
         public static readonly LocString StepMedium = new("aetherstream.stepMedium", "Medium");
@@ -8090,6 +8141,8 @@ internal static class L
         public static readonly LocString SettingsRelayLinkUnusable = new("aetherstream.settingsRelayLinkUnusable",
             "This connection code can't be used. Paste the whole code from your server's owner, like party.example.com#CODE.");
         public static readonly LocString SettingsRelayServer = new("aetherstream.settingsRelayServer", "Server: {0}");
+        public static readonly LocString SettingsRelayContentHint = new("aetherstream.settingsRelayContentHint",
+            "The same server also brings Announcements and the in-game events in Calendar.");
         public static readonly LocString PartyRelaySetupHint = new("aetherstream.partyRelaySetupHint",
             "Paste the invite a friend sent you below to join. To host your own party, add a connection code in MogCast Settings.");
         public static readonly LocString InviteShape = new("aetherstream.inviteShape",
@@ -8099,10 +8152,29 @@ internal static class L
             "Connection code rejected");
         public static readonly LocString RelayInviteRejectedBody = new("aetherstream.relayInviteRejectedBody",
             "The party server didn't accept your connection code. Check it in MogCast Settings, or paste your friend's invite again.");
-        public static readonly LocString RelayRoomsFullTitle = new("aetherstream.relayRoomsFullTitle",
-            "Party server is full");
-        public static readonly LocString RelayRoomsFullBody = new("aetherstream.relayRoomsFullBody",
-            "The party server has no free rooms right now. Try again later.");
+    }
+
+    internal static class Relay
+    {
+        public static readonly LocString FullTitle = new("relay.fullTitle", "Server is full");
+        public static readonly LocString FullPartyBody = new("relay.fullPartyBody",
+            "This server is already running as many watch parties as it allows. Join one a friend already opened, or try again in a few minutes.");
+        public static readonly LocString FullJamBody = new("relay.fullJamBody",
+            "This server is already running as many Jams as it allows. Join one a friend already opened, or try again in a few minutes.");
+        public static readonly LocString FullGameBody = new("relay.fullGameBody",
+            "This server is already running as many game rooms as it allows. Join one a friend already opened, or try again in a few minutes.");
+        public static readonly LocString CallRoomsFullTitle = new("relay.callRoomsFullTitle", "Call rooms are full");
+        public static readonly LocString CallRoomsFullBody = new("relay.callRoomsFullBody",
+            "This server allows up to {0} call rooms at once. Try again in a little while.");
+        public static readonly LocString RateLimitedTitle = new("relay.rateLimitedTitle", "Too many connections");
+        public static readonly LocString RateLimitedBody = new("relay.rateLimitedBody",
+            "You connected too often in a short time. Try again in {0} seconds.");
+        public static readonly LocString RateLimitedPill = new("relay.rateLimitedPill",
+            "Too many connections. Try again in {0}s");
+        public static readonly LocString AddressRoomsTitle = new("relay.addressRoomsTitle",
+            "Your network has too many rooms open");
+        public static readonly LocString AddressRoomsBody = new("relay.addressRoomsBody",
+            "One network can have up to {0} rooms of this kind open on this server at once. Close one first, then start another.");
     }
 
     internal static class Clock
@@ -9236,6 +9308,17 @@ internal static class L
         public static readonly LocString OnlineCooldown = new("games.onlineCooldown", "Give it a moment and try again");
         public static readonly LocString OnlineNotYourTurn = new("games.onlineNotYourTurn", "Not your turn");
         public static readonly LocString OnlineStale = new("games.onlineStale", "The table moved on, catching up…");
+        public static readonly LocString OnlineInProgress = new("games.onlineInProgress",
+            "A round is being played in that room. Try again when it ends.");
+        public static readonly LocString OnlineConnectionLost = new("games.onlineConnectionLost",
+            "Lost the connection to the room");
+        public static readonly LocString OnlineRelaySignIn = new("games.onlineRelaySignIn",
+            "Log in to a character to play with friends");
+        public static readonly LocString OnlineRelaySetupHint = new("games.onlineRelaySetupHint",
+            "Paste a game invite from a friend below, or add a party server in MogCast Settings to host your own.");
+        public static readonly LocString OnlineRelayJoinHint = new("games.onlineRelayJoinHint", "Paste invite or code");
+        public static readonly LocString OnlineRelayCodeHint = new("games.onlineRelayCodeHint",
+            "Copy the invite and send it to friends.");
         public static readonly LocString OnlineChess = new("games.onlineChess", "Chess");
         public static readonly LocString OnlineChessHostHint = new("games.onlineChessHostHint", "Head-to-head, 10 minutes on each clock");
         public static readonly LocString OnlineResign = new("games.onlineResign", "Resign");
@@ -10689,6 +10772,8 @@ internal static class L
         public static readonly LocString CopyText = new("announcements.copyText", "Copy text");
         public static readonly LocString OpenSettings = new("announcements.openSettings", "Open Settings");
         public static readonly LocString RefreshFailed = new("announcements.refreshFailed", "Couldn't refresh. Showing what you already have.");
+        public static readonly LocString RelayEmptyHint = new("announcements.relayEmptyHint",
+            "Announcements from the owner of your party server show up here.");
     }
 
     internal static class Loadout

@@ -64,7 +64,7 @@ internal sealed partial class CalendarApp
             var drawList = ImGui.GetWindowDrawList();
             var origin = ImGui.GetCursorScreenPos();
             var width = ScrollLayout.StableContentWidth();
-            var cursorY = HiddenApps.AethernetEnabled ? DrawGameGroupCard(drawList, origin, width, scale) : origin.Y;
+            var cursorY = events.GameEventsAvailable ? DrawGameGroupCard(drawList, origin, width, scale) : origin.Y;
             var groups = configuration.CalendarGroups;
             for (var index = 0; index < groups.Count; index++)
             {

@@ -1,11 +1,60 @@
-# Runs the relay with `wrangler dev` behind a Cloudflare Tunnel; see docs/self-hosting-relay.md.
+# Runs the relay with `workerd serve` behind a Cloudflare Tunnel; see docs/self-hosting-relay.md.
 # relay.env holds INVITE_CODE=<invite>; .env holds TUNNEL_TOKEN=<token>. Neither file is committed.
+# The Tunnel points at relay:8787, the gateway, which sends ?kind=call to relay-call and everything else to relay-main.
+# Calls run in their own process: four talking members per call room is the heavy case, one process held 8 such rooms
+# and crashed at 12, and a crash drops every room in that process. CALLS_ENABLED stays off in relay-main.
+# MAX_ROOMS_* cap each room kind (at most 32).
+# mem_limit keeps a runaway relay from starving the host: at the limit the kernel kills workerd, the container exits
+# and Docker starts it again, which drops that container's rooms only. Docker also lets the container swap as much
+# again. workerd keeps the memory of its busiest moment and never hands it back (measured in one process: 20 MiB at
+# start, about 220 MiB idle after 285 people, a few MiB more per further round), so workerd/supervise.sh starts a
+# fresh workerd once the relay has had no connection for IDLE_RESTART_MINUTES (default 15, 0 turns it off).
+# A health check marks a stuck relay unhealthy in docker ps; Docker does not restart it on its own.
+x-relay: &relay
+  build: .
+  image: cyberphone-relay-server
+  restart: unless-stopped
+  init: true
+  env_file: relay.env
+  healthcheck:
+    test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8787/me').then((response) => process.exit(response.status === 401 ? 0 : 1), () => process.exit(1))"]
+    interval: 30s
+    timeout: 10s
+    start_period: 60s
+    retries: 3
+
 services:
-  relay:
-    build: .
+  gateway:
+    image: nginx:1.31.8-alpine-slim
     restart: unless-stopped
-    init: true
-    env_file: relay.env
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8787/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    volumes:
+      - ./gateway.conf:/etc/nginx/conf.d/default.conf:ro
+    networks:
+      default:
+        aliases:
+          - relay
+    depends_on:
+      - relay-main
+      - relay-call
+  relay-main:
+    <<: *relay
+    mem_limit: 1536m
+    environment:
+      CALLS_ENABLED: "0"
+      MAX_ROOMS_PARTY: "32"
+      MAX_ROOMS_JAM: "16"
+      MAX_ROOMS_GAME: "32"
+  relay-call:
+    <<: *relay
+    mem_limit: 1g
+    environment:
+      CALLS_ENABLED: "1"
+      MAX_ROOMS_CALL: "8"
   tunnel:
     image: cloudflare/cloudflared:2026.10.2
     restart: unless-stopped
@@ -13,4 +62,4 @@ services:
     environment:
       TUNNEL_TOKEN: ${TUNNEL_TOKEN:?set TUNNEL_TOKEN in .env}
     depends_on:
-      - relay
+      - gateway

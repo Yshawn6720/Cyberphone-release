@@ -49,6 +49,14 @@ internal static class OnlineGameArt
 
     public static readonly string[] Kinds = KindsOf(Infos);
 
+    public static readonly OnlineKindInfo[] Hostable = HiddenApps.AethernetEnabled ? Infos : RelayHostable(Infos);
+
+    public static readonly string[] HostableKinds = KindsOf(Hostable);
+
+    public static bool RelayHosts(string? kind) =>
+        kind is GameRoomWire.UnoKind or GameRoomWire.ChessKind or GameRoomWire.ConnectFourKind
+            or GameRoomWire.BroadsideKind;
+
     public static int IndexOf(string? kind)
     {
         for (var index = 0; index < Infos.Length; index++)
@@ -89,5 +97,30 @@ internal static class OnlineGameArt
         }
 
         return kinds;
+    }
+
+    private static OnlineKindInfo[] RelayHostable(OnlineKindInfo[] infos)
+    {
+        var count = 0;
+        for (var index = 0; index < infos.Length; index++)
+        {
+            if (RelayHosts(infos[index].Kind))
+            {
+                count++;
+            }
+        }
+
+        var hostable = new OnlineKindInfo[count];
+        var next = 0;
+        for (var index = 0; index < infos.Length; index++)
+        {
+            if (RelayHosts(infos[index].Kind))
+            {
+                hostable[next] = infos[index];
+                next++;
+            }
+        }
+
+        return hostable;
     }
 }

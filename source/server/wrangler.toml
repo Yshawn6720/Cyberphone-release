@@ -3,25 +3,78 @@ main = "src/index.ts"
 compatibility_date = "2026-08-15"
 workers_dev = true
 
-# One Durable Object per room slot. Room state lives only in WebSocket attachments; the only
-# storage use is one closing alarm per open room. No cron triggers, so an idle relay costs zero requests.
+# One Durable Object per room slot, per kind. Watch party and game room state lives only in WebSocket attachments;
+# the only storage use is one closing alarm per open room, so game moves cost no storage writes. A Jam also keeps
+# its song queue under one storage key, written only when the queue or the playback state actually changes. A voice
+# call writes nothing to storage at all. No cron triggers, so an idle relay costs zero requests.
 [[durable_objects.bindings]]
 name = "ROOMS"
 class_name = "PartyRoom"
+
+[[durable_objects.bindings]]
+name = "JAM_ROOMS"
+class_name = "JamRoom"
+
+[[durable_objects.bindings]]
+name = "GAME_ROOMS"
+class_name = "GameRoom"
+
+[[durable_objects.bindings]]
+name = "CALL_ROOMS"
+class_name = "CallRoom"
+
+# Hands out the slot for every new room (one instance per kind) so each character hosts at most one room per kind
+# and each client address at most MAX_ROOMS_PER_ADDRESS. It keeps its reservations in memory and writes nothing.
+[[durable_objects.bindings]]
+name = "SLOT_REGISTRY"
+class_name = "SlotRegistry"
 
 [[migrations]]
 tag = "v1"
 new_sqlite_classes = ["PartyRoom"]
 
-# Caps how often authenticated clients may open /rt connections (per Cloudflare location).
+[[migrations]]
+tag = "v2"
+new_sqlite_classes = ["JamRoom"]
+
+[[migrations]]
+tag = "v3"
+new_sqlite_classes = ["GameRoom"]
+
+[[migrations]]
+tag = "v4"
+new_sqlite_classes = ["CallRoom"]
+
+[[migrations]]
+tag = "v5"
+new_sqlite_classes = ["SlotRegistry"]
+
+# Caps how often authenticated clients may open /rt connections (per Cloudflare location): per character, per client
+# address (CF-Connecting-IP, which both Workers and a Cloudflare Tunnel set), and in total.
 # namespace_id must be unique within the Cloudflare account; period accepts only 10 or 60.
 [[ratelimits]]
 name = "CONNECT_LIMITER"
 namespace_id = "4101"
 simple = { limit = 10, period = 60 }
 
+[[ratelimits]]
+name = "ADDRESS_LIMITER"
+namespace_id = "4102"
+simple = { limit = 30, period = 60 }
+
+[[ratelimits]]
+name = "TOTAL_LIMITER"
+namespace_id = "4103"
+simple = { limit = 600, period = 60 }
+
 [vars]
 MAX_ROOMS = "3"
+# Rooms of one kind that one client address (CF-Connecting-IP) may host at once; unset means 3.
+MAX_ROOMS_PER_ADDRESS = "3"
+# Voice calls forward about 50 frames a second per talking member, and on Workers every 20 incoming WebSocket
+# messages bill one Durable Object request, so calls stay off here. The Docker deployment (compose.yaml) turns them
+# on; while off, /rt?kind=call answers 403 before any CallRoom is created.
+CALLS_ENABLED = "0"
 
 # Logs would draw on the account-wide events allowance shared with other projects.
 [observability]

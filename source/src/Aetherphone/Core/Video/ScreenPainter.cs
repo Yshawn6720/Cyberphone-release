@@ -576,6 +576,22 @@ internal sealed unsafe class ScreenPainter : IDisposable
 		_ => format,
 	};
 
+	internal static bool TryLargeScreenPose(out ScreenPose pose)
+	{
+		pose = default;
+		var manager = GameControl.CameraManager.Instance();
+		var gameCamera = manager == null ? null : manager->GetActiveCamera();
+		if (gameCamera == null)
+		{
+			return false;
+		}
+
+		var camera = &gameCamera->CameraBase.SceneCamera;
+		var renderCamera = camera->RenderCamera;
+		return renderCamera != null && ScreenGeometry.TryLargeScreen(ToNumerics(camera->Position),
+			ToNumerics(camera->LookAtVector), renderCamera->FoV, renderCamera->AspectRatio, out pose);
+	}
+
 	private NumericsMatrix4x4? ComputeWorldViewProj()
 	{
 		var gameCameraManager = GameControl.CameraManager.Instance();

@@ -56,8 +56,7 @@ internal sealed partial class MusicApp
         var scale = UiScale.Current;
         var delta = MathF.Min(ImGui.GetIO().DeltaTime, MaxFrameSeconds);
         var session = windowsMedia.IsSupported && windowsMedia.Current.HasSession;
-        var linkRows = HiddenApps.AethernetEnabled ? 5f : 4f;
-        var height = (SheetMetrics.GrabberZone + OutputTitleHeight + OutputRowHeight * linkRows + OutputCrossfadeHeight +
+        var height = (SheetMetrics.GrabberZone + OutputTitleHeight + OutputRowHeight * 5f + OutputCrossfadeHeight +
                       Metrics.Size.HomeIndicatorInset + (session ? OutputSessionHeight : 0f)) * scale;
         using var layer = ScreenLayer.Begin("music.output", screen, false);
         var frame = outputSheet.Begin(ImGui.GetWindowDrawList(), screen, theme, SheetDetents.Fitted(height),
@@ -88,18 +87,15 @@ internal sealed partial class MusicApp
             y += OutputSessionHeight * scale;
         }
 
-        if (HiddenApps.AethernetEnabled)
+        Hairline(drawList, left, right, y, ink);
+        var jamValue = JamActive ? jam.DisplayCode : Loc.T(L.Music.Jam.Start);
+        if (DrawOutputLinkRow(drawList, left, right, y, ink, muted, interactive, scale, FontAwesomeIcon.Users,
+                Loc.T(L.Music.Jam.Title), jamValue))
         {
-            Hairline(drawList, left, right, y, ink);
-            var jamValue = JamActive ? jam.DisplayCode : Loc.T(L.Music.Jam.Start);
-            if (DrawOutputLinkRow(drawList, left, right, y, ink, muted, interactive, scale, FontAwesomeIcon.Users,
-                    Loc.T(L.Music.Jam.Title), jamValue))
-            {
-                OpenJamLobby();
-            }
-
-            y += OutputRowHeight * scale;
+            OpenJamLobby();
         }
+
+        y += OutputRowHeight * scale;
 
         Hairline(drawList, left, right, y, ink);
         var sleepValue = playback.SleepTimerActive ? SleepStatusText() : Loc.T(L.Common.Off);

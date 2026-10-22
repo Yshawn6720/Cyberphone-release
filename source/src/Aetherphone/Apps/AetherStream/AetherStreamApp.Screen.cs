@@ -387,27 +387,45 @@ internal sealed partial class AetherStreamApp
     private void DrawStageActions(VideoEngine engine, bool live, float scale)
     {
         Gap(Metrics.Space.Md);
-        var row = BeginBlock(ActionTileHeight * scale);
         var gap = Metrics.Space.Sm * scale;
-        var tileWidth = (row.Width - gap * 2f) / 3f;
+        var tileHeight = ActionTileHeight * scale;
+        var row = BeginBlock(tileHeight * 2f + gap);
+        var tileWidth = (row.Width - gap) * 0.5f;
+        var firstBottom = row.Min.Y + tileHeight;
         var placing = suite.PlacingScreen;
-        if (ActionTile(new Rect(row.Min, new Vector2(row.Min.X + tileWidth, row.Max.Y)), FontAwesomeIcon.ArrowsAlt,
+        if (ActionTile(new Rect(row.Min, new Vector2(row.Min.X + tileWidth, firstBottom)), FontAwesomeIcon.ArrowsAlt,
                 Loc.T(placing ? L.AetherStream.PlaceDone : L.AetherStream.PlaceInWorld), placing, live, scale))
         {
             suite.PlacingScreen = !placing;
         }
 
         var middleLeft = row.Min.X + tileWidth + gap;
-        if (ActionTile(new Rect(new Vector2(middleLeft, row.Min.Y), new Vector2(middleLeft + tileWidth, row.Max.Y)),
+        if (ActionTile(new Rect(new Vector2(middleLeft, row.Min.Y), new Vector2(row.Max.X, firstBottom)),
                 FontAwesomeIcon.Crosshairs, Loc.T(L.AetherStream.CastingRecenter), false, live, scale))
         {
             engine.RecenterScreen();
         }
 
-        if (ActionTile(new Rect(new Vector2(row.Max.X - tileWidth, row.Min.Y), row.Max), FontAwesomeIcon.UserCircle,
+        var secondTop = firstBottom + gap;
+        if (ActionTile(new Rect(new Vector2(row.Min.X, secondTop),
+                new Vector2(row.Min.X + tileWidth, row.Max.Y)), FontAwesomeIcon.UserCircle,
                 Loc.T(L.AetherStream.FaceMe), false, live, scale))
         {
             engine.FaceLocalPlayer();
+        }
+
+        if (ActionTile(new Rect(new Vector2(middleLeft, secondTop), row.Max), FontAwesomeIcon.Expand,
+                Loc.T(L.AetherStream.LargeScreen), false, live, scale) && engine.PlaceLargeScreen())
+        {
+            suite.PlacingScreen = false;
+            stageDrag = StageDrag.None;
+            configuration.VideoScreenCurve = engine.ScreenCurve;
+            if (watchAlong.IsViewing)
+            {
+                configuration.VideoFollowHostScreen = false;
+            }
+
+            configuration.Save();
         }
 
         EndBlock();

@@ -220,6 +220,11 @@ internal sealed partial class MusicApp
             OpenJamLobby();
         }
 
+        if (jam.RelayMode)
+        {
+            return pillMax.Y - min.Y;
+        }
+
         var barTop = pillMax.Y + gap;
         var bar = new Rect(new Vector2(min.X, barTop), new Vector2(min.X + width, barTop + JamReactionBar.Height * scale));
         var kind = JamReactionBar.Draw(drawList, bar, JamBadgeInk, scale);

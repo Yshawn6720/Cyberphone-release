@@ -64,7 +64,7 @@ internal static class AppRegistry
         var photoLibrary = new PhotoLibrary(Plugin.PluginInterface.ConfigDirectory);
         var apps = new List<IPhoneApp>
         {
-            new LinkpearlApp(services.ChatInbox, services.ChatTabs, services.ChatArchive, services.LinkpearlNotificationGate, services.LinkpearlLauncher, services.Lodestone, services.MarketLauncher, services.Notifications, services.GameData, services.Lookup, services.Confirm, services.ChatLog, services.ChatSend, services.Configuration, linkpearlPopouts, services.WallpaperImages, photoLibrary),
+            new LinkpearlApp(services.ChatInbox, services.ChatTabs, services.ChatArchive, services.LinkpearlNotificationGate, services.LinkpearlLauncher, services.Lodestone, services.MarketLauncher, services.Notifications, services.GameData, services.Lookup, services.Confirm, services.ChatLog, services.ChatSend, services.Configuration, linkpearlPopouts, services.WallpaperImages, photoLibrary, services.Calls),
             new ActivityApp(services.Activity, services.Configuration),
             new HealthApp(services.Health, services.Confirm),
         };
@@ -118,7 +118,7 @@ internal static class AppRegistry
             return new FeedbackApp(services.AethernetSession, feedbackNet.Feedback, feedbackNet.Media, photoLibrary, services.Configuration, services.Confirm, services.WallpaperImages, services.RemoteImages, services.GameData, services.Notifications, services.RealtimeSignals, services.FeedbackLauncher);
         });
         Register(apps, "polls", () => new PollsApp(services.AethernetSession, new AethernetApi(services.Http, services.AethernetSession, "polls").Polls, services.Installer, services.RealtimeSignals));
-        Register(apps, "announcements", () => new AnnouncementsApp(services.AethernetSession, new AethernetApi(services.Http, services.AethernetSession, "announcements").Announcements, services.Notifications, services.Configuration, services.AnnouncementsLauncher, services.Visibility, services.RealtimeSignals));
+        Register(apps, "announcements", () => new AnnouncementsApp(services.AethernetSession, new AethernetApi(services.Http, services.AethernetSession, "announcements").Announcements, services.Http, services.Notifications, services.Configuration, services.AnnouncementsLauncher, services.Visibility, services.RealtimeSignals));
         apps.Add(new CameraApp(new PhotoCaptureService(), photoLibrary, services.Configuration, services.GameUiVisibility, services.CameraShutter));
         apps.Add(new PhotosApp(photoLibrary, services.Confirm, services.Share, services.Configuration));
         apps.Add(new SkywatcherApp(services.Weather, services.WeatherControl, services.Configuration));
@@ -150,7 +150,7 @@ internal static class AppRegistry
             services.RemoteImages, services.Lodestone, services.MoogleClicker, services.SettingsLauncher,
             services.Confirm));
         apps.Add(new NotificationsApp(services, apps));
-        var calendarEvents = new CalendarEvents(services.Http, services.AethernetSession);
+        var calendarEvents = new CalendarEvents(services.Http, services.AethernetSession, services.Configuration);
         apps.Add(new CalendarApp(services.Configuration, calendarEvents, services.Confirm));
         Register(apps, "coin", () => new Aetherphone.Apps.Coin.CoinApp(services.AethernetSession, services.Coins,
             services.CoinCatalog, services.Confirm, services.Conduct, services.BadgeCatalog, services.RemoteImages,

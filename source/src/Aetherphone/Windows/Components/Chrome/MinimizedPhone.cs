@@ -59,7 +59,6 @@ internal sealed partial class MinimizedPhone : IDisposable
     private const float MutedInk = 0.72f;
     private const float FpsRefreshSeconds = 0.5f;
     private const string MusicAppId = "music";
-    private const string CallAppId = "message";
     private static readonly TimeSpan ShowingGrace = TimeSpan.FromSeconds(0.5);
     private static readonly FaceInk LightInk = new(new Vector4(1f, 1f, 1f, 1f), new Vector4(1f, 1f, 1f, MutedInk));
     private static readonly Vector4 MusicAccent = AppAccents.For("music");
@@ -680,7 +679,7 @@ internal sealed partial class MinimizedPhone : IDisposable
                 break;
             case SlotMode.Call:
                 calls.RequestCallScreen();
-                navigation.Open(CallAppId);
+                navigation.Open(CallHub.ScreenAppId);
                 break;
         }
     }

@@ -1,4 +1,5 @@
 using Aetherphone.Core.Localization;
+using Aetherphone.Core.Telephony;
 
 namespace Aetherphone.Apps.Games.Online;
 
@@ -55,7 +56,17 @@ internal static class GamesOnlineText
         };
     }
 
-    public static LocString ReasonMessage(string reason)
+    public static string ReasonText(string reason, in RelayFailure refusal)
+    {
+        if (string.Equals(reason, Core.Games.GameRoomsStore.ReasonRelayRefused, StringComparison.Ordinal))
+        {
+            return RelayRefusalText.Body(refusal, PartyRelayKind.Game);
+        }
+
+        return Loc.T(ReasonMessage(reason));
+    }
+
+    private static LocString ReasonMessage(string reason)
     {
         return reason switch
         {
@@ -70,6 +81,11 @@ internal static class GamesOnlineText
             "ended" => L.Games.OnlineRoomEnded,
             "kicked" => L.Games.OnlineKicked,
             "restarting" => L.Games.OnlineRestarting,
+            "in_progress" => L.Games.OnlineInProgress,
+            Core.Games.GameRoomsStore.ReasonConnection => L.Games.OnlineConnectionLost,
+            Core.Games.GameRoomsStore.ReasonServerMissing => L.Games.OnlineRelaySetupHint,
+            Core.Games.GameRoomsStore.ReasonInviteShape => L.AetherStream.InviteShape,
+            Core.Games.GameRoomsStore.ReasonInviteRejected => L.AetherStream.RelayInviteRejectedBody,
             _ => L.Games.OnlineUnavailable,
         };
     }

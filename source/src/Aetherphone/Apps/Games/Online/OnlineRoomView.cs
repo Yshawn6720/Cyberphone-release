@@ -8,6 +8,7 @@ using Aetherphone.Core.Apps;
 using Aetherphone.Core.Confirm;
 using Aetherphone.Core.Games;
 using Aetherphone.Core.Localization;
+using Aetherphone.Core.Telephony;
 using Aetherphone.Core.Theme;
 using Aetherphone.Windows.Components;
 using Dalamud.Bindings.ImGui;
@@ -380,7 +381,7 @@ internal sealed class OnlineRoomView : IDisposable
     {
         if (inlineReason.Length > 0 && Environment.TickCount64 - noticeAtTick < NoticeMilliseconds)
         {
-            return Loc.T(GamesOnlineText.ReasonMessage(inlineReason));
+            return GamesOnlineText.ReasonText(inlineReason, store.LastRelayRefusal);
         }
 
         return string.Empty;
@@ -414,15 +415,20 @@ internal sealed class OnlineRoomView : IDisposable
         }
     }
 
-    private static void DrawClosed(Rect body, AppSkin ui, string reason, Action back)
+    private void DrawClosed(Rect body, AppSkin ui, string reason, Action back)
     {
         var message = reason switch
         {
             GameRoomWire.ReasonKicked => Loc.T(L.Games.OnlineKicked),
             GameRoomWire.ReasonRestarting => Loc.T(L.Games.OnlineRestarting),
+            GameRoomsStore.ReasonConnection => Loc.T(L.Games.OnlineConnectionLost),
+            GameRoomsStore.ReasonRelayRefused => RelayRefusalText.Title(store.LastRelayRefusal, PartyRelayKind.Game),
             _ => Loc.T(L.Games.OnlineRoomEnded),
         };
-        if (EmptyState.Draw(body, ui, FontAwesomeIcon.DoorClosed, message, string.Empty, Loc.T(L.Common.Close)))
+        var detail = string.Equals(reason, GameRoomsStore.ReasonRelayRefused, StringComparison.Ordinal)
+            ? RelayRefusalText.Body(store.LastRelayRefusal, PartyRelayKind.Game)
+            : string.Empty;
+        if (EmptyState.Draw(body, ui, FontAwesomeIcon.DoorClosed, message, detail, Loc.T(L.Common.Close)))
         {
             back();
         }
@@ -460,7 +466,7 @@ internal sealed class OnlineRoomView : IDisposable
         y = DrawCodeCard(drawList, ui, left, y, width, scale, accent);
         if (inlineReason.Length > 0 && Environment.TickCount64 - noticeAtTick < NoticeMilliseconds)
         {
-            var message = Loc.T(GamesOnlineText.ReasonMessage(inlineReason));
+            var message = GamesOnlineText.ReasonText(inlineReason, store.LastRelayRefusal);
             y += Metrics.Space.Sm * scale;
             y += Typography.DrawWrappedLeft(new Vector2(left, y), message, theme.Danger, TextStyles.Footnote, width);
         }
@@ -839,12 +845,13 @@ internal sealed class OnlineRoomView : IDisposable
             Typography.FitText(SpacedCode(code), codeWidth, TextStyles.Title1), ui.TitleInk, TextStyles.Title1);
         var hintHeight = Typography.LineHeight(TextStyles.Footnote);
         Typography.Draw(drawList, new Vector2(min.X + pad, max.Y - pad - hintHeight),
-            Typography.FitText(Loc.T(L.GamesHub.CodeHint), MathF.Max(1f, width - pad * 2f), TextStyles.Footnote),
+            Typography.FitText(Loc.T(store.RelayMode ? L.Games.OnlineRelayCodeHint : L.GamesHub.CodeHint),
+                MathF.Max(1f, width - pad * 2f), TextStyles.Footnote),
             ui.MutedInk, TextStyles.Footnote);
         if (Button.Draw(drawList, pillRect, copyLabel, ui.Ink.WithAccent(accent),
                 copied ? ButtonStyle.Gray : ButtonStyle.Prominent, enabled: code.Length > 0, id: "games.room.copy"))
         {
-            ImGui.SetClipboardText(code);
+            ImGui.SetClipboardText(store.ShareInvite(code));
             copiedAtTick = Environment.TickCount64;
         }
 

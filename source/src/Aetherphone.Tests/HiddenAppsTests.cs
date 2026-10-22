@@ -13,7 +13,7 @@ public sealed class HiddenAppsTests
 {
     private static readonly string[] AethernetApps =
     {
-        "aethergram", "announcements", "casino", "chirper", "coin", "feedback",
+        "aethergram", "casino", "chirper", "coin", "feedback",
         "message", "muster", "polls", "strats", "velvet", "yellowpages",
     };
 
@@ -111,7 +111,6 @@ public sealed class HiddenAppsTests
         Assert.False(installer.IsInstalled("message"));
         Assert.False(installer.Gate("message").Open);
         Assert.False(installer.IsInstalled("muster"));
-        Assert.False(installer.IsInstalled("announcements"));
         Assert.False(installer.Install("chirper"));
         Assert.True(installer.IsInstalled("messages"));
         Assert.True(installer.Gate("camera").Open);
@@ -146,7 +145,7 @@ public sealed class HiddenAppsTests
     }
 
     [Fact]
-    public void MinimizedCoinAndCallParts_StayOffEvenWhenTheSaveEnablesThem()
+    public void MinimizedCoinPart_StaysOffEvenWhenTheSaveEnablesIt_RelayCallsStay()
     {
         var saved = new MinimizedLayout();
         saved.Items.Add(new MinimizedLayoutItem { PartId = MinimizedParts.Id(MinimizedPart.Coin), Enabled = true });
@@ -155,9 +154,9 @@ public sealed class HiddenAppsTests
         var service = new MinimizedLayoutService(new MinimizedConfiguration { MinimizedLayout = saved });
 
         Assert.False(service.IsEnabled(MinimizedPart.Coin));
-        Assert.False(service.IsEnabled(MinimizedPart.Calls));
+        Assert.True(service.IsEnabled(MinimizedPart.Calls));
         Assert.True(service.IsEnabled(MinimizedPart.Gil));
-        Assert.False(MinimizedParts.EnabledByDefault(MinimizedPart.Calls));
+        Assert.True(MinimizedParts.EnabledByDefault(MinimizedPart.Calls));
     }
 
     private static List<IPhoneApp> VisibleApps()

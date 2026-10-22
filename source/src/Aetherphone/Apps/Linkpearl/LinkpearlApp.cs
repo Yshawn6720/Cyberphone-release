@@ -10,6 +10,7 @@ using Aetherphone.Core.Market;
 using Aetherphone.Core.Notifications;
 using Aetherphone.Core.Onboarding;
 using Aetherphone.Core.Photos;
+using Aetherphone.Core.Telephony;
 using Aetherphone.Core.Theme;
 using Aetherphone.Core.Wallpapers;
 using Aetherphone.Windows;
@@ -25,6 +26,7 @@ internal sealed partial class LinkpearlApp : IResumableApp
     {
         Chats,
         People,
+        Calls,
         Settings,
     }
 
@@ -52,6 +54,8 @@ internal sealed partial class LinkpearlApp : IResumableApp
     private readonly Configuration configuration;
     private readonly LinkpearlPopouts popouts;
     private readonly WallpaperImageCache wallpaperImages;
+    private readonly CallHub calls;
+    private readonly CallAudioPanel callAudioPanel;
     private readonly ViewRouter<LinkpearlRoute> router;
     private readonly RouterDraw<LinkpearlRoute> drawView;
     private readonly Action backToList;
@@ -63,7 +67,7 @@ internal sealed partial class LinkpearlApp : IResumableApp
     private readonly ChatListChrome chrome;
     private readonly ChatAppearancePickers pickers;
     private readonly TabBar tabBar = new();
-    private readonly TabItem[] navTabs = new TabItem[3];
+    private readonly TabItem[] navTabs = new TabItem[4];
     private SocialInk ink = ChatThemes.InkFor(DefaultThemeId);
     private ChatTheme activeTheme = ChatThemes.Resolve(DefaultThemeId);
     private Rect screenRect;
@@ -86,7 +90,7 @@ internal sealed partial class LinkpearlApp : IResumableApp
         NotificationService notifications, GameData gameData,
         LookupService lookup, ConfirmService confirm, ChatLog chatLog, ChatSend chatSend,
         Configuration configuration, LinkpearlPopouts popouts, WallpaperImageCache wallpaperImages,
-        PhotoLibrary library)
+        PhotoLibrary library, CallHub calls)
     {
         this.inbox = inbox;
         this.tabs = tabs;
@@ -103,6 +107,8 @@ internal sealed partial class LinkpearlApp : IResumableApp
         this.configuration = configuration;
         this.popouts = popouts;
         this.wallpaperImages = wallpaperImages;
+        this.calls = calls;
+        callAudioPanel = new CallAudioPanel(calls, configuration);
         router = new ViewRouter<LinkpearlRoute>(LinkpearlRoute.Root);
         chrome = new ChatListChrome(ui, ink);
         pickers = new ChatAppearancePickers(chrome, wallpaperImages, library);
@@ -165,6 +171,11 @@ internal sealed partial class LinkpearlApp : IResumableApp
 
     private void ConsumeLaunchRequests()
     {
+        if (ConsumeCallScreenRequest())
+        {
+            return;
+        }
+
         if (launcher.TryConsume(out var conversationKey))
         {
             regionMenu.Close();
@@ -208,6 +219,7 @@ internal sealed partial class LinkpearlApp : IResumableApp
         regionMenu.Close();
         newChatSheet.Close();
         chatThread.Close();
+        callAudioSheet.Close();
         inbox.ClearViewing();
         inbox.ClearTransient();
         inbox.FlushSeen();
@@ -233,6 +245,7 @@ internal sealed partial class LinkpearlApp : IResumableApp
         ui.Backdrop(screen);
         router.Draw(SceneChrome.AppAreaFrom(context.Content, frameTheme, scale), AppSkin.Transparent, delta, drawView);
         DrawConversationSheet(screen);
+        DrawCallAudioSheet(screen);
     }
 
     private void ResolveTheme(PhoneTheme phoneTheme)
@@ -291,7 +304,7 @@ internal sealed partial class LinkpearlApp : IResumableApp
         var scale = UiScale.Current;
         var header = new Rect(area.Min, new Vector2(area.Max.X, area.Min.Y + AppHeader.Height * scale));
         var content = new Rect(new Vector2(area.Min.X, header.Max.Y), area.Max);
-        using (InputShield.Engage(newChatSheet.CapturesPointer))
+        using (InputShield.Engage(newChatSheet.CapturesPointer || callAudioSheet.CapturesPointer))
         {
             DrawRootHeader(header);
             using (TabBar.ReserveContent(scale))
@@ -300,6 +313,9 @@ internal sealed partial class LinkpearlApp : IResumableApp
                 {
                     case MessagesTab.People:
                         DrawPeopleTab(content);
+                        break;
+                    case MessagesTab.Calls:
+                        DrawCallsTab(content);
                         break;
                     case MessagesTab.Settings:
                         DrawSettingsTab(content);
@@ -336,6 +352,9 @@ internal sealed partial class LinkpearlApp : IResumableApp
                     TogglePeopleSearch();
                 }
 
+                break;
+            case MessagesTab.Calls:
+                chrome.DrawTabHeader(header, Loc.T(L.Phone.Calls), backToList, 0);
                 break;
             case MessagesTab.Settings:
                 chrome.DrawTabHeader(header, Loc.T(L.Settings.Title), backToList, 0);
@@ -382,7 +401,9 @@ internal sealed partial class LinkpearlApp : IResumableApp
         navTabs[0] = new TabItem(Loc.T(L.Messages.TabChats), PhoneIcons.MessageCircle, PhoneIcons.MessageCircleFilled,
             BadgeCount, "messages.tab.chats");
         navTabs[1] = new TabItem(Loc.T(L.Linkpearl.People), PhoneIcons.Users, AnchorKey: "messages.tab.people");
-        navTabs[2] = new TabItem(Loc.T(L.Settings.Title), PhoneIcons.Settings, AnchorKey: "messages.tab.settings");
+        navTabs[2] = new TabItem(Loc.T(L.Phone.Calls), PhoneIcons.Phone, PhoneIcons.PhoneFilled,
+            AnchorKey: "messages.tab.calls");
+        navTabs[3] = new TabItem(Loc.T(L.Settings.Title), PhoneIcons.Settings, AnchorKey: "messages.tab.settings");
         var result = tabBar.Draw(area, ui, navTabs, (int)activeTab);
         if (result.Tapped < 0)
         {

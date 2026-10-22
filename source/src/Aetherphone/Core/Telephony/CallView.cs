@@ -16,10 +16,11 @@ internal readonly struct CallView
     public readonly string LocalUserId;
     public readonly string PeerLabel;
     public readonly int OthersCount;
+    public readonly bool AwaitingApproval;
 
     public CallView(CallState state, bool muted, float volume, float micLevel, float peakMicLevel, int seconds,
         ParticipantInfo[] participants, ParticipantInfo? incomingFrom, bool connected, string localUserId,
-        string peerLabel, int othersCount)
+        string peerLabel, int othersCount, bool awaitingApproval)
     {
         State = state;
         Muted = muted;
@@ -33,6 +34,7 @@ internal readonly struct CallView
         LocalUserId = localUserId;
         PeerLabel = peerLabel;
         OthersCount = othersCount;
+        AwaitingApproval = awaitingApproval;
     }
 
     public bool IsActive => State is not CallState.Idle and not CallState.Ended;

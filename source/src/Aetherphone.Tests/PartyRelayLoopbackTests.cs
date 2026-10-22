@@ -1,6 +1,8 @@
+using System.Text.Json;
 using Aetherphone.Core;
 using Aetherphone.Core.Aethernet;
 using Aetherphone.Core.Telephony;
+using Aetherphone.Core.Telephony.Contracts;
 using Xunit;
 
 namespace Aetherphone.Tests;
@@ -10,8 +12,16 @@ public sealed class PartyRelayLoopbackTests
     internal const string Invite = "loopback-invite";
     internal const string Name = "莫古 Mog";
     internal const string World = "紫水栈桥";
+    // RFC 6455 section 5.2: a client frame is 2 header bytes, an extended length past 125, then a 4 byte mask.
+    private const int FrameHeaderBytes = 2;
+    private const int MaskBytes = 4;
+    private const int LongestShortPayload = 125;
+    private const int ReactionTaps = 20;
     internal static readonly TimeSpan Patience = TimeSpan.FromSeconds(10);
     private static readonly TimeSpan ReconnectWindow = TimeSpan.FromSeconds(5.5);
+    private const string RateLimitedRefusal =
+        "{\"type\":\"relay.refused\",\"reason\":\"rate_limited\",\"retryAfterSeconds\":60}";
+    private const ushort RateLimitedClose = 4429;
 
     internal static CallSignalRouter CreateRouter(string relayUrl)
     {
@@ -74,17 +84,137 @@ public sealed class PartyRelayLoopbackTests
     {
         using var server = new LoopbackRelayServer(401);
         using var router = CreateRouter(server.Url);
-        var failed = new TaskCompletionSource<int?>(TaskCreationOptions.RunContinuationsAsynchronously);
-        router.RelayFailed += status => failed.TrySetResult(status);
+        var failed = new TaskCompletionSource<RelayFailure>(TaskCreationOptions.RunContinuationsAsynchronously);
+        router.RelayFailed += failure => failed.TrySetResult(failure);
 
         Assert.True(router.BeginRelay("ABC123"));
 
         var finished = await Task.WhenAny(failed.Task, Task.Delay(Patience));
         Assert.Same(failed.Task, finished);
-        Assert.Equal(401, await failed.Task);
+        var failure = await failed.Task;
+        Assert.Equal(401, failure.Status);
+        Assert.Equal(RelayRefusal.None, failure.Refusal);
         await Task.Delay(ReconnectWindow);
         Assert.Equal(1, server.ConnectionCount);
         var request = Assert.Single(server.Requests);
         Assert.StartsWith("GET /rt?code=ABC123&", LoopbackRelayServer.RequestLine(request), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task AViewerTheRelayRateLimitsFailsOnceWithTheWaitAndNeverReconnects()
+    {
+        using var server = new LoopbackRelayServer(farewell: RateLimitedRefusal, farewellCloseCode: RateLimitedClose);
+        using var router = CreateRouter(server.Url);
+        var failures = 0;
+        var failed = new TaskCompletionSource<RelayFailure>(TaskCreationOptions.RunContinuationsAsynchronously);
+        router.RelayFailed += failure =>
+        {
+            Interlocked.Increment(ref failures);
+            failed.TrySetResult(failure);
+        };
+
+        Assert.True(router.BeginRelay("ABC123"));
+
+        var finished = await Task.WhenAny(failed.Task, Task.Delay(Patience));
+        Assert.Same(failed.Task, finished);
+        var failure = await failed.Task;
+        Assert.Equal(RelayRefusal.RateLimited, failure.Refusal);
+        Assert.Equal(60, failure.RetryAfterSeconds);
+        await Task.Delay(ReconnectWindow);
+        Assert.Equal(1, server.ConnectionCount);
+        Assert.Equal(1, Volatile.Read(ref failures));
+    }
+
+    [Fact]
+    public async Task AViewerWhoseRelayDropsRightAfterRefusingStillFailsOnceAndNeverReconnects()
+    {
+        using var server = new LoopbackRelayServer(farewell: RateLimitedRefusal, abortAfterFarewell: true);
+        using var router = CreateRouter(server.Url);
+        var failures = 0;
+        var failed = new TaskCompletionSource<RelayFailure>(TaskCreationOptions.RunContinuationsAsynchronously);
+        router.RelayFailed += failure =>
+        {
+            Interlocked.Increment(ref failures);
+            failed.TrySetResult(failure);
+        };
+
+        Assert.True(router.BeginRelay("ABC123"));
+
+        var finished = await Task.WhenAny(failed.Task, Task.Delay(Patience));
+        Assert.Same(failed.Task, finished);
+        var failure = await failed.Task;
+        Assert.Equal(RelayRefusal.RateLimited, failure.Refusal);
+        Assert.Equal(60, failure.RetryAfterSeconds);
+        await Task.Delay(ReconnectWindow);
+        Assert.Equal(1, server.ConnectionCount);
+        Assert.Equal(1, Volatile.Read(ref failures));
+    }
+
+    [Fact]
+    public async Task AnOlderRelayThatRefusesWithHttp503StillReportsRoomsFull()
+    {
+        using var server = new LoopbackRelayServer(503);
+        using var router = CreateRouter(server.Url);
+        var failed = new TaskCompletionSource<RelayFailure>(TaskCreationOptions.RunContinuationsAsynchronously);
+        router.RelayFailed += failure => failed.TrySetResult(failure);
+
+        Assert.True(router.BeginRelay("ABC123"));
+
+        var finished = await Task.WhenAny(failed.Task, Task.Delay(Patience));
+        Assert.Same(failed.Task, finished);
+        var failure = await failed.Task;
+        Assert.Equal(503, failure.Status);
+        Assert.Equal(RelayRefusal.RoomsFull, failure.Refusal);
+    }
+
+    [Fact]
+    public async Task ReactionsBeyondTheBudgetNeverLeaveTheClient()
+    {
+        using var server = new LoopbackRelayServer();
+        using var router = CreateRouter(server.Url);
+        Assert.True(router.BeginRelay(null));
+        Assert.True(await LoopbackRelayServer.WaitUntilAsync(() => router.RelayConnected, Patience));
+        var reaction = new CallControl { Type = SignalType.StreamReact, Reaction = 0 };
+        var payload = JsonSerializer.SerializeToUtf8Bytes(reaction, TelephonyJsonContext.Default.CallControl);
+
+        var accepted = 0;
+        for (var index = 0; index < ReactionTaps; index++)
+        {
+            if (router.Send(reaction))
+            {
+                accepted++;
+            }
+        }
+
+        var expectedBytes = accepted * MaskedFrameBytes(payload.Length);
+        Assert.Equal(CallSignalRouter.ReactionBurst, accepted);
+        Assert.True(await LoopbackRelayServer.WaitUntilAsync(() => server.ReceivedBytes >= expectedBytes, Patience));
+        await Task.Delay(TimeSpan.FromMilliseconds(300));
+        Assert.Equal(expectedBytes, server.ReceivedBytes);
+    }
+
+    private static long MaskedFrameBytes(int payloadLength)
+    {
+        var lengthBytes = payloadLength <= LongestShortPayload ? 0 : payloadLength <= ushort.MaxValue ? 2 : 8;
+        return FrameHeaderBytes + lengthBytes + MaskBytes + payloadLength;
+    }
+
+    [Theory]
+    [InlineData("{\"type\":\"stream.kicked\",\"hostId\":\"Host@World\",\"userId\":\"Guest@World\"}")]
+    [InlineData("{\"type\":\"stream.declined\",\"reason\":\"denied\",\"hostId\":\"Host@World\"}")]
+    public async Task AViewerTheHostTurnsAwayNeverReconnects(string farewell)
+    {
+        using var server = new LoopbackRelayServer(farewell: farewell);
+        using var router = CreateRouter(server.Url);
+        var received = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+        router.RelayControlReceived += message => received.TrySetResult(message.Type);
+
+        Assert.True(router.BeginRelay("ABC123"));
+
+        var finished = await Task.WhenAny(received.Task, Task.Delay(Patience));
+        Assert.Same(received.Task, finished);
+        await Task.Delay(ReconnectWindow);
+        Assert.Equal(1, server.ConnectionCount);
+        Assert.False(router.RelayConnected);
     }
 }

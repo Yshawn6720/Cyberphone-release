@@ -24,6 +24,9 @@ internal enum JamDeclineReason : byte
     ConnectionLost,
     NoResponse,
     Offline,
+    ServerMissing,
+    InviteRejected,
+    RelayRefused,
 }
 
 internal enum JamRefusal : byte

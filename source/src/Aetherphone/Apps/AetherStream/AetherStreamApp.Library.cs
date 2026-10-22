@@ -79,8 +79,8 @@ internal sealed partial class AetherStreamApp
             Gap(FabClearance);
         }
 
-        if (!SuggestionsHidden && ComposeFab.Draw(TabBar.ContentArea(body, scale), "##aetherstreamLibraryFab",
-                ui.Accent, PhoneIcons.Plus, Loc.T(L.AetherStream.AddVideoTitle), phoneGlyph: true))
+        if (ComposeFab.Draw(TabBar.ContentArea(body, scale), "##aetherstreamLibraryFab", ui.Accent, PhoneIcons.Plus,
+                Loc.T(L.AetherStream.AddVideoTitle), phoneGlyph: true))
         {
             OpenAddSheet();
         }
@@ -396,10 +396,9 @@ internal sealed partial class AetherStreamApp
         {
             if (watchAlong.ViewingEntry is null)
             {
-                var hint = SuggestionsHidden
-                    ? string.Empty
-                    : Loc.T(watchAlong.CanAddDirectly ? L.AetherStream.HostQueueAddHint : L.AetherStream.SuggestHint);
-                DrawEmptyList(list, FontAwesomeIcon.ListUl, Loc.T(L.AetherStream.UpNextEmpty), hint, scale);
+                DrawEmptyList(list, FontAwesomeIcon.ListUl, Loc.T(L.AetherStream.UpNextEmpty),
+                    Loc.T(watchAlong.CanAddDirectly ? L.AetherStream.HostQueueAddHint : L.AetherStream.SuggestHint),
+                    scale);
             }
 
             return;
@@ -465,7 +464,7 @@ internal sealed partial class AetherStreamApp
         BeginActions(SheetPurpose.HistoryRow, record.Title);
         if (watchAlong.IsViewing)
         {
-            if (!SuggestionsHidden && !MediaInput.LooksLikeLocalPath(record.Url))
+            if (!MediaInput.LooksLikeLocalPath(record.Url))
             {
                 AddAction(RowActionSuggest, Loc.T(watchAlong.CanAddDirectly
                     ? L.AetherStream.AddToQueue

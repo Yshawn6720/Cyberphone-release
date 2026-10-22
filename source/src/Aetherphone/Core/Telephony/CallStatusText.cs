@@ -9,15 +9,16 @@ internal static class CallStatusText
 
     public static string Label(in CallView view)
     {
-        if (!view.Connected)
+        var relay = CallHub.RelayMode;
+        if (!view.Connected && !(relay && view.State == CallState.Connecting))
         {
             return Loc.T(L.Phone.Reconnecting);
         }
 
         return view.State switch
         {
-            CallState.Dialing => Loc.T(L.Phone.StatusCalling),
-            CallState.Connecting => Loc.T(L.Phone.StatusConnecting),
+            CallState.Dialing => Loc.T(relay ? L.Phone.RoomWaiting : L.Phone.StatusCalling),
+            CallState.Connecting => Loc.T(view.AwaitingApproval ? L.Phone.RoomAwaitingHost : L.Phone.StatusConnecting),
             CallState.Active => Duration(view.Seconds),
             _ => string.Empty,
         };

@@ -99,7 +99,7 @@ internal sealed class PhoneShell : IDisposable
             services.Musters,
             services.MusterLauncher, services.PcMedia, services.GameTimers, services.FishingAlerts,
             services.RemoteImages, services.Http);
-        var rateLimitPill = new RateLimitPill(services.Http, services.AethernetSession);
+        var rateLimitPill = new RateLimitPill(services.Http, services.AethernetSession, configuration);
         shortcutPill = new ShortcutRunPill(services.ShortcutRunner);
         coinPill = new CoinEarnPill(services.Coins, configuration);
         coinFloats = new CoinEarnFloats(services.Coins);
@@ -441,10 +441,11 @@ internal sealed class PhoneShell : IDisposable
         var state = calls.Snapshot().State;
         var engaged = state is CallState.Connecting or CallState.Active;
         var wasEngaged = lastCallState is CallState.Connecting or CallState.Active;
-        if (engaged && !wasEngaged && navigation.Current?.Id != "message")
+        var screenAppId = CallHub.ScreenAppId;
+        if (engaged && !wasEngaged && navigation.Current?.Id != screenAppId)
         {
             calls.RequestCallScreen();
-            navigation.Open("message");
+            navigation.Open(screenAppId);
         }
 
         lastCallState = state;

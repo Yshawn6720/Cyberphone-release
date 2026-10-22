@@ -12,7 +12,7 @@ internal static class HiddenApps
 {
     public static readonly FrozenSet<string> Ids = new[]
     {
-        "aethergram", "announcements", "casino", "chirper", "coin", "feedback",
+        "aethergram", "casino", "chirper", "coin", "feedback",
         "message", "muster", "polls", "strats", "velvet", "yellowpages",
     }.ToFrozenSet(StringComparer.Ordinal);
 

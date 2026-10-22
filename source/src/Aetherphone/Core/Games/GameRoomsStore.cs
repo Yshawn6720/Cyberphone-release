@@ -2,6 +2,7 @@ using Aetherphone.Core.Aethernet;
 using Aetherphone.Core.Aethernet.Clients;
 using Aetherphone.Core.Aethernet.Contracts;
 using Aetherphone.Core.Runtime;
+using Aetherphone.Core.Telephony;
 using Aetherphone.Core.Telephony.Contracts;
 using Dalamud.Plugin.Services;
 
@@ -24,7 +25,7 @@ internal sealed record GameActOutcome(bool Granted, string Reason);
 // The friend rooms store: a directory of the rooms this account is in, one live room session over
 // the game.* socket lane, and the HTTP fallback that keeps a dead socket playable. Moves broadcast
 // from the acting request server-side, so the fallback poll is a safety net, never the transport.
-internal sealed class GameRoomsStore : IDisposable
+internal sealed partial class GameRoomsStore : IDisposable
 {
     private static readonly TimeSpan ForegroundPollInterval = TimeSpan.FromSeconds(30);
     private static readonly TimeSpan BackgroundPollInterval = TimeSpan.FromSeconds(120);
@@ -36,7 +37,7 @@ internal sealed class GameRoomsStore : IDisposable
 
     private readonly AethernetSession session;
     private readonly GamesClient games;
-    private readonly RealtimeSignalBus signals;
+    private readonly GameSignalRouter router;
     private readonly PollCadence directoryCadence;
     private readonly PollCadence roomCadence;
     private readonly GameRoomSession room;
@@ -61,24 +62,25 @@ internal sealed class GameRoomsStore : IDisposable
     private string? lastAccountId;
 
     public GameRoomsStore(AethernetSession session, GamesClient games, PhoneVisibility visibility,
-        RealtimeSignalBus signals)
+        RealtimeSignalBus signals, PartyRelay relay)
     {
         this.session = session;
         this.games = games;
-        this.signals = signals;
+        router = new GameSignalRouter(signals, relay);
         directoryCadence = new PollCadence(visibility, ForegroundPollInterval, BackgroundPollInterval);
         roomCadence = new PollCadence(visibility, ForegroundRoomPollInterval, BackgroundRoomPollInterval);
-        room = new GameRoomSession(signals);
+        room = new GameRoomSession(router);
         roomStatusSink = OnRoomStatus;
         session.Changed += OnSessionChanged;
-        signals.GameReceived += OnGameSignal;
-        signals.ConnectedChanged += OnRealtimeConnected;
+        router.Received += OnGameSignal;
+        router.ConnectedChanged += OnRealtimeConnected;
+        router.RelayFailed += OnRelayFailed;
         Plugin.Framework.Update += OnFrameworkUpdate;
     }
 
     public GameRoomSession Room => room;
 
-    public string AccountId => session.CurrentUser?.Id ?? string.Empty;
+    public string AccountId => RelayMode ? router.Relay.LocalId : session.CurrentUser?.Id ?? string.Empty;
 
     public GameRoomCardDto[] Rooms => rooms;
 
@@ -124,6 +126,12 @@ internal sealed class GameRoomsStore : IDisposable
 
     public void CreateRoom(string gameKind)
     {
+        if (RelayMode)
+        {
+            CreateRelayRoom(gameKind);
+            return;
+        }
+
         if (intentInFlight || !session.IsSignedIn)
         {
             return;
@@ -141,6 +149,12 @@ internal sealed class GameRoomsStore : IDisposable
 
     public void JoinByCode(string code)
     {
+        if (RelayMode)
+        {
+            JoinRelayRoom(code);
+            return;
+        }
+
         if (intentInFlight || !session.IsSignedIn || code.Length == 0)
         {
             return;
@@ -157,6 +171,12 @@ internal sealed class GameRoomsStore : IDisposable
 
     public void LeaveRoom(string roomId)
     {
+        if (RelayMode)
+        {
+            LeaveRelayRoom(roomId, GameRoomIntent.Left);
+            return;
+        }
+
         if (intentInFlight || !session.IsSignedIn || roomId.Length == 0)
         {
             return;
@@ -177,6 +197,12 @@ internal sealed class GameRoomsStore : IDisposable
 
     public void CloseRoom(string roomId)
     {
+        if (RelayMode)
+        {
+            LeaveRelayRoom(roomId, GameRoomIntent.Closed);
+            return;
+        }
+
         if (intentInFlight || !session.IsSignedIn || roomId.Length == 0)
         {
             return;
@@ -197,6 +223,12 @@ internal sealed class GameRoomsStore : IDisposable
 
     public void Kick(string userId)
     {
+        if (RelayMode)
+        {
+            KickInRelay(userId);
+            return;
+        }
+
         var target = room.RoomId;
         if (intentInFlight || !session.IsSignedIn || target.Length == 0 || userId.Length == 0)
         {
@@ -213,7 +245,7 @@ internal sealed class GameRoomsStore : IDisposable
 
     public void Enter(string roomId)
     {
-        if (roomId.Length == 0 || !session.IsSignedIn)
+        if (RelayMode || roomId.Length == 0 || !session.IsSignedIn)
         {
             return;
         }
@@ -227,6 +259,11 @@ internal sealed class GameRoomsStore : IDisposable
 
     public void Exit()
     {
+        if (RelayMode)
+        {
+            return;
+        }
+
         room.Leave();
         roomCadence.Reset();
         Interlocked.Exchange(ref roomAttemptedAtTick, 0);
@@ -324,7 +361,8 @@ internal sealed class GameRoomsStore : IDisposable
     {
         var target = room.RoomId;
         var roster = room.State?.Roster;
-        if (actInFlight || !session.IsSignedIn || target.Length == 0 || roster is null)
+        var reachable = RelayMode ? router.RelayConnected : session.IsSignedIn;
+        if (actInFlight || !reachable || target.Length == 0 || roster is null)
         {
             return;
         }
@@ -333,6 +371,12 @@ internal sealed class GameRoomsStore : IDisposable
             Guid.NewGuid().ToString("N"), from, to, angle, power, placeX, placeY, column, cell, fleet, targetSeat,
             facing, weapon, fuse, walkX, steps);
         actInFlight = true;
+        if (RelayMode)
+        {
+            SendRelayAction(target, request);
+            return;
+        }
+
         work.Run("room action", async token =>
         {
             var result = await games.ActAsync(target, request, token).ConfigureAwait(false);
@@ -396,6 +440,12 @@ internal sealed class GameRoomsStore : IDisposable
 
     private void OnFrameworkUpdate(IFramework framework)
     {
+        if (RelayMode)
+        {
+            TickRelay();
+            return;
+        }
+
         if (!session.IsSignedIn || room.RoomId.Length == 0)
         {
             return;
@@ -403,7 +453,7 @@ internal sealed class GameRoomsStore : IDisposable
 
         SyncYou();
         var nowUtc = DateTime.UtcNow;
-        if (signals.RealtimeActive && room.Attached && !room.AwaitingSnapshot)
+        if (router.Connected && room.Attached && !room.AwaitingSnapshot)
         {
             roomCadence.Mark(nowUtc);
             return;
@@ -480,6 +530,12 @@ internal sealed class GameRoomsStore : IDisposable
 
     private void OnGameSignal(GameSignal signal)
     {
+        if (RelayMode)
+        {
+            OnRelaySignal(signal);
+            return;
+        }
+
         room.Receive(signal, NowUnixMilliseconds());
         if (string.Equals(signal.Type, SignalType.GameEnded, StringComparison.Ordinal))
         {
@@ -489,6 +545,12 @@ internal sealed class GameRoomsStore : IDisposable
 
     private void OnRealtimeConnected(bool connected)
     {
+        if (RelayMode)
+        {
+            OnRelayConnected(connected);
+            return;
+        }
+
         room.OnRealtimeConnected(connected);
         if (connected)
         {
@@ -593,8 +655,11 @@ internal sealed class GameRoomsStore : IDisposable
     {
         Plugin.Framework.Update -= OnFrameworkUpdate;
         session.Changed -= OnSessionChanged;
-        signals.GameReceived -= OnGameSignal;
-        signals.ConnectedChanged -= OnRealtimeConnected;
+        router.Received -= OnGameSignal;
+        router.ConnectedChanged -= OnRealtimeConnected;
+        router.RelayFailed -= OnRelayFailed;
+        router.EndRelay();
+        router.Dispose();
         work.Dispose();
     }
 }

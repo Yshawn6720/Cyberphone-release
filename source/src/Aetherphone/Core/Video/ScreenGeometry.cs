@@ -6,6 +6,32 @@ internal static class ScreenGeometry
 {
     internal const float HalfWidth = 1.0f;
     internal const float HalfHeight = 0.6f;
+    private const float LargeScreenDistance = 10f;
+    private const float LargeScreenViewShare = 0.85f;
+
+    internal static bool TryLargeScreen(Vector3 cameraPosition, Vector3 cameraTarget, float fieldOfView,
+        float aspectRatio, out ScreenPose pose)
+    {
+        pose = default;
+        var direction = cameraTarget - cameraPosition;
+        var lengthSquared = direction.LengthSquared();
+        if (!float.IsFinite(lengthSquared) || lengthSquared < 0.0001f
+            || !float.IsFinite(cameraPosition.LengthSquared())
+            || !(fieldOfView > 0f && fieldOfView < MathF.PI)
+            || !float.IsFinite(aspectRatio) || aspectRatio <= 0f)
+        {
+            return false;
+        }
+
+        var forward = direction / MathF.Sqrt(lengthSquared);
+        var halfViewHeight = LargeScreenDistance * MathF.Tan(fieldOfView * 0.5f);
+        var scale = LargeScreenViewShare
+            * MathF.Min(halfViewHeight / HalfHeight, halfViewHeight * aspectRatio / HalfWidth);
+        pose = new ScreenPose(cameraPosition + forward * LargeScreenDistance,
+            MathF.Atan2(-forward.X, -forward.Z), MathF.Asin(Math.Clamp(forward.Y, -1f, 1f)), 0f,
+            Math.Clamp(scale, VideoEngine.MinScreenScale, VideoEngine.MaxScreenScale));
+        return true;
+    }
 
     internal static Quaternion Rotation(in ScreenPose pose) =>
         Quaternion.CreateFromYawPitchRoll(pose.Yaw, pose.Pitch, pose.Roll);

@@ -151,12 +151,6 @@ internal sealed partial class AetherStreamApp
         linkInput = string.Empty;
         if (watchAlong.IsViewing)
         {
-            if (SuggestionsHidden)
-            {
-                addSheet.Close();
-                return;
-            }
-
             if (localPath)
             {
                 ShellToast.Show(Loc.T(L.AetherStream.SuggestLinksOnly));

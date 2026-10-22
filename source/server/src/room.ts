@@ -4,23 +4,29 @@ import {
   ALONE_TIMEOUT_MS,
   CONTROL_ACTIONS,
   CloseCode,
-  DROP_LIMIT,
-  DROP_WINDOW_MS,
+  DECLINE_DENIED,
   FEATURE_PARTY,
   HOST_RATE,
+  MAX_ADMITTED,
   MAX_MEMBERS,
   MAX_MESSAGE_BYTES,
+  MAX_PENDING_SUGGESTIONS,
   MAX_SHARED_QUEUE,
+  MAX_SUGGESTION_URL,
   PERMISSION_CAN_HOST,
   PERMISSION_GRANT_MASK,
+  REACTION_KINDS,
+  REACTION_RATE,
   ROOM_LIFETIME_MS,
   SignalType,
   VIEWER_RATE,
   normalizeCode,
 } from "./protocol";
+import { type Bucket, type Message, OPEN, charge, exceedsUtf8Bytes, freshBucket, parseMessage, send } from "./wire";
 
 export const JOIN_HEADER = "X-Relay-Join";
-const OPEN = 1;
+// The slot registry asks a room who holds its slot on this path; client requests reach rooms only as /rt.
+export const PROBE_PATH = "/probe";
 
 export interface JoinTicket {
   role: "host" | "viewer";
@@ -28,6 +34,25 @@ export interface JoinTicket {
   id: string;
   name: string;
   world: string;
+  address: string;
+}
+
+// occupied: a host ticket from another character would be refused. hostId: the connected host. address: the
+// creator's client address, which keeps counting against that address for the room's whole life.
+export interface SlotOccupant {
+  occupied: boolean;
+  hostId: string | null;
+  address: string | null;
+}
+
+export const VACANT: SlotOccupant = { occupied: false, hostId: null, address: null };
+
+export function isProbe(request: Request): boolean {
+  return new URL(request.url).pathname === PROBE_PATH;
+}
+
+export function occupantResponse(occupant: SlotOccupant): Response {
+  return Response.json(occupant);
 }
 
 interface Grant {
@@ -37,18 +62,14 @@ interface Grant {
 
 interface RoomState {
   code: string;
+  address: string;
   createdAt: number;
   aloneSince: number | null;
   grants: Grant[];
   pendingTransfer: string | null;
   nextSequence: number;
-}
-
-interface Bucket {
-  tokens: number;
-  at: number;
-  windowStart: number;
-  dropped: number;
+  approvalRequired: boolean;
+  admitted: string[];
 }
 
 interface Member {
@@ -58,9 +79,12 @@ interface Member {
   role: "host" | "viewer";
   joined: boolean;
   pendingJoin: boolean;
+  awaiting: boolean;
   gone: boolean;
   sequence: number;
   bucket: Bucket;
+  reactions: Bucket;
+  suggestions: string[];
   room: RoomState | null;
 }
 
@@ -68,8 +92,6 @@ interface Connection {
   socket: WebSocket;
   member: Member;
 }
-
-type Message = Record<string, unknown>;
 
 const forwardedStateFields: Readonly<Record<string, "string" | "number" | "boolean">> = {
   url: "string",
@@ -91,51 +113,10 @@ const forwardedStateFields: Readonly<Record<string, "string" | "number" | "boole
   screenCurve: "number",
 };
 
+const SUGGESTION_ID = /^[A-Za-z0-9-]{1,64}$/;
+
 function memberOf(socket: WebSocket): Member {
   return socket.deserializeAttachment() as Member;
-}
-
-function send(socket: WebSocket, message: Message): void {
-  if (socket.readyState === OPEN) {
-    socket.send(JSON.stringify(message));
-  }
-}
-
-function parseMessage(raw: string): Message | null {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw);
-  } catch (error) {
-    if (!(error instanceof SyntaxError)) {
-      throw error;
-    }
-
-    // quality-allow: a malformed client frame changes no room state; the protocol ignores it and its rate token was already charged.
-    return null;
-  }
-
-  return typeof parsed === "object" && parsed !== null && !Array.isArray(parsed) ? parsed as Message : null;
-}
-
-function exceedsUtf8Bytes(text: string, limit: number): boolean {
-  if (text.length > limit) {
-    return true;
-  }
-
-  if (text.length * 3 <= limit) {
-    return false;
-  }
-
-  let bytes = 0;
-  for (let index = 0; index < text.length; index++) {
-    const unit = text.charCodeAt(index);
-    bytes += unit < 0x80 ? 1 : unit < 0x800 || (unit >= 0xd800 && unit <= 0xdfff) ? 2 : 3;
-    if (bytes > limit) {
-      return true;
-    }
-  }
-
-  return false;
 }
 
 function participant(member: Member, slot: number): Message {
@@ -192,8 +173,29 @@ function roomDeadline(room: RoomState): number {
   return room.aloneSince === null ? lifetimeEnd : Math.min(lifetimeEnd, room.aloneSince + ALONE_TIMEOUT_MS);
 }
 
+function admit(room: RoomState, id: string): void {
+  room.admitted = room.admitted.filter((entry) => entry !== id);
+  room.admitted.push(id);
+  if (room.admitted.length > MAX_ADMITTED) {
+    room.admitted.shift();
+  }
+}
+
+function suggestionUrl(value: unknown): string | null {
+  if (typeof value !== "string" || value.length > MAX_SUGGESTION_URL || !URL.canParse(value)) {
+    return null;
+  }
+
+  const protocol = new URL(value).protocol;
+  return protocol === "https:" || protocol === "http:" ? value : null;
+}
+
 export class PartyRoom extends DurableObject<Env> {
   async fetch(request: Request): Promise<Response> {
+    if (isProbe(request)) {
+      return occupantResponse(this.occupant());
+    }
+
     const header = request.headers.get(JOIN_HEADER);
     if (header === null || request.headers.get("Upgrade") !== "websocket") {
       return new Response("bad request", { status: 400 });
@@ -219,11 +221,14 @@ export class PartyRoom extends DurableObject<Env> {
 
       const room: RoomState = {
         code: ticket.code,
+        address: ticket.address,
         createdAt: now,
         aloneSince: now,
         grants: [],
         pendingTransfer: null,
         nextSequence: 1,
+        approvalRequired: false,
+        admitted: [],
       };
       const response = this.accept(this.newMember(ticket, "host", 0, now, room));
       await this.ctx.storage.setAlarm(roomDeadline(room));
@@ -277,7 +282,11 @@ export class PartyRoom extends DurableObject<Env> {
       return;
     }
 
-    const verdict = this.charge(member, Date.now());
+    const message = parseMessage(raw);
+    const now = Date.now();
+    const verdict = message?.type === SignalType.react
+      ? charge(member.reactions, REACTION_RATE, now)
+      : charge(member.bucket, member.role === "host" ? HOST_RATE : VIEWER_RATE, now);
     socket.serializeAttachment(member);
     if (verdict === "close") {
       socket.close(CloseCode.rate, "rate limited");
@@ -285,12 +294,7 @@ export class PartyRoom extends DurableObject<Env> {
       return;
     }
 
-    if (verdict === "drop") {
-      return;
-    }
-
-    const message = parseMessage(raw);
-    if (message === null) {
+    if (verdict === "drop" || message === null) {
       return;
     }
 
@@ -303,13 +307,34 @@ export class PartyRoom extends DurableObject<Env> {
         return;
       case SignalType.leave:
         socket.close(CloseCode.ended, "left");
-        await this.depart(socket, member);
+        await this.depart(socket, member, true);
         return;
       case SignalType.control:
         this.onControl(member, message);
         return;
       case SignalType.transfer:
         this.onTransfer(socket, member, message);
+        return;
+      case SignalType.approve:
+        this.onApprove(socket, member, message);
+        return;
+      case SignalType.deny:
+        await this.onDeny(member, message);
+        return;
+      case SignalType.kick:
+        await this.onKick(member, message);
+        return;
+      case SignalType.react:
+        this.onReact(socket, member, message);
+        return;
+      case SignalType.queueSuggest:
+        this.onQueueSuggest(socket, member, message);
+        return;
+      case SignalType.queueApprove:
+        this.onQueueDecision(member, message, "accepted");
+        return;
+      case SignalType.queueDeny:
+        this.onQueueDecision(member, message, "denied");
         return;
     }
   }
@@ -338,6 +363,15 @@ export class PartyRoom extends DurableObject<Env> {
     await this.ctx.storage.setAlarm(deadline);
   }
 
+  private occupant(): SlotOccupant {
+    const host = this.connections().find((connection) => connection.member.role === "host");
+    if (host === undefined) {
+      return VACANT;
+    }
+
+    return { occupied: true, hostId: host.member.id, address: host.member.room?.address ?? null };
+  }
+
   private newMember(ticket: JoinTicket, role: "host" | "viewer", sequence: number, now: number, room: RoomState | null): Member {
     const rate = role === "host" ? HOST_RATE : VIEWER_RATE;
     return {
@@ -347,9 +381,12 @@ export class PartyRoom extends DurableObject<Env> {
       role,
       joined: role === "host",
       pendingJoin: false,
+      awaiting: false,
       gone: false,
       sequence,
-      bucket: { tokens: rate.capacity, at: now, windowStart: now, dropped: 0 },
+      bucket: freshBucket(rate, now),
+      reactions: freshBucket(REACTION_RATE, now),
+      suggestions: [],
       room,
     };
   }
@@ -375,25 +412,6 @@ export class PartyRoom extends DurableObject<Env> {
     }
 
     return result;
-  }
-
-  private charge(member: Member, now: number): "accept" | "drop" | "close" {
-    const rate = member.role === "host" ? HOST_RATE : VIEWER_RATE;
-    const bucket = member.bucket;
-    bucket.tokens = Math.min(rate.capacity, bucket.tokens + (now - bucket.at) / rate.refillMs);
-    bucket.at = now;
-    if (bucket.tokens >= 1) {
-      bucket.tokens -= 1;
-      return "accept";
-    }
-
-    if (now - bucket.windowStart > DROP_WINDOW_MS) {
-      bucket.windowStart = now;
-      bucket.dropped = 0;
-    }
-
-    bucket.dropped++;
-    return bucket.dropped > DROP_LIMIT ? "close" : "drop";
   }
 
   private roster(connections: Connection[]): Message[] {
@@ -459,6 +477,10 @@ export class PartyRoom extends DurableObject<Env> {
     }
 
     room.grants = readGrants(message.members);
+    if (typeof message.approvalRequired === "boolean") {
+      room.approvalRequired = message.approvalRequired;
+    }
+
     const transferTo = room.pendingTransfer;
     if (transferTo !== null) {
       const target = connections.find((connection) => connection.member.id === transferTo
@@ -475,11 +497,17 @@ export class PartyRoom extends DurableObject<Env> {
     }
 
     const newcomers: Connection[] = [];
+    let approvalLifted = false;
     for (const connection of connections) {
-      if (connection.member.pendingJoin) {
-        connection.member.pendingJoin = false;
-        connection.member.joined = true;
-        connection.socket.serializeAttachment(connection.member);
+      const candidate = connection.member;
+      const lifted = candidate.awaiting && !room.approvalRequired;
+      if (candidate.pendingJoin || lifted) {
+        approvalLifted ||= lifted;
+        candidate.pendingJoin = false;
+        candidate.awaiting = false;
+        candidate.joined = true;
+        connection.socket.serializeAttachment(candidate);
+        admit(room, candidate.id);
         newcomers.push(connection);
       }
     }
@@ -488,6 +516,10 @@ export class PartyRoom extends DurableObject<Env> {
     socket.serializeAttachment(member);
     const state = this.snapshot(member, room, message, connections);
     send(socket, { ...state, type: SignalType.state });
+    if (approvalLifted) {
+      send(socket, this.rosterMessage(member, room, connections, null));
+    }
+
     for (const connection of connections) {
       if (connection.member.role !== "viewer" || !connection.member.joined) {
         continue;
@@ -517,10 +549,139 @@ export class PartyRoom extends DurableObject<Env> {
       return;
     }
 
+    if (!member.pendingJoin && room.approvalRequired && !room.admitted.includes(member.id)) {
+      member.awaiting = true;
+      socket.serializeAttachment(member);
+      send(socket, { type: SignalType.joinPending, hostId: host.member.id });
+      send(host.socket, {
+        type: SignalType.joinRequest,
+        userId: member.id,
+        hostId: host.member.id,
+        from: participant(member, member.sequence),
+      });
+      return;
+    }
+
+    member.awaiting = false;
     member.pendingJoin = true;
     socket.serializeAttachment(member);
     const updated = this.connections();
     send(host.socket, this.rosterMessage(host.member, room, updated, null));
+  }
+
+  private onApprove(socket: WebSocket, member: Member, message: Message): void {
+    const room = member.room;
+    if (member.role !== "host" || room === null) {
+      return;
+    }
+
+    const target = this.connections().find((connection) => connection.member.awaiting
+      && connection.member.id === message.userId);
+    if (target === undefined) {
+      return;
+    }
+
+    target.member.awaiting = false;
+    target.member.pendingJoin = true;
+    target.socket.serializeAttachment(target.member);
+    admit(room, target.member.id);
+    socket.serializeAttachment(member);
+    send(socket, this.rosterMessage(member, room, this.connections(), null));
+  }
+
+  private async onDeny(member: Member, message: Message): Promise<void> {
+    if (member.role !== "host") {
+      return;
+    }
+
+    const target = this.connections().find((connection) => connection.member.awaiting
+      && connection.member.id === message.userId);
+    if (target === undefined) {
+      return;
+    }
+
+    send(target.socket, { type: SignalType.declined, reason: DECLINE_DENIED, hostId: member.id });
+    target.socket.close(CloseCode.ended, "declined");
+    await this.depart(target.socket, target.member);
+  }
+
+  // Identities are self-declared, so a kick only closes the current connection; the same name may come back, and
+  // with approval on it has to be let in again.
+  private async onKick(member: Member, message: Message): Promise<void> {
+    if (member.role !== "host") {
+      return;
+    }
+
+    const target = this.connections().find((connection) => connection.member.role === "viewer"
+      && connection.member.id === message.userId);
+    if (target === undefined) {
+      return;
+    }
+
+    send(target.socket, { type: SignalType.kicked, hostId: member.id, userId: target.member.id });
+    target.socket.close(CloseCode.kicked, "kicked");
+    await this.depart(target.socket, target.member, true);
+  }
+
+  private onReact(socket: WebSocket, member: Member, message: Message): void {
+    const reaction = message.reaction;
+    if (!member.joined || typeof reaction !== "number" || !Number.isInteger(reaction) || reaction < 0
+      || reaction >= REACTION_KINDS) {
+      return;
+    }
+
+    const forwarded = { type: SignalType.reaction, reaction, userId: member.id };
+    for (const connection of this.connections(socket)) {
+      if (connection.member.joined) {
+        send(connection.socket, forwarded);
+      }
+    }
+  }
+
+  private onQueueSuggest(socket: WebSocket, member: Member, message: Message): void {
+    const suggestionId = message.suggestionId;
+    const url = suggestionUrl(message.url);
+    if (member.role !== "viewer" || !member.joined || typeof suggestionId !== "string"
+      || !SUGGESTION_ID.test(suggestionId) || url === null) {
+      return;
+    }
+
+    const host = this.connections().find((connection) => connection.member.role === "host");
+    if (host === undefined) {
+      return;
+    }
+
+    member.suggestions = member.suggestions.filter((entry) => entry !== suggestionId);
+    member.suggestions.push(suggestionId);
+    if (member.suggestions.length > MAX_PENDING_SUGGESTIONS) {
+      member.suggestions.shift();
+    }
+
+    socket.serializeAttachment(member);
+    send(host.socket, {
+      type: SignalType.queueSuggestion,
+      suggestionId,
+      url,
+      userId: member.id,
+      from: participant(member, member.sequence),
+    });
+  }
+
+  private onQueueDecision(member: Member, message: Message, reason: "accepted" | "denied"): void {
+    const suggestionId = message.suggestionId;
+    if (member.role !== "host" || typeof suggestionId !== "string") {
+      return;
+    }
+
+    for (const connection of this.connections()) {
+      const index = connection.member.suggestions.indexOf(suggestionId);
+      if (index >= 0) {
+        connection.member.suggestions.splice(index, 1);
+        connection.socket.serializeAttachment(connection.member);
+        send(connection.socket, { type: SignalType.queueSuggestionResult, suggestionId, reason });
+        return;
+      }
+    }
   }
 
   private onControl(member: Member, message: Message): void {
@@ -572,8 +733,10 @@ export class PartyRoom extends DurableObject<Env> {
     previous.member.sequence = room.nextSequence;
     room.nextSequence++;
     room.grants = [];
+    admit(room, previous.member.id);
     next.member.role = "host";
     next.member.room = room;
+    next.member.suggestions = [];
     await this.updateAlone(room, connections, Date.now());
     previous.socket.serializeAttachment(previous.member);
     next.socket.serializeAttachment(next.member);
@@ -583,6 +746,17 @@ export class PartyRoom extends DurableObject<Env> {
     for (const connection of connections) {
       if (connection.member.joined) {
         send(connection.socket, changed);
+      }
+    }
+
+    for (const connection of connections) {
+      if (connection.member.awaiting) {
+        send(next.socket, {
+          type: SignalType.joinRequest,
+          userId: connection.member.id,
+          hostId: next.member.id,
+          from: participant(connection.member, connection.member.sequence),
+        });
       }
     }
   }
@@ -598,7 +772,7 @@ export class PartyRoom extends DurableObject<Env> {
     await this.ctx.storage.setAlarm(roomDeadline(room));
   }
 
-  private async depart(socket: WebSocket, member: Member): Promise<void> {
+  private async depart(socket: WebSocket, member: Member, forget = false): Promise<void> {
     if (member.gone) {
       return;
     }
@@ -614,13 +788,26 @@ export class PartyRoom extends DurableObject<Env> {
     const connections = this.connections(socket);
     const host = connections.find((connection) => connection.member.role === "host");
     const room = host?.member.room ?? null;
-    if (host === undefined || room === null || (!member.joined && !member.pendingJoin)) {
+    if (host === undefined || room === null) {
+      return;
+    }
+
+    if (member.awaiting) {
+      send(host.socket, { type: SignalType.left, userId: member.id, hostId: host.member.id });
+      return;
+    }
+
+    if (!member.joined && !member.pendingJoin) {
       return;
     }
 
     room.grants = room.grants.filter((grant) => grant.userId !== member.id);
     if (room.pendingTransfer === member.id) {
       room.pendingTransfer = null;
+    }
+
+    if (forget) {
+      room.admitted = room.admitted.filter((entry) => entry !== member.id);
     }
 
     await this.updateAlone(room, connections, Date.now());

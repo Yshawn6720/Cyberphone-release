@@ -56,7 +56,7 @@ internal sealed class StreamSignalRouter : IDisposable
     public event Action<CallControl>? Reacted;
 
     public event Action<bool>? ConnectedChanged;
-    public event Action<int?>? RelayFailed;
+    public event Action<RelayFailure>? RelayFailed;
 
     public bool Connected => calls.StreamConnected;
     public bool RelayActive => calls.RelayActive;
@@ -157,9 +157,9 @@ internal sealed class StreamSignalRouter : IDisposable
         });
     }
 
-    public void React(int reaction)
+    public bool React(int reaction)
     {
-        calls.Send(new CallControl { Type = SignalType.StreamReact, Reaction = reaction });
+        return calls.Send(new CallControl { Type = SignalType.StreamReact, Reaction = reaction });
     }
 
     public void RequestNearby(uint territoryId, uint worldId)
@@ -174,7 +174,7 @@ internal sealed class StreamSignalRouter : IDisposable
 
     private void OnConnectedChanged(bool connected) => ConnectedChanged?.Invoke(connected);
 
-    private void OnRelayFailed(int? status) => RelayFailed?.Invoke(status);
+    private void OnRelayFailed(RelayFailure failure) => RelayFailed?.Invoke(failure);
 
     private void OnControl(CallControl message)
     {

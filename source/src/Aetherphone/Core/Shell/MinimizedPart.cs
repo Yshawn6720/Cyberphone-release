@@ -1,5 +1,6 @@
 using Aetherphone.Core.Apps;
 using Aetherphone.Core.Localization;
+using Aetherphone.Core.Telephony;
 
 namespace Aetherphone.Core.Shell;
 
@@ -26,7 +27,6 @@ internal static class MinimizedParts
     public const int Count = 14;
 
     private const string CoinAppId = "coin";
-    private const string CallsAppId = "message";
 
     private static readonly MinimizedPart[] DefaultOrder =
     {
@@ -62,7 +62,7 @@ internal static class MinimizedParts
     public static bool IsHidden(MinimizedPart part) => part switch
     {
         MinimizedPart.Coin => HiddenApps.Contains(CoinAppId),
-        MinimizedPart.Calls => HiddenApps.Contains(CallsAppId),
+        MinimizedPart.Calls => HiddenApps.Contains(CallHub.ScreenAppId),
         _ => false,
     };
 

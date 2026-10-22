@@ -1,3 +1,4 @@
+using Aetherphone.Core.Apps;
 using Aetherphone.Core.Telephony;
 using Aetherphone.Core.Telephony.Contracts;
 
@@ -6,18 +7,56 @@ namespace Aetherphone.Core.Jam;
 internal sealed class JamSignalRouter : IDisposable
 {
     private readonly CallSignalRouter calls;
+    private readonly PartyRelay relay;
+    private readonly RealtimeConnection relayConnection;
 
-    public JamSignalRouter(CallSignalRouter calls)
+    public JamSignalRouter(CallSignalRouter calls, PartyRelay relay)
     {
         this.calls = calls;
+        this.relay = relay;
+        relayConnection = new RealtimeConnection(relay.Endpoint);
         calls.Connection.ControlReceived += OnControl;
         calls.ConnectedChanged += OnConnectedChanged;
+        relayConnection.ControlReceived += OnControl;
+        relayConnection.ConnectedChanged += OnRelayConnectedChanged;
+        relayConnection.Failed += OnRelayFailed;
     }
 
     public event Action<CallControl>? Received;
     public event Action<bool>? ConnectedChanged;
+    public event Action<RelayFailure>? RelayFailed;
 
-    public bool Connected => calls.Connected;
+    public bool Connected => HiddenApps.AethernetEnabled ? calls.Connected : RelayConnected;
+
+    public bool RelayActive => relay.Active;
+
+    public bool RelayConnected => relay.Active && relayConnection.Connected;
+
+    public PartyRelay Relay => relay;
+
+    public bool BeginRelay(string? code)
+    {
+        relayConnection.Stop();
+        if (!relay.Begin(code))
+        {
+            relay.End();
+            return false;
+        }
+
+        relayConnection.Start();
+        return true;
+    }
+
+    public void EndRelay()
+    {
+        if (!relay.Active)
+        {
+            return;
+        }
+
+        relay.End();
+        relayConnection.Stop();
+    }
 
     public void Start(string? title) => Send(new CallControl { Type = SignalType.JamStart, Title = title });
 
@@ -79,7 +118,26 @@ internal sealed class JamSignalRouter : IDisposable
         Send(new CallControl { Type = SignalType.JamControl, Action = action, PositionSeconds = positionSeconds });
     }
 
-    public void Send(CallControl control) => calls.Send(control);
+    public bool Send(CallControl control)
+    {
+        if (HiddenApps.AethernetEnabled)
+        {
+            return calls.Send(control);
+        }
+
+        if (!IsRelayUplink(control.Type) || !RelayConnected)
+        {
+            return false;
+        }
+
+        _ = relayConnection.SendControlAsync(control);
+        return true;
+    }
+
+    private static bool IsRelayUplink(string type) => type is SignalType.JamStart or SignalType.JamJoin
+        or SignalType.JamLeave or SignalType.JamEnd or SignalType.JamState or SignalType.JamControl
+        or SignalType.JamTransfer or SignalType.JamQueueAdd or SignalType.JamQueueAdvance
+        or SignalType.JamQueueRemove or SignalType.JamQueueMove;
 
     private void OnControl(CallControl message)
     {
@@ -89,11 +147,31 @@ internal sealed class JamSignalRouter : IDisposable
         }
     }
 
-    private void OnConnectedChanged(bool connected) => ConnectedChanged?.Invoke(connected);
+    private void OnConnectedChanged(bool connected)
+    {
+        if (HiddenApps.AethernetEnabled)
+        {
+            ConnectedChanged?.Invoke(connected);
+        }
+    }
+
+    private void OnRelayConnectedChanged(bool connected)
+    {
+        if (!HiddenApps.AethernetEnabled)
+        {
+            ConnectedChanged?.Invoke(connected);
+        }
+    }
+
+    private void OnRelayFailed(RelayFailure failure) => RelayFailed?.Invoke(failure);
 
     public void Dispose()
     {
         calls.Connection.ControlReceived -= OnControl;
         calls.ConnectedChanged -= OnConnectedChanged;
+        relayConnection.ControlReceived -= OnControl;
+        relayConnection.ConnectedChanged -= OnRelayConnectedChanged;
+        relayConnection.Failed -= OnRelayFailed;
+        relayConnection.Dispose();
     }
 }

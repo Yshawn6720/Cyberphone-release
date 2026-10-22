@@ -6,8 +6,9 @@ namespace Aetherphone.Core.Jam;
 
 internal sealed partial class JamSession
 {
-    // Comfortably inside the server's 30 s stale window even if one heartbeat is lost.
-    private const float HeartbeatSeconds = 8f;
+    // Track changes, seeks and pauses publish immediately; the heartbeat only re-anchors guest clocks, and every
+    // relay message is billed, so it stays sparse. Guests tolerate two missed heartbeats (StaleStateSeconds).
+    private const float HeartbeatSeconds = 30f;
     private const double PositionJumpSeconds = 2.0;
 
     // Seeding goes through the queue pacer (7 operations per 4.25 s), so 20 songs land in about 12 s.

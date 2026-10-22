@@ -30,7 +30,7 @@ internal sealed class RealtimeConnection : IDisposable
     public event Action<CallControl>? ControlReceived;
     public event Action<byte[]>? MediaReceived;
     public event Action<bool>? ConnectedChanged;
-    public event Action<int?>? Failed;
+    public event Action<RelayFailure>? Failed;
 
     public void Start()
     {
@@ -81,6 +81,7 @@ internal sealed class RealtimeConnection : IDisposable
         {
             var connectedAtUtc = DateTime.MinValue;
             int? refusedStatus = null;
+            RelayFailure? refusal = null;
             try
             {
                 var realtimeUri = endpoint.ResolveUri();
@@ -93,7 +94,7 @@ internal sealed class RealtimeConnection : IDisposable
 
                 connectedAtUtc = DateTime.UtcNow;
                 SetConnected(true);
-                await ReceiveLoopAsync(ws, token).ConfigureAwait(false);
+                refusal = await ReceiveLoopAsync(ws, token).ConfigureAwait(false);
             }
             catch (OperationCanceledException)
             {
@@ -119,12 +120,18 @@ internal sealed class RealtimeConnection : IDisposable
                 break;
             }
 
+            if (refusal is { } refused)
+            {
+                Abandon(token, refused);
+                return;
+            }
+
             var heldLongEnough = connectedAtUtc != DateTime.MinValue
                 && DateTime.UtcNow - connectedAtUtc >= HealthyConnectionThreshold;
             attempt = heldLongEnough ? 1 : attempt + 1;
             if (endpoint.MaxReconnects() is { } maximum && (attempt > maximum || IsFinalRefusal(refusedStatus)))
             {
-                Abandon(token, refusedStatus);
+                Abandon(token, RelayFailure.FromStatus(refusedStatus));
                 return;
             }
 
@@ -154,7 +161,7 @@ internal sealed class RealtimeConnection : IDisposable
         or (int)HttpStatusCode.Conflict or (int)HttpStatusCode.TooManyRequests
         or (int)HttpStatusCode.InternalServerError or (int)HttpStatusCode.ServiceUnavailable;
 
-    private void Abandon(CancellationToken token, int? status)
+    private void Abandon(CancellationToken token, RelayFailure failure)
     {
         CancellationTokenSource? owned;
         lock (gate)
@@ -169,60 +176,84 @@ internal sealed class RealtimeConnection : IDisposable
         }
 
         owned.Dispose();
-        AepLog.Info($"[realtime] stopped reconnecting status={status}");
-        Failed?.Invoke(status);
+        AepLog.Info($"[realtime] stopped reconnecting status={failure.Status} refusal={failure.Refusal}");
+        if (failure.Refusal != RelayRefusal.None)
+        {
+            endpoint.Refused?.Invoke(failure);
+        }
+
+        Failed?.Invoke(failure);
     }
 
-    private async Task ReceiveLoopAsync(ClientWebSocket ws, CancellationToken token)
+    private async Task<RelayFailure?> ReceiveLoopAsync(ClientWebSocket ws, CancellationToken token)
     {
+        RelayFailure? refusal = null;
         var buffer = new byte[ReceiveBufferBytes];
         using var message = new MemoryStream();
-        while (!token.IsCancellationRequested && ws.State == WebSocketState.Open)
+        try
         {
-            message.SetLength(0);
-            ValueWebSocketReceiveResult chunk;
-            do
+            while (!token.IsCancellationRequested && ws.State == WebSocketState.Open)
             {
-                chunk = await ws.ReceiveAsync(buffer.AsMemory(), token).ConfigureAwait(false);
-                if (chunk.MessageType == WebSocketMessageType.Close)
+                message.SetLength(0);
+                ValueWebSocketReceiveResult chunk;
+                do
                 {
-                    return;
-                }
+                    chunk = await ws.ReceiveAsync(buffer.AsMemory(), token).ConfigureAwait(false);
+                    if (chunk.MessageType == WebSocketMessageType.Close)
+                    {
+                        return refusal;
+                    }
 
-                message.Write(buffer, 0, chunk.Count);
-                if (message.Length > MaxMessageBytes)
+                    message.Write(buffer, 0, chunk.Count);
+                    if (message.Length > MaxMessageBytes)
+                    {
+                        AepLog.Warning("Realtime message exceeded the size limit; dropping the connection.");
+                        return refusal;
+                    }
+                } while (!chunk.EndOfMessage);
+
+                if (chunk.MessageType == WebSocketMessageType.Text)
                 {
-                    AepLog.Warning("Realtime message exceeded the size limit; dropping the connection.");
-                    return;
+                    refusal = DispatchControl(message.GetBuffer(), (int)message.Length) ?? refusal;
                 }
-            } while (!chunk.EndOfMessage);
-
-            if (chunk.MessageType == WebSocketMessageType.Text)
-            {
-                DispatchControl(message.GetBuffer(), (int)message.Length);
-            }
-            else
-            {
-                MediaReceived?.Invoke(message.ToArray());
+                else
+                {
+                    MediaReceived?.Invoke(message.ToArray());
+                }
             }
         }
+        catch (Exception exception) when (refusal is not null && exception is WebSocketException or IOException)
+        {
+            AepLog.Warning(exception, "Realtime socket dropped after the relay refused it");
+        }
+
+        return refusal;
     }
 
-    private void DispatchControl(byte[] data, int length)
+    private RelayFailure? DispatchControl(byte[] data, int length)
     {
         try
         {
             var control = JsonSerializer.Deserialize(new ReadOnlySpan<byte>(data, 0, length),
                 TelephonyJsonContext.Default.CallControl);
-            if (control is not null)
+            if (control is null)
             {
-                ControlReceived?.Invoke(control);
+                return null;
             }
+
+            if (string.Equals(control.Type, SignalType.RelayRefused, StringComparison.Ordinal))
+            {
+                return RelayFailure.FromRefusal(control);
+            }
+
+            ControlReceived?.Invoke(control);
         }
         catch (Exception exception)
         {
             AepLog.Warning(exception, "Realtime control parse failed");
         }
+
+        return null;
     }
 
     public Task SendControlAsync(CallControl control)

@@ -121,15 +121,16 @@ internal sealed partial class MinimizedPhone
             return;
         }
 
-        BeginCard(new PhoneNotification(CallAppId, Loc.T(L.Minimized.DemoCaller), Loc.T(L.Message.PreviewIncoming),
-            DateTime.Now, AppAccents.For(CallAppId)));
+        var callAppId = CallHub.ScreenAppId;
+        BeginCard(new PhoneNotification(callAppId, Loc.T(L.Minimized.DemoCaller), Loc.T(L.Message.PreviewIncoming),
+            DateTime.Now, AppAccents.For(callAppId)));
     }
 
     private CallView DemoCall()
     {
         var state = demoStage == MinimizedDemoStage.Call ? CallState.Active : CallState.Idle;
         return new CallView(state, false, 1f, 0f, 0f, DemoCallSeconds + (int)demoElapsed,
-            Array.Empty<ParticipantInfo>(), null, true, string.Empty, Loc.T(L.Minimized.DemoCaller), 0);
+            Array.Empty<ParticipantInfo>(), null, true, string.Empty, Loc.T(L.Minimized.DemoCaller), 0, false);
     }
 
     private void ApplyFocus()

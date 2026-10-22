@@ -201,7 +201,8 @@ internal sealed partial class AnnouncementsApp
         }
 
         AnnouncementsStatePanel.Draw(body, ui, FontAwesomeIcon.Bullhorn, Loc.T(L.Announcements.EmptyTitle),
-            Loc.T(L.Announcements.EmptyHint), string.Empty);
+            Loc.T(AnnouncementsStore.RelayMode ? L.Announcements.RelayEmptyHint : L.Announcements.EmptyHint),
+            string.Empty);
     }
 
     private void DrawSearchField(float scale)

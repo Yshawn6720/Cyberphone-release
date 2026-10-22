@@ -1,6 +1,7 @@
 using Aetherphone.Apps.Music;
 using Aetherphone.Apps.Music.Jam;
 using Aetherphone.Core.Jam;
+using Aetherphone.Core.Telephony;
 using Xunit;
 
 namespace Aetherphone.Tests;
@@ -33,9 +34,10 @@ public sealed class JamLobbyInputTests
     [Fact]
     public void EveryDeclineReasonHasAMessage()
     {
+        var refusal = RelayFailure.FromStatus(503);
         foreach (var reason in Enum.GetValues<JamDeclineReason>())
         {
-            Assert.Equal(reason != JamDeclineReason.None, JamMessages.Decline(reason).HasValue);
+            Assert.Equal(reason != JamDeclineReason.None, JamMessages.Decline(reason, refusal) is not null);
         }
     }
 

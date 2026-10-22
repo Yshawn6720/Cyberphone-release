@@ -62,9 +62,10 @@ internal sealed partial class MusicApp
 
     private void DrawJamIdle(float scale)
     {
-        var signedIn = jamAccount.IsSignedIn;
+        var signedIn = jam.RelayMode ? jam.RelayReady : jamAccount.IsSignedIn;
         var title = Loc.T(L.Music.Jam.HeroTitle);
-        var body = Loc.T(signedIn ? L.Music.Jam.HeroBody : L.Music.Jam.SignedOut);
+        var signedOut = jam.RelayMode ? L.Music.Jam.RelaySetupHint : L.Music.Jam.SignedOut;
+        var body = Loc.T(signedIn ? L.Music.Jam.HeroBody : signedOut);
         var pad = Metrics.Space.Xl * scale;
         var innerWidth = ScrollLayout.StableContentWidth() - MusicUi.Inset * 2f * scale - pad * 2f;
         var tile = JamHeroTile * scale;
@@ -103,21 +104,24 @@ internal sealed partial class MusicApp
         }
 
         EndJamBlock();
-        if (!signedIn)
+        if (!signedIn && !jam.RelayMode)
         {
             return;
         }
 
         SectionHeader.Draw(ui, Loc.T(L.Music.Jam.JoinHeader), false);
         DrawJamCodeJoin(scale);
-        DrawJamNearby(scale);
+        if (!jam.RelayMode)
+        {
+            DrawJamNearby(scale);
+        }
     }
 
     private void DrawJamCodeJoin(float scale)
     {
         var fieldHeight = JamCodeFieldHeight * scale;
         var buttonHeight = JamButtonHeight * scale;
-        var hint = Loc.T(L.Music.Jam.CodeHint);
+        var hint = Loc.T(jam.RelayMode ? L.Music.Jam.RelayCodeHint : L.Music.Jam.CodeHint);
         var hintWidth = ScrollLayout.StableContentWidth() - MusicUi.Inset * 2f * scale;
         var hintHeight = Typography.MeasureWrappedBlock(hint, TextStyles.Footnote, hintWidth).Y;
         var block = BeginJamBlock(fieldHeight + Metrics.Space.Md * scale + buttonHeight + Metrics.Space.Sm * scale
@@ -133,7 +137,7 @@ internal sealed partial class MusicApp
         var join = new Rect(new Vector2(block.Max.X - half, top), new Vector2(block.Max.X, top + buttonHeight));
         if (ui.GhostButton(paste, Loc.T(L.Music.Jam.Paste)))
         {
-            jamCodeField.Set(ImGui.GetClipboardText() ?? string.Empty);
+            jamCodeField.Set(jam.AdoptInvite(ImGui.GetClipboardText() ?? string.Empty));
         }
 
         var complete = jamCodeField.Complete;

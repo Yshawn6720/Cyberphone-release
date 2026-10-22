@@ -11,6 +11,8 @@ namespace Aetherphone.Apps.Calendar;
 internal sealed class CalendarEvents : IDisposable
 {
     private const string CacheFileName = "calendar_events.json";
+    private const string RelayCacheFileName = "relay_calendar.json";
+    private const string RelayDocument = "calendar";
     private static readonly TimeSpan CacheMaxAge = TimeSpan.FromHours(24);
 
     private static readonly Vector4[] EventPalette =
@@ -33,6 +35,7 @@ internal sealed class CalendarEvents : IDisposable
 
     private readonly HttpService http;
     private readonly AethernetSession session;
+    private readonly RelayContentFeed<EventRecord[]> feed;
     private readonly CancellationTokenSource cancellation = new();
     private readonly string cachePath;
     private FrozenDictionary<long, ParsedEvent[]> events = FrozenDictionary<long, ParsedEvent[]>.Empty;
@@ -40,24 +43,34 @@ internal sealed class CalendarEvents : IDisposable
     private bool loading;
     private bool failed;
     private int customRevision;
+    private int relayVersion;
 
     public bool IsLoaded => loaded;
     public bool IsLoading => loading;
     public bool HasFailed => failed;
     public int CustomRevision => customRevision;
     public FrozenDictionary<long, ParsedEvent[]> Events => events;
+    public bool GameEventsAvailable => HiddenApps.AethernetEnabled || feed.IsConfigured;
 
-    public CalendarEvents(HttpService http, AethernetSession session)
+    public CalendarEvents(HttpService http, AethernetSession session, Configuration configuration)
     {
         this.http = http;
         this.session = session;
         var configDir = Plugin.PluginInterface.ConfigDirectory.FullName;
         cachePath = Path.Combine(configDir, CacheFileName);
+        feed = new RelayContentFeed<EventRecord[]>(http, configuration, RelayDocument,
+            CalendarJsonContext.Default.EventRecordArray, Path.Combine(configDir, RelayCacheFileName));
     }
 
     public void Initialize()
     {
-        if (!HiddenApps.AethernetEnabled || loaded || loading)
+        if (!HiddenApps.AethernetEnabled)
+        {
+            InitializeFromRelay();
+            return;
+        }
+
+        if (loaded || loading)
         {
             return;
         }
@@ -75,14 +88,76 @@ internal sealed class CalendarEvents : IDisposable
 
     public void Retry()
     {
-        if (!HiddenApps.AethernetEnabled || loading)
+        if (loading || !GameEventsAvailable)
         {
             return;
         }
 
         failed = false;
         loading = true;
-        _ = Task.Run(FetchAndProcessAsync);
+        if (HiddenApps.AethernetEnabled)
+        {
+            _ = Task.Run(FetchAndProcessAsync);
+            return;
+        }
+
+        _ = Task.Run(FetchFromRelayAsync);
+    }
+
+    private void InitializeFromRelay()
+    {
+        if (loading)
+        {
+            return;
+        }
+
+        var version = feed.ConfigurationVersion;
+        if (version != relayVersion)
+        {
+            relayVersion = version;
+            loaded = false;
+            failed = false;
+            events = FrozenDictionary<long, ParsedEvent[]>.Empty;
+        }
+
+        if (loaded || failed || !feed.IsConfigured)
+        {
+            return;
+        }
+
+        if (feed.TryGetFresh(out var records))
+        {
+            Build(records);
+            loaded = true;
+            return;
+        }
+
+        loading = true;
+        _ = Task.Run(FetchFromRelayAsync);
+    }
+
+    private async Task FetchFromRelayAsync()
+    {
+        try
+        {
+            var result = await feed.LoadAsync(cancellation.Token).ConfigureAwait(false);
+            if (result.Value is { } records)
+            {
+                Build(records);
+                loaded = true;
+                return;
+            }
+
+            failed = result.Status == RelayContentStatus.Failed;
+        }
+        catch (OperationCanceledException) when (cancellation.IsCancellationRequested)
+        {
+            AepLog.Debug("Calendar relay fetch stopped at shutdown");
+        }
+        finally
+        {
+            loading = false;
+        }
     }
 
     private async Task FetchAndProcessAsync()
@@ -191,7 +266,7 @@ internal sealed class CalendarEvents : IDisposable
         for (var index = 0; index < records.Length; index++)
         {
             var record = records[index];
-            if (record.Begin > record.End)
+            if (record is null || record.Begin > record.End)
             {
                 continue;
             }

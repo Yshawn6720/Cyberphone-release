@@ -38,12 +38,32 @@ export function parseIdentity(name: unknown, world: unknown): Identity | null {
   return { id: `${name}@${world}`, name, world };
 }
 
-export async function inviteMatches(candidate: string, invite: string): Promise<boolean> {
-  const [left, right] = await Promise.all([
-    crypto.subtle.digest("SHA-256", encoder.encode(candidate)),
-    crypto.subtle.digest("SHA-256", encoder.encode(invite)),
-  ]);
-  return crypto.subtle.timingSafeEqual(left, right);
+// INVITE_CODE may list several codes separated by commas (one per community), so a leaked code can be revoked by
+// removing it without changing everyone else's.
+export function inviteCodes(configured: string | undefined): string[] {
+  const codes: string[] = [];
+  for (const part of (configured ?? "").split(",")) {
+    const code = part.trim();
+    if (code.length > 0) {
+      codes.push(code);
+    }
+  }
+
+  return codes;
+}
+
+// Compares against every code, so the time taken does not reveal which position matched.
+export async function matchingInvite(candidate: string, invites: readonly string[]): Promise<string | null> {
+  const digest = await crypto.subtle.digest("SHA-256", encoder.encode(candidate));
+  let matched: string | null = null;
+  for (const invite of invites) {
+    const expected = await crypto.subtle.digest("SHA-256", encoder.encode(invite));
+    if (crypto.subtle.timingSafeEqual(digest, expected) && matched === null) {
+      matched = invite;
+    }
+  }
+
+  return matched;
 }
 
 function signingKey(invite: string): Promise<CryptoKey> {
@@ -103,7 +123,7 @@ function readClaims(payload: Uint8Array): TokenClaims | null {
   return { kind: claims.kind, name: claims.name, world: claims.world, exp: claims.exp };
 }
 
-export async function verifyToken(invite: string, token: string, kind: TokenKind, now: number): Promise<Identity | null> {
+async function verifyToken(invite: string, token: string, kind: TokenKind, now: number): Promise<Identity | null> {
   const parts = token.split(".");
   if (parts.length !== 2) {
     return null;
@@ -126,6 +146,23 @@ export async function verifyToken(invite: string, token: string, kind: TokenKind
   }
 
   return parseIdentity(claims.name, claims.world);
+}
+
+export interface VerifiedToken {
+  identity: Identity;
+  invite: string;
+}
+
+// A token is signed with the invite code it was issued under, so removing that code voids its tokens too.
+export async function verifyAnyToken(invites: readonly string[], token: string, kind: TokenKind, now: number): Promise<VerifiedToken | null> {
+  for (const invite of invites) {
+    const identity = await verifyToken(invite, token, kind, now);
+    if (identity !== null) {
+      return { identity, invite };
+    }
+  }
+
+  return null;
 }
 
 export function bearerOf(request: Request): string | null {

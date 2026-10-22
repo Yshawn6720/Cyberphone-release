@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Net;
+using System.Runtime.CompilerServices;
 using Aetherphone.Core.Aethernet;
 using Aetherphone.Core.Apps;
 using Aetherphone.Core.Confirm;
@@ -55,8 +56,6 @@ internal sealed class WatchAlongSession : IDisposable
     private const long RejoinRetryMilliseconds = 3_000;
     private const int MaxRejoinAttempts = 8;
     private const int MaxSharedQueueEntries = 64;
-    private const int NoRelayFailure = 0;
-    private const int RelayFailureWithoutStatus = -1;
 
     private const float ScreenPositionDriftTolerance = 0.01f;
     private const float ScreenAngleDriftTolerance = 0.005f;
@@ -114,7 +113,7 @@ internal sealed class WatchAlongSession : IDisposable
     private CallControl? pendingHostChange;
     private CallControl? pendingRejoinDecline;
     private volatile bool pendingViewerStop;
-    private int pendingRelayFailure;
+    private StrongBox<RelayFailure>? pendingRelayFailure;
 
     private volatile int serverFeatures;
     private volatile int remoteGuestPermissions;
@@ -293,18 +292,7 @@ internal sealed class WatchAlongSession : IDisposable
         return link.Code.Length == 0 ? PartyInviteOutcome.ServerSaved : JoinByCode(link.Code);
     }
 
-    internal void SaveRelayServer(string url, string invite)
-    {
-        if (string.Equals(url, configuration.PartyRelayUrl, StringComparison.Ordinal)
-            && string.Equals(invite, configuration.PartyRelayInvite, StringComparison.Ordinal))
-        {
-            return;
-        }
-
-        configuration.PartyRelayUrl = url;
-        configuration.PartyRelayInvite = invite;
-        configuration.Save();
-    }
+    internal void SaveRelayServer(string url, string invite) => stream.Relay.SaveServer(url, invite);
 
     internal string ShareInvite(string code)
     {
@@ -606,9 +594,13 @@ internal sealed class WatchAlongSession : IDisposable
             return;
         }
 
+        if (!stream.React(kind))
+        {
+            return;
+        }
+
         reactedAtTicks = now;
         Reactions.Add(kind, now);
-        stream.React(kind);
     }
 
     private QueueSuggestion? FindQueueSuggestion(string suggestionId)
@@ -747,17 +739,25 @@ internal sealed class WatchAlongSession : IDisposable
         }
     }
 
-    private void OnRelayFailed(int? status) =>
-        Interlocked.Exchange(ref pendingRelayFailure, status ?? RelayFailureWithoutStatus);
+    private void OnRelayFailed(RelayFailure failure) =>
+        Interlocked.Exchange(ref pendingRelayFailure, new StrongBox<RelayFailure>(failure));
 
-    private void ApplyRelayFailure(int failure)
+    private void ApplyRelayFailure(in RelayFailure failure)
     {
         if (!InSession)
         {
             return;
         }
 
-        switch (failure)
+        if (failure.Refusal != RelayRefusal.None)
+        {
+            confirm.Alert(RelayRefusalText.Title(failure, PartyRelayKind.Party),
+                RelayRefusalText.Body(failure, PartyRelayKind.Party), Loc.T(L.Phone.OutcomeDismiss));
+            LeaveLocally();
+            return;
+        }
+
+        switch (failure.Status)
         {
             case (int)HttpStatusCode.Unauthorized:
                 QueueAlert(L.AetherStream.RelayInviteRejectedTitle, L.AetherStream.RelayInviteRejectedBody);
@@ -767,9 +767,6 @@ internal sealed class WatchAlongSession : IDisposable
                 break;
             case (int)HttpStatusCode.Conflict:
                 QueueAlert(L.AetherStream.PartyFullTitle, L.AetherStream.PartyFullBody);
-                break;
-            case (int)HttpStatusCode.ServiceUnavailable:
-                QueueAlert(L.AetherStream.RelayRoomsFullTitle, L.AetherStream.RelayRoomsFullBody);
                 break;
             default:
                 QueueAlert(L.AetherStream.StreamUnavailableTitle, L.AetherStream.StreamUnavailableBody);
@@ -870,10 +867,9 @@ internal sealed class WatchAlongSession : IDisposable
 
     private void DrainSocketWork()
     {
-        var relayFailure = Interlocked.Exchange(ref pendingRelayFailure, NoRelayFailure);
-        if (relayFailure != NoRelayFailure)
+        if (Interlocked.Exchange(ref pendingRelayFailure, null) is { } relayFailure)
         {
-            ApplyRelayFailure(relayFailure);
+            ApplyRelayFailure(relayFailure.Value);
         }
 
         if (Interlocked.Exchange(ref pendingJoined, null) is { } joined)

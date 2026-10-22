@@ -68,7 +68,7 @@ internal sealed partial class MusicApp
 
     private static bool IsReachable(in MusicRoute route) =>
         HiddenApps.AethernetEnabled || route.Screen is not (MusicScreen.CommunityStation or MusicScreen.MyStation
-            or MusicScreen.StationArtwork or MusicScreen.JamLobby);
+            or MusicScreen.StationArtwork);
 
     private void ShowHome()
     {

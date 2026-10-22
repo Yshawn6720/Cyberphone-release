@@ -14,11 +14,14 @@ namespace Aetherphone.Apps.Announcements;
 internal sealed class AnnouncementsStore : IDisposable
 {
     public const string AppId = "announcements";
+    private const string RelayDocument = "announcements";
+    private const string RelayCacheFileName = "relay_announcements.json";
 
     private static readonly TimeSpan BackgroundRefreshInterval = TimeSpan.FromMinutes(5);
 
     private readonly AethernetSession session;
     private readonly AnnouncementsClient client;
+    private readonly RelayContentFeed<AnnouncementPage> feed;
     private readonly NotificationService notifications;
     private readonly Configuration configuration;
     private readonly StoreWork work = new StoreWork("Announcements");
@@ -34,8 +37,9 @@ internal sealed class AnnouncementsStore : IDisposable
     private readonly PollCadence cadence;
     private readonly HashSet<string> readThisVisit = new(StringComparer.Ordinal);
     private long visitSeenUnix = long.MaxValue;
+    private AnnouncementPage? relayPage;
 
-    public AnnouncementsStore(AethernetSession session, AnnouncementsClient client,
+    public AnnouncementsStore(AethernetSession session, AnnouncementsClient client, HttpService http,
         NotificationService notifications, Configuration configuration, PhoneVisibility visibility,
         RealtimeSignalBus signals)
     {
@@ -44,6 +48,9 @@ internal sealed class AnnouncementsStore : IDisposable
         this.notifications = notifications;
         this.configuration = configuration;
         this.signals = signals;
+        feed = new RelayContentFeed<AnnouncementPage>(http, configuration, RelayDocument,
+            AethernetJsonContext.Default.AnnouncementPage,
+            Path.Combine(Plugin.PluginInterface.ConfigDirectory.FullName, RelayCacheFileName));
         cadence = new PollCadence(visibility, BackgroundRefreshInterval, BackgroundRefreshInterval, signals);
         signals.AnnouncementsPinged += cadence.RequestImmediate;
         signals.ConnectedChanged += OnRealtimeConnected;
@@ -58,7 +65,11 @@ internal sealed class AnnouncementsStore : IDisposable
         }
     }
 
-    public bool IsSignedIn => session.IsSignedIn;
+    public static bool RelayMode => !HiddenApps.AethernetEnabled;
+
+    public bool Available => RelayMode ? feed.IsConfigured : AppAvailability.IsEnabled(AppId);
+
+    public bool CanRead => RelayMode ? feed.IsConfigured : session.IsSignedIn;
 
     public bool PushCovered => signals.RealtimeActive;
 
@@ -80,7 +91,7 @@ internal sealed class AnnouncementsStore : IDisposable
     {
         get
         {
-            if (!session.IsSignedIn)
+            if (!CanRead)
             {
                 return 0;
             }
@@ -126,12 +137,18 @@ internal sealed class AnnouncementsStore : IDisposable
 
     public void Refresh()
     {
-        if (!session.IsSignedIn || loading)
+        if (!CanRead || loading)
         {
             return;
         }
 
         loading = true;
+        if (RelayMode)
+        {
+            work.Run("announcements relay", LoadFromRelayAsync, () => loading = false);
+            return;
+        }
+
         work.Run("announcements refresh", async token =>
         {
             var reported = AepFailure.None;
@@ -160,6 +177,54 @@ internal sealed class AnnouncementsStore : IDisposable
             loadedOnce = true;
             Announce(page.Items);
         }, () => loading = false);
+    }
+
+    private async Task LoadFromRelayAsync(CancellationToken token)
+    {
+        var result = await feed.LoadAsync(token).ConfigureAwait(false);
+        if (result.Status == RelayContentStatus.Failed)
+        {
+            failureBox = new AepFailureBox(result.Failure);
+            AepLog.Warning($"Announcements failed to load from the relay: {result.Failure.Describe()}");
+        }
+        else
+        {
+            failureBox = null;
+        }
+
+        if (result.Value is not { } page || ReferenceEquals(page, relayPage))
+        {
+            return;
+        }
+
+        relayPage = page;
+        var items = Readable(page.Items);
+        announcements = items;
+        announcementsCursor = null;
+        loadedOnce = true;
+        Announce(items);
+    }
+
+    private static AnnouncementDto[] Readable(AnnouncementDto[]? items)
+    {
+        if (items is null || items.Length == 0)
+        {
+            return Array.Empty<AnnouncementDto>();
+        }
+
+        var kept = new List<AnnouncementDto>(items.Length);
+        for (var index = 0; index < items.Length; index++)
+        {
+            var item = items[index];
+            if (item is not null && !string.IsNullOrEmpty(item.Id) && item.Title is not null && item.Body is not null)
+            {
+                kept.Add(item);
+            }
+        }
+
+        var readable = kept.ToArray();
+        Array.Sort(readable, ByNewestFirst);
+        return readable;
     }
 
     public void LoadMore()
@@ -222,18 +287,21 @@ internal sealed class AnnouncementsStore : IDisposable
             return;
         }
 
-        var accent = AppAccents.For(AppId);
-        for (var index = items.Length - 1; index >= 0; index--)
+        if (!RelayMode)
         {
-            var announcement = items[index];
-            if (announcement.CreatedAtUnix <= notifiedUnix)
+            var accent = AppAccents.For(AppId);
+            for (var index = items.Length - 1; index >= 0; index--)
             {
-                continue;
-            }
+                var announcement = items[index];
+                if (announcement.CreatedAtUnix <= notifiedUnix)
+                {
+                    continue;
+                }
 
-            var text = AnnouncementText.For(announcement);
-            notifications.Notify(new PhoneNotification(AppId, text.Title, text.Body, DateTime.Now, accent,
-                announcement.Id));
+                var text = AnnouncementText.For(announcement);
+                notifications.Notify(new PhoneNotification(AppId, text.Title, text.Body, DateTime.Now, accent,
+                    announcement.Id));
+            }
         }
 
         configuration.AnnouncementsNotifiedUnix = newest;

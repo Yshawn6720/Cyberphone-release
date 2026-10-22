@@ -32,6 +32,13 @@ internal sealed partial class MusicApp
         DrawJamStatusBanner(scale);
         DrawJamCodeCard(scale);
         DrawJamNowPlayingRow(scale);
+        if (jam.RelayMode)
+        {
+            DrawJamMembers(scale);
+            DrawJamExitButtons(scale);
+            return;
+        }
+
         DrawJamReactionBlock(scale);
         if (jam.IsHost && jam.JoinRequests.Length > 0)
         {
@@ -168,6 +175,19 @@ internal sealed partial class MusicApp
         }
 
         top += titleHeight + subtitleHeight + Metrics.Space.Lg * scale;
+        if (jam.RelayMode)
+        {
+            var shareInvite = new Rect(new Vector2(left, top), new Vector2(right, top + buttonHeight));
+            if (ui.AccentPill(shareInvite, Loc.T(L.Music.Jam.ShareCode), true, JamButtonStyle))
+            {
+                ImGui.SetClipboardText(jam.ShareInvite());
+                ShellToast.Show(Loc.T(L.Music.Jam.ShareCopied));
+            }
+
+            EndJamBlock();
+            return;
+        }
+
         var gap = Metrics.Space.Sm * scale;
         var shareWidth = MathF.Min((right - left - gap) * 0.4f,
             Typography.Measure(Loc.T(L.Music.Jam.ShareCode), JamButtonStyle).X + buttonHeight);
@@ -250,7 +270,7 @@ internal sealed partial class MusicApp
     {
         JamGap(MusicUi.SectionGap);
         var hosting = jam.IsHost;
-        var company = JamOthersCount > 0;
+        var company = JamOthersCount > 0 && !jam.RelayMode;
         var buttonHeight = JamButtonHeight * scale;
         var rows = hosting && company ? 2 : 1;
         var block = BeginJamBlock(buttonHeight * rows + Metrics.Space.Sm * scale * (rows - 1));
