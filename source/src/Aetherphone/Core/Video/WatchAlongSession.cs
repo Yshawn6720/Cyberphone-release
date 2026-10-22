@@ -34,6 +34,8 @@ internal readonly record struct PendingAlert(LocString Title, LocString Body);
 
 internal readonly record struct PendingToast(LocString Text, string? Argument);
 
+internal readonly record struct PendingDanmaku(string UserId, string Text);
+
 internal enum WatchAlongMode : byte
 {
     None,
@@ -140,6 +142,9 @@ internal sealed class WatchAlongSession : IDisposable
     private readonly ConcurrentQueue<CallControl> pendingControls = new();
     private readonly ConcurrentQueue<QueueSuggestion> trustedSuggestions = new();
     private readonly ConcurrentQueue<int> pendingReactions = new();
+    private readonly ConcurrentQueue<PendingDanmaku> pendingDanmaku = new();
+    private readonly HashSet<string> hiddenDanmaku = new(StringComparer.Ordinal);
+    private volatile bool remoteDanmakuEnabled = true;
 
     private bool awaitingHostAck;
     private bool partyOpen;
@@ -178,6 +183,7 @@ internal sealed class WatchAlongSession : IDisposable
         stream.HostChanged += OnHostChanged;
         stream.ControlRequested += OnControlRequested;
         stream.Reacted += OnReacted;
+        stream.DanmakuReceived += OnDanmakuReceived;
         stream.ConnectedChanged += OnConnectedChanged;
         stream.RelayFailed += OnRelayFailed;
     }
@@ -208,9 +214,19 @@ internal sealed class WatchAlongSession : IDisposable
 
     internal PartyReactions Reactions { get; } = new();
 
+    internal PartyDanmaku Danmaku { get; } = new();
+
     internal bool ServerSupportsParty => (serverFeatures & StreamFeature.Party) != 0;
 
     internal bool ServerLacksParty => serverSeen && !ServerSupportsParty;
+
+    internal bool ServerSupportsDanmaku => (serverFeatures & StreamFeature.Danmaku) != 0;
+
+    internal bool ServerLacksDanmaku => serverSeen && !ServerSupportsDanmaku;
+
+    internal bool RoomDanmakuEnabled => IsHosting ? Policy.DanmakuEnabled : remoteDanmakuEnabled;
+
+    internal bool CanSendDanmaku => Mode != WatchAlongMode.None && PartyDanmaku.CanSend(serverFeatures, RoomDanmakuEnabled);
 
     internal string RoomCode => roomCode ?? string.Empty;
 
@@ -492,6 +508,13 @@ internal sealed class WatchAlongSession : IDisposable
         lastPublishedQueueCount = -1;
         lastPublishedScreen = null;
         Reactions.Clear();
+        Danmaku.Clear();
+        hiddenDanmaku.Clear();
+        remoteDanmakuEnabled = true;
+        while (pendingDanmaku.TryDequeue(out _))
+        {
+        }
+
         video.HoldScreen = false;
         screen.Engine.ScreenCurve = configuration.VideoScreenCurve;
         Interlocked.Exchange(ref pendingJoinSync, null);
@@ -641,6 +664,55 @@ internal sealed class WatchAlongSession : IDisposable
 
         reactedAtTicks = now;
         Reactions.Add(kind, now);
+    }
+
+    internal bool SendDanmaku(string text)
+    {
+        var line = PartyDanmaku.Clean(text);
+        if (line.Length == 0 || !CanSendDanmaku || !stream.SendDanmaku(line))
+        {
+            return false;
+        }
+
+        if (configuration.VideoDanmaku && SelfId is { } selfId)
+        {
+            Danmaku.Enqueue(selfId, DanmakuName(selfId), line, true);
+        }
+
+        return true;
+    }
+
+    internal bool IsDanmakuHidden(string userId) => hiddenDanmaku.Contains(userId);
+
+    internal void SetDanmakuHidden(string userId, bool hidden)
+    {
+        if (!hidden)
+        {
+            hiddenDanmaku.Remove(userId);
+            return;
+        }
+
+        hiddenDanmaku.Add(userId);
+        Danmaku.Hide(userId);
+    }
+
+    internal bool CanHideDanmakuFrom(WatchAlongParticipant member) =>
+        ServerSupportsDanmaku && SelfId is { } selfId && !string.Equals(member.UserId, selfId, StringComparison.Ordinal);
+
+    private string DanmakuName(string userId)
+    {
+        var roster = Roster;
+        for (var index = 0; index < roster.Count; index++)
+        {
+            if (string.Equals(roster[index].UserId, userId, StringComparison.Ordinal)
+                && roster[index].DisplayName.Length > 0)
+            {
+                return roster[index].DisplayName;
+            }
+        }
+
+        var separator = userId.IndexOf('@', StringComparison.Ordinal);
+        return separator > 0 ? userId[..separator] : userId;
     }
 
     private QueueSuggestion? FindQueueSuggestion(string suggestionId)
@@ -949,6 +1021,8 @@ internal sealed class WatchAlongSession : IDisposable
             video.HoldScreen = false;
             video.Stop();
             Reactions.Clear();
+            Danmaku.Clear();
+            hiddenDanmaku.Clear();
             screen.Engine.ScreenCurve = configuration.VideoScreenCurve;
         }
 
@@ -981,6 +1055,20 @@ internal sealed class WatchAlongSession : IDisposable
         while (pendingReactions.TryDequeue(out var reaction))
         {
             Reactions.Add(reaction, now);
+        }
+
+        while (pendingDanmaku.TryDequeue(out var received))
+        {
+            if (Mode == WatchAlongMode.None || !configuration.VideoDanmaku || hiddenDanmaku.Contains(received.UserId))
+            {
+                continue;
+            }
+
+            var text = PartyDanmaku.Clean(received.Text);
+            if (text.Length > 0)
+            {
+                Danmaku.Enqueue(received.UserId, DanmakuName(received.UserId), text, false);
+            }
         }
     }
 
@@ -1160,7 +1248,6 @@ internal sealed class WatchAlongSession : IDisposable
     private void PublishHostStateIfNeeded()
     {
         var progress = video.Progress;
-        var position = (double)progress.Position;
         var paused = progress.Paused;
         var url = queue.Current is { } current ? ShareableUrl(current) : string.Empty;
 
@@ -1173,6 +1260,7 @@ internal sealed class WatchAlongSession : IDisposable
         var expected = lastPublishedPaused
             ? lastPublishedPosition
             : lastPublishedPosition + (DateTime.UtcNow - lastPublishedAt).TotalSeconds;
+        var position = PartyHostPosition.Report(url, lastPublishedUrl, video.IsRestarting, progress.Position, expected);
         var jumped = url == lastPublishedUrl && Math.Abs(position - expected) > PositionJumpTolerance;
 
         var otherChange = url != lastPublishedUrl || paused != lastPublishedPaused || jumped
@@ -1216,7 +1304,8 @@ internal sealed class WatchAlongSession : IDisposable
         publishedGuestPermissions = policy.GuestPermissions;
         stream.PublishState(new StreamPublication(url, position, paused, Plugin.ClientState.TerritoryType,
             LocationShare.CurrentWorldId(), approvalRequired, policy.Discoverable, policy.CodeEnabled,
-            policy.GuestPermissions, PublishedGrants(), BuildSharedQueue(sharedCount), screenPose));
+            policy.GuestPermissions, policy.DanmakuEnabled, PublishedGrants(), BuildSharedQueue(sharedCount),
+            screenPose));
     }
 
     private StreamMember[]? PublishedGrants()
@@ -1287,6 +1376,8 @@ internal sealed class WatchAlongSession : IDisposable
         lastPublishedUrl = null;
         lastPublishedQueueCount = -1;
         lastPublishedScreen = null;
+        Danmaku.Clear();
+        hiddenDanmaku.Clear();
     }
 
     private void AbsorbRoom(CallControl message)
@@ -1300,6 +1391,7 @@ internal sealed class WatchAlongSession : IDisposable
         AdoptRoomCode(message.Code);
         remoteGuestPermissions = message.GuestPermissions ?? 0;
         remoteMembers = message.Members;
+        remoteDanmakuEnabled = message.DanmakuEnabled ?? true;
     }
 
     private void RebuildRoster()
@@ -1826,7 +1918,8 @@ internal sealed class WatchAlongSession : IDisposable
             message.ApprovalRequired ?? configuration.VideoStreamApprovalRequired,
             message.Discoverable ?? configuration.VideoStreamDiscoverable,
             message.CodeEnabled ?? message.Code is { Length: > 0 },
-            (message.GuestPermissions ?? 0) & PartyPolicy.GuestMask);
+            (message.GuestPermissions ?? 0) & PartyPolicy.GuestMask,
+            message.DanmakuEnabled ?? configuration.VideoPartyDanmakuEnabled);
         policyAdopted = true;
         relayDiscoverable = false;
         roomHostId = SelfId;
@@ -1966,6 +2059,15 @@ internal sealed class WatchAlongSession : IDisposable
         if (Mode != WatchAlongMode.None && message.Reaction is { } reaction)
         {
             pendingReactions.Enqueue(reaction);
+        }
+    }
+
+    private void OnDanmakuReceived(CallControl message)
+    {
+        if (Mode != WatchAlongMode.None && message.UserId is { Length: > 0 } userId
+            && message.Text is { Length: > 0 } text)
+        {
+            pendingDanmaku.Enqueue(new PendingDanmaku(userId, text));
         }
     }
 
@@ -2204,6 +2306,7 @@ internal sealed class WatchAlongSession : IDisposable
         remoteParticipants = null;
         remoteMembers = null;
         remoteGuestPermissions = 0;
+        remoteDanmakuEnabled = true;
         roomCode = null;
         roomHostId = null;
         joinRequested = false;
@@ -2238,6 +2341,7 @@ internal sealed class WatchAlongSession : IDisposable
         stream.HostChanged -= OnHostChanged;
         stream.ControlRequested -= OnControlRequested;
         stream.Reacted -= OnReacted;
+        stream.DanmakuReceived -= OnDanmakuReceived;
         stream.ConnectedChanged -= OnConnectedChanged;
         stream.RelayFailed -= OnRelayFailed;
     }

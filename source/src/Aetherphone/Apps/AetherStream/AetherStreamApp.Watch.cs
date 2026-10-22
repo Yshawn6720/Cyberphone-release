@@ -513,6 +513,7 @@ internal sealed partial class AetherStreamApp
 
         DrawVolume(scale);
         DrawReactionBar(scale);
+        DrawDanmakuComposer(scale);
         DrawImportProgress(scale);
         DrawUpNextCard(scale);
     }
@@ -545,6 +546,11 @@ internal sealed partial class AetherStreamApp
         Squircle.Stroke(drawList, hero.Min, hero.Max, rounding, ImGui.GetColorU32(ui.Palette.CardStroke), 1f);
         drawList.PushClipRect(hero.Min, hero.Max, true);
         VideoStageOverlay.DrawReactions(drawList, hero, watchAlong.Reactions, scale);
+        if (configuration.VideoDanmaku)
+        {
+            VideoStageOverlay.DrawDanmaku(drawList, hero, watchAlong.Danmaku, configuration.VideoDanmakuLanes, scale);
+        }
+
         drawList.PopClipRect();
         DrawHeroOverlay(drawList, hero, scale);
         EndBlock();

@@ -13,6 +13,15 @@ internal enum PlayStart : byte
     Failed,
 }
 
+internal static class DroppedStream
+{
+    internal const double EndGuardSeconds = 10.0;
+
+    internal static bool EndedEarly(string? url, double positionSeconds, double durationSeconds) =>
+        url is not null && url.StartsWith("http", StringComparison.OrdinalIgnoreCase)
+        && positionSeconds < durationSeconds - EndGuardSeconds;
+}
+
 internal sealed class VideoEngine : IDisposable
 {
     internal const int ScreenWidth = 1920;
@@ -92,6 +101,8 @@ internal sealed class VideoEngine : IDisposable
     private double lastObservedPosition;
     private double lastObservedAudioPosition;
     private bool audioPositionSeen;
+    private double playedSeconds;
+    private double playedDurationSeconds;
     private volatile bool standby;
     private bool holdScreen;
     private bool placementEdited;
@@ -135,6 +146,7 @@ internal sealed class VideoEngine : IDisposable
     internal bool IsActive => active;
     internal bool IsStandby => standby;
     internal bool IsLoading => Volatile.Read(ref activeLoads) > 0;
+    internal bool IsRestarting => recoveryNotice is not null;
     internal string? LastError { get; private set; }
     internal string? RecoveryNotice => recoveryNotice
         ?? (active && renderer is { PlaysWithoutSound: true } ? Loc.T(L.AetherStream.PlayingWithoutSound) : null);
@@ -212,6 +224,9 @@ internal sealed class VideoEngine : IDisposable
                 }
 
                 lastObservedPosition = startSeconds;
+                playedSeconds = startSeconds;
+                playedDurationSeconds = 0d;
+
                 stallProgressAtTicks = Environment.TickCount64;
                 framesProgressAtTicks = stallProgressAtTicks;
                 audioProgressAtTicks = stallProgressAtTicks;
@@ -326,6 +341,11 @@ internal sealed class VideoEngine : IDisposable
 
     private void OnFileEnded(PlaybackEnding ending)
     {
+        if (ending.Reason == MpvEndReason.Finished && RestartIfStreamDropped())
+        {
+            return;
+        }
+
         var detail = ending.Detail;
         if (ending.Reason == MpvEndReason.Failed)
         {
@@ -356,6 +376,36 @@ internal sealed class VideoEngine : IDisposable
         PlaybackEnded?.Invoke(ending with { Detail = detail });
     }
 
+    private bool RestartIfStreamDropped()
+    {
+        var resumeSeconds = playedSeconds;
+        var durationSeconds = playedDurationSeconds;
+        if (IsLoading || renderer?.CurrentUrl is not { } droppedUrl
+            || !DroppedStream.EndedEarly(droppedUrl, resumeSeconds, durationSeconds))
+        {
+            return false;
+        }
+
+        if (!TryBeginRecovery(droppedUrl))
+        {
+            AepLog.Warning(
+                $"[Video] The stream ended at {resumeSeconds:F1}s of {durationSeconds:F1}s, but the player cannot restart it now (the restart budget for this link is spent, or a restart is running or ran moments ago); treating it as finished.");
+            return false;
+        }
+
+        AepLog.Warning($"[Video] The stream ended at {resumeSeconds:F1}s of {durationSeconds:F1}s; restarting the player there.");
+        if (RefusedStreamUrl() is not null)
+        {
+            recoveryNotice = Loc.T(L.AetherStream.ResolverRecovering);
+            _ = RecoverResolverAsync(droppedUrl, resumeSeconds);
+            return true;
+        }
+
+        recoveryNotice = Loc.T(L.AetherStream.StreamStalledRecovering);
+        _ = RestartStalledAsync(droppedUrl, resumeSeconds);
+        return true;
+    }
+
     private static string FailureText(string? detail) => detail is { Length: > 0 }
         ? string.Format(Loc.T(L.AetherStream.PlaybackFailedReason), detail)
         : Loc.T(L.AetherStream.PlaybackFailed);
@@ -368,6 +418,12 @@ internal sealed class VideoEngine : IDisposable
         {
             ResetStallTrackers(info, frameVersion, now);
             return;
+        }
+
+        if (info.DurationSeconds > 0d)
+        {
+            playedSeconds = info.PositionSeconds;
+            playedDurationSeconds = info.DurationSeconds;
         }
 
         if (Math.Abs(info.PositionSeconds - lastObservedPosition) > StallPositionTolerance)
@@ -717,7 +773,11 @@ internal sealed class VideoEngine : IDisposable
 
     internal void Pause(bool paused) => renderer?.Pause(paused);
 
-    internal void Seek(double seconds) => renderer?.Seek(seconds);
+    internal void Seek(double seconds)
+    {
+        playedSeconds = seconds;
+        renderer?.Seek(seconds);
+    }
 
     internal void SetSpeed(double speed) => renderer?.SetSpeed(speed);
 

@@ -17,6 +17,7 @@ public sealed class PartyRelayLoopbackTests
     private const int MaskBytes = 4;
     private const int LongestShortPayload = 125;
     private const int ReactionTaps = 20;
+    private const int DanmakuSends = 12;
     internal static readonly TimeSpan Patience = TimeSpan.FromSeconds(10);
     private static readonly TimeSpan ReconnectWindow = TimeSpan.FromSeconds(5.5);
     private const string RateLimitedRefusal =
@@ -206,6 +207,32 @@ public sealed class PartyRelayLoopbackTests
         Assert.Equal(expectedBytes, server.ReceivedBytes);
     }
 
+    [Fact]
+    public async Task DanmakuBeyondTheBudgetNeverLeavesTheClient()
+    {
+        using var server = new LoopbackRelayServer();
+        using var router = CreateRouter(server.Url);
+        Assert.True(router.BeginRelay(null));
+        Assert.True(await LoopbackRelayServer.WaitUntilAsync(() => router.RelayConnected, Patience));
+        var line = new CallControl { Type = SignalType.StreamDanmaku, Text = "hello" };
+        var payload = JsonSerializer.SerializeToUtf8Bytes(line, TelephonyJsonContext.Default.CallControl);
+
+        var accepted = 0;
+        for (var index = 0; index < DanmakuSends; index++)
+        {
+            if (router.Send(line))
+            {
+                accepted++;
+            }
+        }
+
+        var expectedBytes = accepted * MaskedFrameBytes(payload.Length);
+        Assert.Equal(CallSignalRouter.DanmakuBurst, accepted);
+        Assert.True(await LoopbackRelayServer.WaitUntilAsync(() => server.ReceivedBytes >= expectedBytes, Patience));
+        await Task.Delay(TimeSpan.FromMilliseconds(300));
+        Assert.Equal(expectedBytes, server.ReceivedBytes);
+    }
+
     [Theory]
     [InlineData(true)]
     [InlineData(false)]
@@ -218,13 +245,14 @@ public sealed class PartyRelayLoopbackTests
         Assert.True(await LoopbackRelayServer.WaitUntilAsync(() => router.RelayConnected, Patience));
 
         stream.PublishState(new StreamPublication("https://video.test/a", 1, false, 132, 73, false, discoverable,
-            false, 0, null, null, null));
+            false, 0, false, null, null, null));
 
         Assert.True(await LoopbackRelayServer.WaitUntilAsync(() => server.ReceivedTexts.Length > 0, Patience));
         using var sent = JsonDocument.Parse(server.ReceivedTexts[0]);
         Assert.Equal("stream.state", sent.RootElement.GetProperty("type").GetString());
         Assert.Equal(discoverable, sent.RootElement.GetProperty("discoverable").GetBoolean());
         Assert.Equal(discoverable, sent.RootElement.GetProperty("nearbyOptIn").GetBoolean());
+        Assert.False(sent.RootElement.GetProperty("danmakuEnabled").GetBoolean());
     }
 
     private static long MaskedFrameBytes(int payloadLength)

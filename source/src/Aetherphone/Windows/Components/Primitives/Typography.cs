@@ -173,6 +173,14 @@ internal static partial class Typography
         }
     }
 
+    public static float FontHeight(in TextStyle style)
+    {
+        using (Plugin.Fonts.Push(style.Scale, style.Weight))
+        {
+            return ImGui.GetFontSize();
+        }
+    }
+
     public static Vector2 MeasureWrappedBlock(string text, in TextStyle style, float maxWidth)
     {
         using (Plugin.Fonts.Push(style.Scale, style.Weight))

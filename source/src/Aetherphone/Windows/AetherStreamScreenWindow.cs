@@ -168,6 +168,12 @@ internal sealed class AetherStreamScreenWindow : Window
         drawList.PushClipRect(area.Min, area.Max, true);
         VideoStageOverlay.DrawBubbles(drawList, layout.Frame, suite.ChatFeed, scale);
         VideoStageOverlay.DrawReactions(drawList, layout.Frame, suite.WatchAlong.Reactions, scale);
+        if (Plugin.Cfg.VideoDanmaku)
+        {
+            VideoStageOverlay.DrawDanmaku(drawList, layout.Frame, suite.WatchAlong.Danmaku,
+                Plugin.Cfg.VideoDanmakuLanes, scale);
+        }
+
         drawList.PopClipRect();
         if (fullscreen)
         {

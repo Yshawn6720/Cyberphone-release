@@ -9,12 +9,16 @@ internal sealed class CallSignalRouter : IDisposable
     // Below the relay's reaction bucket (6 at once, then 1 a second), so network jitter never gets a reaction dropped.
     internal const int ReactionBurst = 4;
     internal const long ReactionRefillMilliseconds = 1000;
+    // Below the relay's danmaku bucket (4 at once, then 1 every 1.5 seconds), for the same reason.
+    internal const int DanmakuBurst = 3;
+    internal const long DanmakuRefillMilliseconds = 1750;
 
     private readonly RealtimeConnection connection;
     private readonly RealtimeConnection relayConnection;
     private readonly PartyRelay relay;
     private readonly RealtimeSignalBus signals;
     private readonly SendBudget reactionBudget = new(ReactionBurst, ReactionRefillMilliseconds);
+    private readonly SendBudget danmakuBudget = new(DanmakuBurst, DanmakuRefillMilliseconds);
 
     public CallSignalRouter(AethernetSession session, RealtimeSignalBus signals, PartyRelay relay)
     {
@@ -70,6 +74,11 @@ internal sealed class CallSignalRouter : IDisposable
             return false;
         }
 
+        if (control.Type == SignalType.StreamDanmaku && !danmakuBudget.TryTake(Environment.TickCount64))
+        {
+            return false;
+        }
+
         _ = relayConnection.SendControlAsync(control);
         return true;
     }
@@ -105,8 +114,8 @@ internal sealed class CallSignalRouter : IDisposable
     private static bool IsRelayUplink(string type) => type is SignalType.StreamState or SignalType.StreamJoin
         or SignalType.StreamLeave or SignalType.StreamControl or SignalType.StreamTransfer
         or SignalType.StreamApprove or SignalType.StreamDeny or SignalType.StreamKick or SignalType.StreamReact
-        or SignalType.StreamQueueSuggest or SignalType.StreamQueueApprove or SignalType.StreamQueueDeny
-        or SignalType.StreamPlaybackFailed;
+        or SignalType.StreamDanmaku or SignalType.StreamQueueSuggest or SignalType.StreamQueueApprove
+        or SignalType.StreamQueueDeny or SignalType.StreamPlaybackFailed;
 
     private void OnConnected(bool isConnected)
     {

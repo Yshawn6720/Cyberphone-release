@@ -60,7 +60,7 @@ internal static class PartyPermissions
 }
 
 internal readonly record struct PartyPolicy(bool ApprovalRequired, bool Discoverable, bool CodeEnabled,
-    int GuestPermissions)
+    int GuestPermissions, bool DanmakuEnabled)
 {
     internal const int GuestMask = StreamPermission.AddToQueue | StreamPermission.ControlPlayback;
 
@@ -76,7 +76,8 @@ internal readonly record struct PartyPolicy(bool ApprovalRequired, bool Discover
         configuration.VideoStreamDiscoverable,
         configuration.VideoPartyCodeEnabled,
         (configuration.VideoPartyGuestsCanAdd ? StreamPermission.AddToQueue : 0)
-        | (configuration.VideoPartyGuestsCanControl ? StreamPermission.ControlPlayback : 0));
+        | (configuration.VideoPartyGuestsCanControl ? StreamPermission.ControlPlayback : 0),
+        configuration.VideoPartyDanmakuEnabled);
 
     internal void Store(Configuration configuration)
     {
@@ -85,6 +86,7 @@ internal readonly record struct PartyPolicy(bool ApprovalRequired, bool Discover
         configuration.VideoPartyCodeEnabled = CodeEnabled;
         configuration.VideoPartyGuestsCanAdd = GuestsCanAdd;
         configuration.VideoPartyGuestsCanControl = GuestsCanControl;
+        configuration.VideoPartyDanmakuEnabled = DanmakuEnabled;
         configuration.Save();
     }
 }
@@ -115,6 +117,13 @@ internal static class PartyFollow
         double hostPositionSeconds) =>
         string.Equals(roomUrl, viewingUrl, StringComparison.Ordinal)
         && (viewerDurationSeconds <= 0d || hostPositionSeconds < viewerDurationSeconds - EndGuardSeconds);
+}
+
+internal static class PartyHostPosition
+{
+    internal static double Report(string url, string? publishedUrl, bool restarting, double position,
+        double expectedPosition) =>
+        restarting && string.Equals(url, publishedUrl, StringComparison.Ordinal) ? expectedPosition : position;
 }
 
 internal static class MediaInput

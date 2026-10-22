@@ -238,6 +238,19 @@ internal sealed class LiveChatTranscript
         return (submitted || sendTapped) && ready;
     }
 
+    public static void DrawComposerLock(AppSkin ui, ImDrawListPtr drawList, Rect field, string text,
+        RadioFittedText fit, float scale)
+    {
+        SearchBar.Surface(drawList, field, ui.Ink);
+        var glyphCenter = new Vector2(field.Min.X + Metrics.Space.Lg * scale, field.Center.Y);
+        AppSkin.Icon(drawList, glyphCenter, IconGlyph.Of(FontAwesomeIcon.Lock), ui.MutedInk, 0.7f);
+        var textLeft = glyphCenter.X + Metrics.Space.Md * scale;
+        var fitted = fit.Fit(text, field.Max.X - Metrics.Space.Md * scale - textLeft, TextStyles.Footnote);
+        var size = Typography.Measure(fitted, TextStyles.Footnote);
+        Typography.Draw(drawList, new Vector2(textLeft, field.Center.Y - size.Y * 0.5f), fitted, ui.MutedInk,
+            TextStyles.Footnote);
+    }
+
     private static void DrawCounter(AppSkin ui, ImDrawListPtr drawList, Rect field, int length, int maxLength,
         RadioCountLabel counter, float scale)
     {

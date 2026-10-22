@@ -117,7 +117,7 @@ internal sealed partial class AetherStreamApp
     }
 
     private readonly string[] nudgeStepLabels = new string[3];
-    private readonly TextCache[] sliderValueTexts = new TextCache[6];
+    private readonly TextCache[] sliderValueTexts = new TextCache[7];
     private readonly PanRail presetRail = new();
     private TextCache volumeHereText;
     private Spring stageZoom = new(MinStageView);
@@ -155,6 +155,7 @@ internal sealed partial class AetherStreamApp
             DrawPlacementMemory(engine, live, scale);
             DrawFollowHost(scale);
             DrawChatCard(scale);
+            DrawDanmakuCard(scale);
             DrawSoundCard(engine, live, scale);
             Gap(Metrics.Space.Lg);
         }
@@ -994,6 +995,36 @@ internal sealed partial class AetherStreamApp
             configuration.VideoChatBubbles = bubblesOn;
             configuration.VideoChatBubbleChannels = channels;
             configuration.Save();
+        }
+    }
+
+    private void DrawDanmakuCard(float scale)
+    {
+        Gap(Metrics.Space.Md);
+        var shown = configuration.VideoDanmaku;
+        var shownNext = FeatureCard("aetherstream.danmaku", FontAwesomeIcon.Comments,
+            Loc.T(L.AetherStream.DanmakuShow), Loc.T(L.AetherStream.DanmakuShowHint), shown,
+            shown ? StudioRowHeight * scale : 0f, out var body);
+        var lanes = (float)configuration.VideoDanmakuLanes;
+        var lanesChanged = shown && StudioSlider(body, 6, "aetherstream.screen.danmakuLanes",
+            Loc.T(L.AetherStream.DanmakuLanes), ref lanes, PartyDanmaku.MinimumLanes, PartyDanmaku.MaximumLanes, "{0}",
+            1f, PartyDanmaku.DefaultLanes, scale);
+        EndBlock();
+        if (shownNext != shown)
+        {
+            configuration.VideoDanmaku = shownNext;
+            configuration.Save();
+            if (!shownNext)
+            {
+                watchAlong.Danmaku.Clear();
+            }
+        }
+
+        var rounded = (int)MathF.Round(lanes);
+        if (lanesChanged && rounded != configuration.VideoDanmakuLanes)
+        {
+            configuration.VideoDanmakuLanes = rounded;
+            SaveSoon();
         }
     }
 

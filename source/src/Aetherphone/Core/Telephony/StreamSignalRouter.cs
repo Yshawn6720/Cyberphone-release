@@ -15,6 +15,7 @@ internal readonly record struct StreamPublication(
     bool Discoverable,
     bool CodeEnabled,
     int GuestPermissions,
+    bool DanmakuEnabled,
     StreamMember[]? Members,
     StreamQueueEntry[]? UpcomingQueue,
     StreamScreenPose? Screen);
@@ -54,6 +55,7 @@ internal sealed class StreamSignalRouter : IDisposable
     public event Action<CallControl>? HostChanged;
     public event Action<CallControl>? ControlRequested;
     public event Action<CallControl>? Reacted;
+    public event Action<CallControl>? DanmakuReceived;
 
     public event Action<bool>? ConnectedChanged;
     public event Action<RelayFailure>? RelayFailed;
@@ -91,6 +93,7 @@ internal sealed class StreamSignalRouter : IDisposable
             NearbyOptIn = publication.Discoverable,
             CodeEnabled = publication.CodeEnabled,
             GuestPermissions = publication.GuestPermissions,
+            DanmakuEnabled = publication.DanmakuEnabled,
             Members = publication.Members,
             Features = StreamFeature.Party,
             UpcomingQueue = publication.UpcomingQueue,
@@ -163,6 +166,11 @@ internal sealed class StreamSignalRouter : IDisposable
         return calls.Send(new CallControl { Type = SignalType.StreamReact, Reaction = reaction });
     }
 
+    public bool SendDanmaku(string text)
+    {
+        return calls.Send(new CallControl { Type = SignalType.StreamDanmaku, Text = text });
+    }
+
     public void RequestNearby(uint territoryId, uint worldId)
     {
         calls.Send(new CallControl { Type = SignalType.StreamNearby, TerritoryId = territoryId, WorldId = worldId });
@@ -228,6 +236,9 @@ internal sealed class StreamSignalRouter : IDisposable
                 return;
             case SignalType.StreamReaction:
                 Reacted?.Invoke(message);
+                return;
+            case SignalType.StreamDanmakuLine:
+                DanmakuReceived?.Invoke(message);
                 return;
         }
     }

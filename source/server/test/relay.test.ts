@@ -12,8 +12,10 @@ import type { PartyRoom } from "../src/room";
 import {
   CODE_ALPHABET,
   CloseCode,
+  DANMAKU_RATE,
   DROP_LIMIT,
   HOST_RATE,
+  MAX_DANMAKU_CHARS,
   MAX_MEMBERS,
   MAX_MESSAGE_BYTES,
   MAX_PENDING_SUGGESTIONS,
@@ -143,7 +145,7 @@ describe("watch party", () => {
     const echo = await host.next("stream.state");
 
     expect(echo.code).toMatch(/^[A-Z0-9]{6}$/);
-    expect(echo.features).toBe(1);
+    expect(echo.features).toBe(3);
     expect(echo.hostId).toBe("Host@伊弗利特");
     expect(typeof echo.stateAtUnixMs).toBe("number");
     expect(echo.participants).toEqual([expect.objectContaining({ userId: "Host@伊弗利特", slot: 0 })]);
@@ -165,7 +167,7 @@ describe("watch party", () => {
       expect.objectContaining({ userId: "Host@伊弗利特", slot: 0 }),
       expect.objectContaining({ userId: "Guest@伊弗利特", slot: 1, displayName: "Guest" }),
     ]);
-    expect(joined).toMatchObject({ hostId: "Host@伊弗利特", code, features: 1, url: "https://video.test/a", positionSeconds: 9, guestPermissions: 2 });
+    expect(joined).toMatchObject({ hostId: "Host@伊弗利特", code, features: 3, url: "https://video.test/a", positionSeconds: 9, guestPermissions: 2 });
     expect(typeof joined.stateAtUnixMs).toBe("number");
     expect(echo.members).toEqual([{ userId: "Guest@伊弗利特", flags: 4 }]);
     expect(state).toMatchObject({ url: "https://video.test/b", paused: true, hostId: "Host@伊弗利特" });
@@ -299,7 +301,7 @@ describe("watch party", () => {
 
     host.send({ type: "stream.transfer", userId: "Guest@伊弗利特" });
     await host.next("stream.roster");
-    host.send({ type: "stream.state", url: "https://video.test/a", positionSeconds: 30, paused: false });
+    host.send({ type: "stream.state", url: "https://video.test/a", positionSeconds: 30, paused: false, danmakuEnabled: false });
     const toOld = await host.next("stream.hostChanged");
     const toNew = await viewer.next("stream.hostChanged");
     viewer.send({ type: "stream.state", url: "https://video.test/a", positionSeconds: 31, paused: false });
@@ -309,6 +311,7 @@ describe("watch party", () => {
     const left = await viewer.next("stream.left");
 
     expect(toOld).toMatchObject({ hostId: "Guest@伊弗利特", userId: "Host@伊弗利特", url: "https://video.test/a", positionSeconds: 30, code });
+    expect(toNew.danmakuEnabled).toBe(false);
     expect(toNew.participants).toEqual([
       expect.objectContaining({ userId: "Guest@伊弗利特", slot: 0 }),
       expect.objectContaining({ userId: "Host@伊弗利特", slot: 1 }),
@@ -751,6 +754,122 @@ describe("reactions", () => {
 
     expect(await sender.closed()).toBe(CloseCode.rate);
     expect((await host.next("stream.left")).userId).toBe("Sender@伊弗利特");
+  });
+});
+
+describe("danmaku", () => {
+  it("forwards a cleaned line to everyone else with the sender stamped by the relay", async () => {
+    const { host, code } = await openRoom();
+    const sender = await joinRoom(host, code, "Sender");
+    const other = await joinRoom(host, code, "Other");
+    sender.inbox.length = 0;
+
+    sender.send({ type: "stream.danmaku", text: "\u200b\ud800", userId: "Host@伊弗利特" });
+    sender.send({ type: "stream.danmaku", text: "  hi\u202e th\u0007ere\ue040\u200b ", userId: "Host@伊弗利特" });
+    const atHost = await host.next("stream.danmakuLine");
+    const atOther = await other.next("stream.danmakuLine");
+
+    expect(atHost).toEqual({ type: "stream.danmakuLine", text: "hi there", userId: "Sender@伊弗利特" });
+    expect(atOther).toEqual(atHost);
+    expect(host.inbox.filter((message) => message.type === "stream.danmakuLine")).toHaveLength(0);
+    expect(sender.inbox.some((message) => message.type === "stream.danmakuLine")).toBe(false);
+  });
+
+  it("cuts a line to the character cap counting surrogate pairs as one", async () => {
+    const { host, code } = await openRoom();
+    const sender = await joinRoom(host, code, "Sender");
+
+    sender.send({ type: "stream.danmaku", text: "\u{1F600}".repeat(MAX_DANMAKU_CHARS + 5) });
+    const line = await host.next("stream.danmakuLine");
+
+    expect(Array.from(line.text as string)).toHaveLength(MAX_DANMAKU_CHARS);
+  });
+
+  it("passes on the screen a line was sent from and nothing it does not know", async () => {
+    const { host, code } = await openRoom();
+    const sender = await joinRoom(host, code, "Sender");
+
+    sender.send({ type: "stream.danmaku", text: "on b", screen: "b" });
+    sender.send({ type: "stream.danmaku", text: "on c", screen: "c" });
+    const named = await host.next("stream.danmakuLine");
+    const unnamed = await host.next("stream.danmakuLine");
+
+    expect(named).toEqual({ type: "stream.danmakuLine", text: "on b", userId: "Sender@伊弗利特", screen: "b" });
+    expect(unnamed).toEqual({ type: "stream.danmakuLine", text: "on c", userId: "Sender@伊弗利特" });
+  });
+
+  it("drops lines while the host has danmaku off and forwards again once it is back on", async () => {
+    const { host, code } = await openRoom();
+    const sender = await joinRoom(host, code, "Sender");
+    host.send({ type: "stream.state", url: "https://video.test/a", positionSeconds: 3, paused: false, danmakuEnabled: false });
+    const off = await sender.next("stream.state");
+
+    sender.send({ type: "stream.danmaku", text: "muted" });
+    sender.send({ type: "stream.control", action: "pause" });
+    await host.next("stream.controlRequest");
+    host.send({ type: "stream.state", url: "https://video.test/a", positionSeconds: 4, paused: false, danmakuEnabled: true });
+    await sender.next("stream.state");
+    sender.send({ type: "stream.danmaku", text: "back" });
+    const line = await host.next("stream.danmakuLine");
+
+    expect(off.danmakuEnabled).toBe(false);
+    expect(line.text).toBe("back");
+    expect(host.inbox.some((message) => message.type === "stream.danmakuLine" && message.text === "muted")).toBe(false);
+  });
+
+  it("keeps the room setting when a host state leaves the flag out and tells a newcomer about it", async () => {
+    const { host, code } = await openRoom();
+    host.send({ type: "stream.state", url: "https://video.test/a", positionSeconds: 3, paused: false, danmakuEnabled: false });
+    const off = await host.next("stream.state");
+    const late = await connect(`code=${code}&${identity("Late")}`);
+    late.send({ type: "stream.join", code, features: 1 });
+    await host.next("stream.roster");
+    host.send({ type: "stream.state", url: "https://video.test/a", positionSeconds: 4, paused: false });
+    const echo = await host.next("stream.state");
+    const joined = await late.next("stream.joined");
+
+    expect(off.danmakuEnabled).toBe(false);
+    expect(echo.danmakuEnabled).toBe(false);
+    expect(joined.danmakuEnabled).toBe(false);
+  });
+
+  it("starts a room with danmaku allowed", async () => {
+    const host = await connect(`create=1&${identity("Host")}`);
+    host.send({ type: "stream.state", url: "https://video.test/a", positionSeconds: 1, paused: false });
+    const echo = await host.next("stream.state");
+
+    expect(echo.danmakuEnabled).toBe(true);
+  });
+
+  it("spends its own budget so a flood never starves playback control", async () => {
+    const { host, code } = await openRoom();
+    const sender = await joinRoom(host, code, "Sender");
+    host.inbox.length = 0;
+
+    for (let index = 0; index < 12; index++) {
+      sender.send({ type: "stream.danmaku", text: `line ${index}` });
+    }
+
+    for (let index = 1; index < VIEWER_RATE.capacity; index++) {
+      sender.send({ type: "stream.control", action: "pause" });
+      await host.next("stream.controlRequest");
+    }
+
+    const forwarded = host.inbox.filter((message) => message.type === "stream.danmakuLine").length;
+    expect(forwarded).toBeGreaterThanOrEqual(DANMAKU_RATE.capacity);
+    expect(forwarded).toBeLessThanOrEqual(DANMAKU_RATE.capacity + 1);
+    expect(sender.closeCode).toBeNull();
+  });
+
+  it("closes a member that keeps flooding lines past the drop limit", async () => {
+    const { host, code } = await openRoom();
+    const sender = await joinRoom(host, code, "Sender");
+
+    for (let index = 0; index < DANMAKU_RATE.capacity + DROP_LIMIT + 2; index++) {
+      sender.send({ type: "stream.danmaku", text: "spam" });
+    }
+
+    expect(await sender.closed()).toBe(CloseCode.rate);
   });
 });
 

@@ -160,6 +160,31 @@ Modifications (AGPL-3.0 section 5(a)), first made 2026-10-21:
               mpv does when a download drops, reopens the host's link at the
               host's position while the host still plays it, instead of
               staying stopped until the viewer leaves and rejoins.
+- 2026-10-23  When a link's download drops more than 10 seconds before the
+              video's end, which mpv reports as the end of the file, MogCast
+              restarts the link where it stopped, on the stall watchdog's
+              restart budget, instead of counting the video as finished and
+              moving the queue (and a watch party) on to the next video.
+- 2026-10-23  The relay watch party forwards danmaku: a member's
+              stream.danmaku line is cleaned of control, format and
+              private-use characters, cut to 60 code points and sent on as
+              stream.danmakuLine with the sender's id stamped by the relay, on
+              its own rate bucket. The host's state can switch danmaku off for
+              the room, the relay keeps no copy of any line, and features
+              gains bit 2 so older plugins and relays keep working.
+- 2026-10-23  Watch party members can send danmaku from a composer under the
+              reaction bar. Lines are cleaned again on arrival,
+              scroll right to left across the top of the video on the world
+              screen, the full screen window and the phone player, in 1 to 5
+              rows (3 by default), with the sender's name in front and an
+              outline on your own. Each player can turn danmaku off or hide one
+              member for the party, the host can turn it off for the room, and
+              the composer only appears when the relay reports the feature.
+- 2026-10-23  While a watch party host's player restarts a link after a
+              stall, a refused stream or a dropped download, the host keeps
+              publishing the position it projected for that link until the
+              link loads again, instead of the restarting player's position 0,
+              which sent the viewers back to the start of the video.
 
 Corresponding source: the Git repository above, at the commit whose version
 matches the build. Upstream's original README is kept in

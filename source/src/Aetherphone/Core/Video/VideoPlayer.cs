@@ -22,6 +22,7 @@ internal sealed class VideoPlayer : IDisposable
     private readonly VideoEngine engine;
     private readonly ConcurrentQueue<PlaybackEnding> pendingEndings = new();
     private volatile bool pendingLoaded;
+    private bool restartingWhenRead;
     private int startGeneration;
 
     internal VideoPlayer(VideoEngine engine)
@@ -47,6 +48,8 @@ internal sealed class VideoPlayer : IDisposable
         or VideoPlaybackState.Paused;
 
     internal bool Unpaused => HasMedia && !Progress.Paused;
+
+    internal bool IsRestarting => HasMedia && restartingWhenRead;
 
     internal bool HardwareDecoding
     {
@@ -171,9 +174,11 @@ internal sealed class VideoPlayer : IDisposable
         if (!HasMedia)
         {
             Progress = default;
+            restartingWhenRead = false;
             return;
         }
 
+        restartingWhenRead = engine.IsRestarting;
         var info = engine.ReadPlaybackInfo();
         Progress = new PlaybackProgress((float)info.PositionSeconds, (float)info.DurationSeconds, info.Paused,
             info.Seeking);

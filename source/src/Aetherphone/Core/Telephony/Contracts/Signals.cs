@@ -119,6 +119,8 @@ internal static class SignalType
     public const string StreamControlRequest = "stream.controlRequest";
     public const string StreamReact = "stream.react";
     public const string StreamReaction = "stream.reaction";
+    public const string StreamDanmaku = "stream.danmaku";
+    public const string StreamDanmakuLine = "stream.danmakuLine";
 
     public const string RadioPrefix = "radio.";
     public const string RadioAttach = "radio.attach";
@@ -195,6 +197,7 @@ internal static class StreamPermission
 internal static class StreamFeature
 {
     public const int Party = 1;
+    public const int Danmaku = 2;
 }
 
 internal static class StreamControlAction
@@ -288,6 +291,9 @@ internal sealed record CallControl
     public StreamQueueEntry[]? UpcomingQueue { get; init; }
 
     public bool? ApprovalRequired { get; init; }
+
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public bool? DanmakuEnabled { get; init; }
 
     public string? SuggestionId { get; init; }
 

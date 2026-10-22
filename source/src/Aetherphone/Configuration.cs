@@ -300,12 +300,15 @@ internal sealed class Configuration : IPluginConfiguration, IHomeConfiguration, 
     public bool VideoFollowHostScreen { get; set; } = true;
     public bool VideoChatBubbles { get; set; } = true;
     public int VideoChatBubbleChannels { get; set; } = Core.Video.ScreenChatChannels.Default;
+    public bool VideoDanmaku { get; set; } = true;
+    public int VideoDanmakuLanes { get; set; } = Core.Video.PartyDanmaku.DefaultLanes;
     public bool VideoSpatialAudio { get; set; }
     public float VideoSpatialRange { get; set; } = Core.Video.SpatialVolume.DefaultRange;
     public bool VideoMuteInBackground { get; set; }
     public bool VideoPartyGuestsCanAdd { get; set; }
     public bool VideoPartyGuestsCanControl { get; set; }
     public bool VideoPartyCodeEnabled { get; set; }
+    public bool VideoPartyDanmakuEnabled { get; set; } = true;
     public string PartyRelayUrl { get; set; } = string.Empty;
     public string PartyRelayInvite { get; set; } = string.Empty;
     public List<ScreenPositionPreset> ScreenPresets { get; set; } = new();

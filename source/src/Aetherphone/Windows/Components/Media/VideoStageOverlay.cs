@@ -22,11 +22,96 @@ internal static class VideoStageOverlay
     private const float ReactionMaxSize = 46f;
     private const float ReactionRise = 0.72f;
     private const float ReactionFadeStart = 0.7f;
+    private const float DanmakuInset = 6f;
+    private const float DanmakuOwnPad = 3f;
+    private const float DanmakuOwnRadius = 6f;
+    private const float DanmakuOwnStroke = 1.5f;
+    private const float DanmakuShadowOffset = 1f;
 
     private static readonly TextStyle SenderStyle = TextStyles.FootnoteEmphasized;
     private static readonly TextStyle LineStyle = TextStyles.Footnote;
     private static readonly Vector4 SenderInk = new(1f, 0.84f, 0.45f, 1f);
     private static readonly Vector4 LineInk = new(1f, 1f, 1f, 1f);
+    private static readonly TextStyle DanmakuMeasureStyle = TextStyles.Headline;
+    private static readonly TextStyle[] DanmakuStyles =
+    [
+        TextStyles.Title3, TextStyles.Headline, TextStyles.SubheadlineEmphasized, TextStyles.FootnoteEmphasized,
+        TextStyles.Caption1, TextStyles.Caption2,
+    ];
+    private static readonly DanmakuMeasure MeasureDanmaku = MeasureInFontHeights;
+    private static readonly Vector4 DanmakuNameInk = new(0.78f, 0.84f, 0.92f, 0.9f);
+    private static readonly Vector4 DanmakuInk = new(1f, 1f, 1f, 1f);
+    private static readonly Vector4 DanmakuShadowInk = new(0f, 0f, 0f, 0.75f);
+    private static readonly Vector4 DanmakuOwnInk = new(1f, 1f, 1f, 0.85f);
+
+    public static void DrawDanmaku(ImDrawListPtr drawList, Rect stage, PartyDanmaku danmaku, int lanes, float scale)
+    {
+        if (stage.Width < MinimumStageWidth * scale)
+        {
+            return;
+        }
+
+        var now = Environment.TickCount64;
+        danmaku.Release(now, lanes, MeasureDanmaku);
+        var laneHeight = MathF.Min(stage.Height, stage.Width * 9f / 16f) / PartyDanmaku.LanesPerScreenHeight;
+        if (!TryPickDanmakuStyle(laneHeight * PartyDanmaku.TextShareOfLane, out var style, out var fontHeight))
+        {
+            return;
+        }
+
+        var top = stage.Min.Y + DanmakuInset * scale;
+        var shadow = new Vector2(DanmakuShadowOffset * scale);
+        var pad = DanmakuOwnPad * scale;
+        var active = danmaku.Active;
+        drawList.PushClipRect(stage.Min, stage.Max, true);
+        for (var index = 0; index < active.Length; index++)
+        {
+            ref readonly var line = ref active[index];
+            if (!PartyDanmaku.TryProgress(line, now, out var progress))
+            {
+                continue;
+            }
+
+            var width = line.Width * fontHeight;
+            var left = stage.Max.X - progress * (stage.Width + width);
+            var y = top + line.Lane * laneHeight + (laneHeight - fontHeight) * 0.5f;
+            var namePosition = new Vector2(left, y);
+            var textPosition = new Vector2(left + (line.NameWidth + PartyDanmaku.NameGap) * fontHeight, y);
+            if (line.Own)
+            {
+                Squircle.Stroke(drawList, new Vector2(left - pad, y - pad),
+                    new Vector2(left + width + pad, y + fontHeight + pad), DanmakuOwnRadius * scale,
+                    ImGui.GetColorU32(DanmakuOwnInk), DanmakuOwnStroke * scale);
+            }
+
+            Typography.Draw(drawList, namePosition + shadow, line.Name, DanmakuShadowInk, style);
+            Typography.Draw(drawList, namePosition, line.Name, DanmakuNameInk, style);
+            Typography.Draw(drawList, textPosition + shadow, line.Text, DanmakuShadowInk, style);
+            Typography.Draw(drawList, textPosition, line.Text, DanmakuInk, style);
+        }
+
+        drawList.PopClipRect();
+    }
+
+    private static bool TryPickDanmakuStyle(float roomHeight, out TextStyle style, out float fontHeight)
+    {
+        for (var index = 0; index < DanmakuStyles.Length; index++)
+        {
+            fontHeight = Typography.FontHeight(DanmakuStyles[index]);
+            if (fontHeight <= roomHeight)
+            {
+                style = DanmakuStyles[index];
+                return true;
+            }
+        }
+
+        style = default;
+        fontHeight = 0f;
+        return false;
+    }
+
+    private static float MeasureInFontHeights(string text) =>
+        Typography.Measure(text, DanmakuMeasureStyle).X / Typography.FontHeight(DanmakuMeasureStyle);
 
     public static void DrawReactions(ImDrawListPtr drawList, Rect stage, PartyReactions reactions, float scale)
     {

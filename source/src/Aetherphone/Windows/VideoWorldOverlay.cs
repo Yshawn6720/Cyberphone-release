@@ -75,6 +75,11 @@ internal sealed class VideoWorldOverlay
             }
 
             VideoStageOverlay.DrawReactions(drawList, stage, suite.WatchAlong.Reactions, scale);
+            if (configuration.VideoDanmaku)
+            {
+                VideoStageOverlay.DrawDanmaku(drawList, stage, suite.WatchAlong.Danmaku,
+                    configuration.VideoDanmakuLanes, scale);
+            }
         }
 
         if (suite.PlacingScreen)

@@ -102,6 +102,31 @@ public sealed class WatchPartyRulesTests
         Assert.True(PartyFollow.ShouldReopen(url, url, 0d, 3600d));
     }
 
+    [Fact]
+    public void AHostRestartingItsPlayerKeepsReportingWhereTheVideoWas()
+    {
+        const string url = "https://youtu.be/abc";
+
+        Assert.Equal(1026d, PartyHostPosition.Report(url, url, restarting: true, 0d, 1026d));
+    }
+
+    [Fact]
+    public void AHostSeekOutsideARestartReportsTheNewPosition()
+    {
+        const string url = "https://youtu.be/abc";
+
+        Assert.Equal(0d, PartyHostPosition.Report(url, url, restarting: false, 0d, 1026d));
+        Assert.Equal(1500d, PartyHostPosition.Report(url, url, restarting: false, 1500d, 1026d));
+    }
+
+    [Fact]
+    public void AHostOnAnotherLinkReportsItsOwnPositionEvenWhileRestarting()
+    {
+        Assert.Equal(0d, PartyHostPosition.Report("https://youtu.be/next", "https://youtu.be/abc", restarting: true,
+            0d, 1026d));
+        Assert.Equal(0d, PartyHostPosition.Report("https://youtu.be/abc", null, restarting: true, 0d, 1026d));
+    }
+
     [Theory]
     [InlineData("\"C:\\Videos\\show.mkv\"", "C:\\Videos\\show.mkv")]
     [InlineData("  'D:\\clip.mp4'  ", "D:\\clip.mp4")]
@@ -377,6 +402,7 @@ public sealed class WatchPartyRulesTests
             VideoPartyCodeEnabled = true,
             VideoPartyGuestsCanAdd = true,
             VideoPartyGuestsCanControl = false,
+            VideoPartyDanmakuEnabled = false,
         };
 
         var policy = PartyPolicy.From(configuration);
@@ -386,6 +412,8 @@ public sealed class WatchPartyRulesTests
         Assert.True(policy.CodeEnabled);
         Assert.True(policy.GuestsCanAdd);
         Assert.False(policy.GuestsCanControl);
+        Assert.False(policy.DanmakuEnabled);
+        Assert.True(PartyPolicy.From(new Configuration()).DanmakuEnabled);
 
         var widened = policy.WithGuestPermission(StreamPermission.ControlPlayback, true);
         Assert.True(widened.GuestsCanControl);
@@ -404,5 +432,199 @@ public sealed class WatchPartyRulesTests
 
         Assert.Equal("Playlist 4",
             library.NextPlaylistName("Playlist {0}", System.Globalization.CultureInfo.InvariantCulture));
+    }
+
+    [Fact]
+    public void ADanmakuLineLosesInvisibleCharactersAndStaysWithinSixtyCharacters()
+    {
+        Assert.Equal("hi there", PartyDanmaku.Clean("\uFEFF  hi\u202E th\u0007ere\uE040\u200B "));
+        Assert.Equal("ok", PartyDanmaku.Clean("o\uDB80\uDC00k\uD800"));
+        Assert.Equal(string.Empty, PartyDanmaku.Clean("\u200B\uFEFF\uE040"));
+        Assert.Equal(string.Empty, PartyDanmaku.Clean(null));
+
+        var cut = PartyDanmaku.Clean(string.Concat(Enumerable.Repeat("\U0001F600", PartyDanmaku.MaxTextLength + 5)));
+        Assert.Equal(PartyDanmaku.MaxTextLength, cut.EnumerateRunes().Count());
+    }
+
+    [Theory]
+    [InlineData(StreamFeature.Party, true, false)]
+    [InlineData(StreamFeature.Party | StreamFeature.Danmaku, true, true)]
+    [InlineData(StreamFeature.Party | StreamFeature.Danmaku, false, false)]
+    [InlineData(0, true, false)]
+    public void DanmakuIsOfferedOnlyWhenTheRelayCarriesItAndTheHostAllowsIt(int features, bool roomEnabled,
+        bool expected)
+    {
+        Assert.Equal(expected, PartyDanmaku.CanSend(features, roomEnabled));
+    }
+
+    [Fact]
+    public void EachDanmakuLineTakesTheTopmostFreeLaneAndTheRestWait()
+    {
+        var danmaku = new PartyDanmaku();
+        for (var index = 0; index < 4; index++)
+        {
+            danmaku.Enqueue("User" + index, "Name", "line " + index, false);
+        }
+
+        danmaku.Release(1_000, 3, MeasureByLength);
+
+        Assert.Equal([0, 1, 2], LanesOf(danmaku));
+        Assert.Equal(1, danmaku.WaitingCount);
+
+        danmaku.Release(1_001, 3, MeasureByLength);
+        Assert.Equal(1, danmaku.WaitingCount);
+
+        danmaku.Release(1_000 + PartyDanmaku.TravelMilliseconds / 2, 3, MeasureByLength);
+        Assert.Equal(0, danmaku.WaitingCount);
+        Assert.Equal([0, 0, 1, 2], LanesOf(danmaku));
+    }
+
+    [Fact]
+    public void ALongFastLineWaitsUntilItCannotCatchTheShortLineAheadOfIt()
+    {
+        var danmaku = new PartyDanmaku();
+        danmaku.Enqueue("Short", "N", "a", false);
+        danmaku.Enqueue("Long", "N", new string('x', 40), false);
+
+        danmaku.Release(1_000, 1, MeasureByLength);
+        danmaku.Release(1_000 + PartyDanmaku.TravelMilliseconds * 3 / 10, 1, MeasureByLength);
+        Assert.Equal(1, danmaku.WaitingCount);
+
+        danmaku.Release(1_000 + PartyDanmaku.TravelMilliseconds * 6 / 10, 1, MeasureByLength);
+        Assert.Equal(0, danmaku.WaitingCount);
+    }
+
+    [Fact]
+    public void TheScreenHoldsFourLinesALaneAndTheQueueDropsItsOldestPastThirty()
+    {
+        var danmaku = new PartyDanmaku();
+        for (var index = 0; index < PartyDanmaku.WaitingCapacity + 5; index++)
+        {
+            danmaku.Enqueue("User", "N", "line " + index, false);
+        }
+
+        Assert.Equal(PartyDanmaku.WaitingCapacity, danmaku.WaitingCount);
+        for (var now = 1_000L; now < 1_000 + PartyDanmaku.TravelMilliseconds * 3 / 4; now += 100)
+        {
+            danmaku.Release(now, 1, MeasureNarrow);
+        }
+
+        Assert.Equal(PartyDanmaku.LinesPerLane, LanesOf(danmaku).Length);
+        Assert.Equal(PartyDanmaku.WaitingCapacity - PartyDanmaku.LinesPerLane, danmaku.WaitingCount);
+        Assert.Equal("line 5", FirstStarted(danmaku).Text);
+    }
+
+    [Fact]
+    public void HidingSomeoneClearsTheirLinesOnScreenAndInTheQueue()
+    {
+        var danmaku = new PartyDanmaku();
+        danmaku.Enqueue("Loud", "Loud", "one", false);
+        danmaku.Enqueue("Calm", "Calm", "two", false);
+        danmaku.Release(1_000, 1, MeasureByLength);
+        danmaku.Enqueue("Loud", "Loud", "three", false);
+
+        danmaku.Hide("Loud");
+
+        Assert.Equal(1, danmaku.WaitingCount);
+        danmaku.Release(1_000 + PartyDanmaku.TravelMilliseconds / 2, 1, MeasureByLength);
+        foreach (var line in danmaku.Active)
+        {
+            if (line.StartedAtTicks != 0)
+            {
+                Assert.Equal("Calm", line.UserId);
+            }
+        }
+    }
+
+    [Fact]
+    public void HidingSomeoneAfterTheQueueWrapsKeepsEveryoneElseInOrder()
+    {
+        var danmaku = new PartyDanmaku();
+        for (var index = 0; index < PartyDanmaku.WaitingCapacity + 5; index++)
+        {
+            danmaku.Enqueue(index % 2 == 0 ? "Calm" : "Loud", "N", "line " + index, false);
+        }
+
+        danmaku.Hide("Loud");
+        danmaku.Enqueue("Calm", "N", "after", false);
+
+        Assert.Equal(16, danmaku.WaitingCount);
+        for (var now = 1_000L; now < 4_000; now += 100)
+        {
+            danmaku.Release(now, PartyDanmaku.MaximumLanes, MeasureNarrow);
+        }
+
+        Assert.Equal(0, danmaku.WaitingCount);
+        var started = new List<DanmakuLine>();
+        foreach (var line in danmaku.Active)
+        {
+            if (line.StartedAtTicks != 0)
+            {
+                started.Add(line);
+            }
+        }
+
+        started.Sort((left, right) => left.StartedAtTicks != right.StartedAtTicks
+            ? left.StartedAtTicks.CompareTo(right.StartedAtTicks)
+            : left.Lane.CompareTo(right.Lane));
+        var texts = new List<string>();
+        foreach (var line in started)
+        {
+            Assert.Equal("Calm", line.UserId);
+            texts.Add(line.Text);
+        }
+
+        Assert.Equal(["line 6", "line 8", "line 10", "line 12", "line 14", "line 16", "line 18", "line 20", "line 22",
+            "line 24", "line 26", "line 28", "line 30", "line 32", "line 34", "after"], texts);
+    }
+
+    [Fact]
+    public void ADanmakuLineCrossesTheScreenInItsTravelTimeAndThenIsGone()
+    {
+        var danmaku = new PartyDanmaku();
+        danmaku.Enqueue("User", "N", "hello", true);
+        danmaku.Release(1_000, 3, MeasureByLength);
+        var line = FirstStarted(danmaku);
+
+        Assert.True(line.Own);
+        Assert.True(PartyDanmaku.TryProgress(line, 1_000 + PartyDanmaku.TravelMilliseconds / 2, out var progress));
+        Assert.Equal(0.5f, progress, 3);
+        Assert.False(PartyDanmaku.TryProgress(line, 1_000 + PartyDanmaku.TravelMilliseconds, out _));
+
+        danmaku.Release(1_000 + PartyDanmaku.TravelMilliseconds, 3, MeasureByLength);
+        Assert.Empty(LanesOf(danmaku));
+    }
+
+    private static float MeasureByLength(string text) => text.Length * 0.5f;
+
+    private static float MeasureNarrow(string text) => 0.1f;
+
+    private static int[] LanesOf(PartyDanmaku danmaku)
+    {
+        var lanes = new List<int>();
+        foreach (var line in danmaku.Active)
+        {
+            if (line.StartedAtTicks != 0)
+            {
+                lanes.Add(line.Lane);
+            }
+        }
+
+        lanes.Sort();
+        return [.. lanes];
+    }
+
+    private static DanmakuLine FirstStarted(PartyDanmaku danmaku)
+    {
+        var first = default(DanmakuLine);
+        foreach (var line in danmaku.Active)
+        {
+            if (line.StartedAtTicks != 0 && (first.StartedAtTicks == 0 || line.StartedAtTicks < first.StartedAtTicks))
+            {
+                first = line;
+            }
+        }
+
+        return first;
     }
 }

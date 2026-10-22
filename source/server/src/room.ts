@@ -5,10 +5,13 @@ import {
   ALONE_TIMEOUT_MS,
   CONTROL_ACTIONS,
   CloseCode,
+  DANMAKU_RATE,
   DECLINE_DENIED,
+  FEATURE_DANMAKU,
   FEATURE_PARTY,
   HOST_RATE,
   MAX_ADMITTED,
+  MAX_DANMAKU_CHARS,
   MAX_FAILURE_REASON,
   MAX_MEMBERS,
   MAX_MESSAGE_BYTES,
@@ -102,6 +105,7 @@ interface RoomState {
   pendingTransfer: string | null;
   nextSequence: number;
   approvalRequired: boolean;
+  danmakuEnabled: boolean;
   admitted: string[];
   nearby: NearbySpot | null;
 }
@@ -119,6 +123,7 @@ interface Member {
   sequence: number;
   bucket: Bucket;
   reactions: Bucket;
+  danmaku: Bucket;
   suggestions: string[];
   room: RoomState | null;
 }
@@ -225,6 +230,23 @@ function suggestionUrl(value: unknown): string | null {
   return protocol === "https:" || protocol === "http:" ? value : null;
 }
 
+// Control and format characters (zero width, bidi marks, BOM), lone surrogates and the game's private-use glyphs would
+// draw as blanks or boxes (or fail to decode), so a line made only of them is no line at all.
+const DANMAKU_STRIPPED = /[\p{Cc}\p{Cf}\p{Co}\p{Cs}]/gu;
+
+function danmakuText(value: unknown): string | null {
+  if (typeof value !== "string") {
+    return null;
+  }
+
+  const characters = Array.from(value.replace(DANMAKU_STRIPPED, "").trim());
+  if (characters.length === 0) {
+    return null;
+  }
+
+  return characters.slice(0, MAX_DANMAKU_CHARS).join("");
+}
+
 // The host's state decides discovery: true keeps (or mints) the nearby code, false drops the listing, and a state
 // without the flag keeps a listing that already exists. A state without a location keeps the last one reported.
 // discoverable counts only beside nearbyOptIn: 1.3.4.0 and earlier send discoverable: true by default and hide the
@@ -280,6 +302,7 @@ export class PartyRoom extends DurableObject<Env> {
         pendingTransfer: null,
         nextSequence: 1,
         approvalRequired: false,
+        danmakuEnabled: true,
         admitted: [],
         nearby: null,
       };
@@ -340,7 +363,9 @@ export class PartyRoom extends DurableObject<Env> {
     const now = Date.now();
     const verdict = message?.type === SignalType.react
       ? charge(member.reactions, REACTION_RATE, now)
-      : charge(member.bucket, member.role === "host" ? HOST_RATE : VIEWER_RATE, now);
+      : message?.type === SignalType.danmaku
+        ? charge(member.danmaku, DANMAKU_RATE, now)
+        : charge(member.bucket, member.role === "host" ? HOST_RATE : VIEWER_RATE, now);
     socket.serializeAttachment(member);
     if (verdict === "close") {
       socket.close(CloseCode.rate, "rate limited");
@@ -380,6 +405,9 @@ export class PartyRoom extends DurableObject<Env> {
         return;
       case SignalType.react:
         this.onReact(socket, member, message);
+        return;
+      case SignalType.danmaku:
+        this.onDanmaku(socket, member, message);
         return;
       case SignalType.queueSuggest:
         this.onQueueSuggest(socket, member, message);
@@ -476,6 +504,7 @@ export class PartyRoom extends DurableObject<Env> {
       sequence,
       bucket: freshBucket(rate, now),
       reactions: freshBucket(REACTION_RATE, now),
+      danmaku: freshBucket(DANMAKU_RATE, now),
       suggestions: [],
       room,
     };
@@ -533,7 +562,7 @@ export class PartyRoom extends DurableObject<Env> {
       type: SignalType.roster,
       hostId: host.id,
       code: room.code,
-      features: FEATURE_PARTY,
+      features: FEATURE_PARTY | FEATURE_DANMAKU,
       participants: this.roster(connections),
       members: this.members(room, connections),
       guestPermissions,
@@ -551,7 +580,8 @@ export class PartyRoom extends DurableObject<Env> {
     state.upcomingQueue = sharedQueue(message.upcomingQueue);
     state.hostId = host.id;
     state.code = room.code;
-    state.features = FEATURE_PARTY;
+    state.features = FEATURE_PARTY | FEATURE_DANMAKU;
+    state.danmakuEnabled = room.danmakuEnabled;
     state.stateAtUnixMs = Date.now();
     state.members = this.members(room, connections);
     state.participants = this.roster(connections);
@@ -569,6 +599,10 @@ export class PartyRoom extends DurableObject<Env> {
     room.grants = readGrants(message.members);
     if (typeof message.approvalRequired === "boolean") {
       room.approvalRequired = message.approvalRequired;
+    }
+
+    if (typeof message.danmakuEnabled === "boolean") {
+      room.danmakuEnabled = message.danmakuEnabled;
     }
 
     room.nearby = nearbySpot(room, message);
@@ -724,6 +758,31 @@ export class PartyRoom extends DurableObject<Env> {
 
     const forwarded = { type: SignalType.reaction, reaction, userId: member.id };
     for (const connection of this.connections(socket)) {
+      if (connection.member.joined) {
+        send(connection.socket, forwarded);
+      }
+    }
+  }
+
+  private onDanmaku(socket: WebSocket, member: Member, message: Message): void {
+    const text = danmakuText(message.text);
+    if (!member.joined || text === null) {
+      return;
+    }
+
+    const connections = this.connections(socket);
+    const room = member.room ?? connections.find((connection) => connection.member.role === "host")?.member.room ?? null;
+    if (room === null || room.danmakuEnabled === false) {
+      return;
+    }
+
+    // A line names the screen its sender watches ("a" or "b") so two video screens can place it without a relay update.
+    const forwarded: Message = { type: SignalType.danmakuLine, text, userId: member.id };
+    if (message.screen === "a" || message.screen === "b") {
+      forwarded.screen = message.screen;
+    }
+
+    for (const connection of connections) {
       if (connection.member.joined) {
         send(connection.socket, forwarded);
       }

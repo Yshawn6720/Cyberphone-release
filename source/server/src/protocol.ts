@@ -9,6 +9,7 @@ export const MAX_MESSAGE_BYTES = 64 * 1024;
 export const ROOM_LIFETIME_MS = 6 * 60 * 60 * 1000;
 export const ALONE_TIMEOUT_MS = 30 * 60 * 1000;
 export const FEATURE_PARTY = 1;
+export const FEATURE_DANMAKU = 2;
 export const PERMISSION_GRANT_MASK = 1 | 2;
 export const PERMISSION_CAN_HOST = 4;
 export const MAX_SHARED_QUEUE = 64;
@@ -25,6 +26,8 @@ export const VIEWER_RATE: RateProfile = { capacity: 10, refillMs: 10000 };
 // Reactions draw on their own bucket so a burst of them never starves join, leave or control messages. The plugin
 // sends at most 4 at once and then 1 a second; the extra headroom here only absorbs network jitter.
 export const REACTION_RATE: RateProfile = { capacity: 6, refillMs: 1000 };
+// Danmaku lines draw on their own bucket too. The plugin sends at most 3 at once and then 1 every 1.75 seconds.
+export const DANMAKU_RATE: RateProfile = { capacity: 4, refillMs: 1500 };
 // Game moves are human paced (one in flight per player, resyncs at most every 2 s); a burst of 20 and 2 a second
 // sustained covers a fast Connect Four exchange plus reconnect handshakes, while a flooding client gets dropped.
 export const GAME_RATE: RateProfile = { capacity: 20, refillMs: 500 };
@@ -94,6 +97,8 @@ export const SignalType = {
   kicked: "stream.kicked",
   react: "stream.react",
   reaction: "stream.reaction",
+  danmaku: "stream.danmaku",
+  danmakuLine: "stream.danmakuLine",
   queueSuggest: "stream.queueSuggest",
   queueSuggestion: "stream.queueSuggestion",
   queueApprove: "stream.queueApprove",
@@ -111,6 +116,7 @@ export const MAX_ADMITTED = 8;
 export const MAX_PENDING_SUGGESTIONS = 8;
 export const MAX_SUGGESTION_URL = 2048;
 export const MAX_FAILURE_REASON = 200;
+export const MAX_DANMAKU_CHARS = 60;
 
 export const JamSignal = {
   start: "jam.start",

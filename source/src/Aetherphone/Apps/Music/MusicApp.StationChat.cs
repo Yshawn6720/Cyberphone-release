@@ -257,8 +257,10 @@ internal sealed partial class MusicApp
 
         if (lockState != RadioComposerLock.None)
         {
-            DrawComposerLock(drawList, new Rect(new Vector2(fieldLeft, bar.Min.Y + ComposerFieldInsetY * scale),
-                new Vector2(bar.Max.X - inset, bar.Max.Y - ComposerFieldInsetY * scale)), lockState, scale);
+            LiveChatTranscript.DrawComposerLock(ui, drawList,
+                new Rect(new Vector2(fieldLeft, bar.Min.Y + ComposerFieldInsetY * scale),
+                    new Vector2(bar.Max.X - inset, bar.Max.Y - ComposerFieldInsetY * scale)),
+                LockText(lockState), composerLockFit, scale);
             DrawReactionTray(bar, reactCenter, overReactionToggle, scale);
             return;
         }
@@ -273,19 +275,6 @@ internal sealed partial class MusicApp
             StationTranscript.RequestJump();
             UiFeedback.Play(UiSound.MessageSent);
         }
-    }
-
-    private void DrawComposerLock(ImDrawListPtr drawList, Rect field, RadioComposerLock lockState, float scale)
-    {
-        SearchBar.Surface(drawList, field, ui.Ink);
-        var glyphCenter = new Vector2(field.Min.X + Metrics.Space.Lg * scale, field.Center.Y);
-        AppSkin.Icon(drawList, glyphCenter, IconGlyph.Of(FontAwesomeIcon.Lock), ui.MutedInk, 0.7f);
-        var textLeft = glyphCenter.X + Metrics.Space.Md * scale;
-        var fitted = composerLockFit.Fit(LockText(lockState), field.Max.X - Metrics.Space.Md * scale - textLeft,
-            TextStyles.Footnote);
-        var size = Typography.Measure(fitted, TextStyles.Footnote);
-        Typography.Draw(drawList, new Vector2(textLeft, field.Center.Y - size.Y * 0.5f), fitted, ui.MutedInk,
-            TextStyles.Footnote);
     }
 
     private string LockText(RadioComposerLock lockState)

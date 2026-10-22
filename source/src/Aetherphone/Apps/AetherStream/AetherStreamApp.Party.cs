@@ -25,6 +25,7 @@ internal sealed partial class AetherStreamApp
     private const int MemberActionToggleAdd = 1;
     private const int MemberActionToggleControl = 2;
     private const int MemberActionRemove = 3;
+    private const int MemberActionToggleDanmaku = 4;
 
     private string codeInput = string.Empty;
     private string joinQuery = string.Empty;
@@ -438,8 +439,9 @@ internal sealed partial class AetherStreamApp
     private void DrawMemberRow(WatchAlongParticipant member, bool hosting, float scale)
     {
         var manageable = hosting && !member.IsHost;
+        var tappable = manageable || watchAlong.CanHideDanmakuFrom(member);
         var drawList = ImGui.GetWindowDrawList();
-        var cell = FeedCell.Begin(drawList, MemberRowHeight * scale, ui.HoverWash, manageable);
+        var cell = FeedCell.Begin(drawList, MemberRowHeight * scale, ui.HoverWash, tappable);
         var row = cell.Bounds;
         var avatarRadius = 18f * scale;
         var avatarCenter = new Vector2(row.Min.X + PadX * scale + avatarRadius, row.Center.Y);
@@ -447,7 +449,7 @@ internal sealed partial class AetherStreamApp
             member.AvatarUrl, remoteImages, lodestone, 0.7f, 24);
 
         var trailing = row.Max.X - PadX * scale;
-        if (manageable)
+        if (tappable)
         {
             PhoneIcon.Draw(drawList, new Vector2(trailing - 9f * scale, row.Center.Y), PhoneIcons.Dots, Ink.FaintInk,
                 18f * scale);
@@ -500,6 +502,7 @@ internal sealed partial class AetherStreamApp
     {
         actionMember = member;
         BeginActions(SheetPurpose.Member, member.DisplayName);
+        var manageable = watchAlong.IsHosting && !member.IsHost;
         if (watchAlong.CanTransferTo(member))
         {
             AddAction(MemberActionMakeHost, Loc.T(L.AetherStream.MakeHost), PhoneIcons.Crown);
@@ -507,19 +510,29 @@ internal sealed partial class AetherStreamApp
 
         var grants = watchAlong.GrantsFor(member.UserId);
         var policy = watchAlong.Policy;
-        if (!policy.GuestsCanAdd)
+        if (manageable && !policy.GuestsCanAdd)
         {
             AddAction(MemberActionToggleAdd, Loc.T(L.AetherStream.AllowAdd),
                 selected: PartyPermissions.Allows(grants, StreamPermission.AddToQueue), checkable: true);
         }
 
-        if (watchAlong.ServerSupportsParty && !policy.GuestsCanControl)
+        if (manageable && watchAlong.ServerSupportsParty && !policy.GuestsCanControl)
         {
             AddAction(MemberActionToggleControl, Loc.T(L.AetherStream.AllowControl),
                 selected: PartyPermissions.Allows(grants, StreamPermission.ControlPlayback), checkable: true);
         }
 
-        AddAction(MemberActionRemove, Loc.T(L.AetherStream.WatchingKick), PhoneIcons.X, true);
+        if (watchAlong.CanHideDanmakuFrom(member))
+        {
+            AddAction(MemberActionToggleDanmaku, Loc.T(L.AetherStream.DanmakuHide),
+                selected: watchAlong.IsDanmakuHidden(member.UserId), checkable: true);
+        }
+
+        if (manageable)
+        {
+            AddAction(MemberActionRemove, Loc.T(L.AetherStream.WatchingKick), PhoneIcons.X, true);
+        }
+
         actions.Open();
     }
 
@@ -531,7 +544,18 @@ internal sealed partial class AetherStreamApp
         }
 
         actionMember = null;
-        if (!watchAlong.IsHosting || !InRoster(member.UserId))
+        if (!InRoster(member.UserId))
+        {
+            return;
+        }
+
+        if (code == MemberActionToggleDanmaku)
+        {
+            watchAlong.SetDanmakuHidden(member.UserId, !watchAlong.IsDanmakuHidden(member.UserId));
+            return;
+        }
+
+        if (!watchAlong.IsHosting)
         {
             return;
         }
@@ -623,8 +647,20 @@ internal sealed partial class AetherStreamApp
             }
 
             joining.End();
+            var danmakuAllowed = policy.DanmakuEnabled;
+            if (!aethernet && !watchAlong.ServerLacksDanmaku)
+            {
+                Gap(Metrics.Space.Md);
+                SettingsSection.Header(Loc.T(L.AetherStream.PartySettingsDanmaku), accentedTheme);
+                var danmaku = GroupCard.Begin(accentedTheme, 1);
+                danmakuAllowed = SettingsRow.Bool(danmaku.NextRow(), Loc.T(L.AetherStream.DanmakuAllow),
+                    danmakuAllowed, accentedTheme, hint: Loc.T(L.AetherStream.DanmakuAllowHint));
+                danmaku.End();
+            }
+
             var updated = new PartyPolicy(approval, discoverable, codeEnabled,
-                (canAdd ? StreamPermission.AddToQueue : 0) | (canControl ? StreamPermission.ControlPlayback : 0));
+                (canAdd ? StreamPermission.AddToQueue : 0) | (canControl ? StreamPermission.ControlPlayback : 0),
+                danmakuAllowed);
             if (updated != policy)
             {
                 watchAlong.SetPolicy(updated);

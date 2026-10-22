@@ -8140,6 +8140,20 @@ internal static class L
         public static readonly LocString ChatBubblesShow = new("aetherstream.chatBubblesShow", "Show chat bubbles");
         public static readonly LocString ChatBubblesHint = new("aetherstream.chatBubblesHint",
             "Messages from game chat pop up over the screen while you watch.");
+        public static readonly LocString DanmakuShow = new("aetherstream.danmakuShow", "Show scrolling comments");
+        public static readonly LocString DanmakuShowHint = new("aetherstream.danmakuShowHint",
+            "Comments your watch party sends scroll right to left across the top of the video.");
+        public static readonly LocString DanmakuLanes = new("aetherstream.danmakuLanes", "Rows");
+        public static readonly LocString PartySettingsDanmaku = new("aetherstream.partySettingsDanmaku",
+            "Scrolling comments");
+        public static readonly LocString DanmakuAllow = new("aetherstream.danmakuAllow", "Allow scrolling comments");
+        public static readonly LocString DanmakuAllowHint = new("aetherstream.danmakuAllowHint",
+            "Everyone in the party can send comments across the top of the video. Turn this off to stop them for the whole party.");
+        public static readonly LocString DanmakuComposerHint = new("aetherstream.danmakuComposerHint",
+            "Send a comment, everyone in the party sees it");
+        public static readonly LocString DanmakuOffByHost = new("aetherstream.danmakuOffByHost",
+            "The host has turned scrolling comments off");
+        public static readonly LocString DanmakuHide = new("aetherstream.danmakuHide", "Hide their comments");
         public static readonly LocString ChannelSay = new("aetherstream.channelSay", "Say");
         public static readonly LocString ChannelParty = new("aetherstream.channelParty", "Party and Alliance");
         public static readonly LocString ChannelFreeCompany = new("aetherstream.channelFreeCompany",
