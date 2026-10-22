@@ -109,6 +109,8 @@ internal sealed class WatchAlongSession : IDisposable
     private long reactedAtTicks;
     private long controlledAtTicks;
     private CallControl? lastStateMessage;
+    private double viewingDurationSeconds;
+    private bool viewerPlaybackEnded;
 
     private CallControl? pendingJoined;
     private CallControl? pendingJoinSync;
@@ -159,6 +161,7 @@ internal sealed class WatchAlongSession : IDisposable
         accountToken = session.Token;
         session.Changed += OnSessionChanged;
         queue.Changed += RequestPublish;
+        video.Finished += OnVideoFinished;
         stream.Joined += OnJoined;
         stream.Declined += OnDeclined;
         stream.RosterReceived += OnRoster;
@@ -985,6 +988,12 @@ internal sealed class WatchAlongSession : IDisposable
     {
         ReportPlaybackFailureIfNeeded();
         TickAutoReplay();
+        ReopenIfEndedEarly();
+        if (video.State is VideoPlaybackState.Playing or VideoPlaybackState.Paused && video.Progress.Duration > 0f)
+        {
+            viewingDurationSeconds = video.Progress.Duration;
+        }
+
         if (lastStateMessage is not { } message || viewingPlaybackUrl is null
             || video.State != VideoPlaybackState.Playing || (message.Paused ?? false)
             || message.PositionSeconds is not { } position || message.StateAtUnixMs is not { } stamp)
@@ -1020,6 +1029,26 @@ internal sealed class WatchAlongSession : IDisposable
         {
             video.SetSpeed(1d);
         }
+    }
+
+    private void OnVideoFinished() => viewerPlaybackEnded = Mode == WatchAlongMode.Viewing;
+
+    private void ReopenIfEndedEarly()
+    {
+        if (!viewerPlaybackEnded || video.State != VideoPlaybackState.Idle || viewingUrl is not { } url
+            || viewingPlaybackUrl is not { } playbackUrl || lastStateMessage is not { } message)
+        {
+            return;
+        }
+
+        var resumeAt = ProjectRemotePosition(message);
+        if (!PartyFollow.ShouldReopen(message.Url, url, viewingDurationSeconds, resumeAt))
+        {
+            return;
+        }
+
+        viewerPlaybackEnded = false;
+        video.Play(playbackUrl, resumeAt, !(message.Paused ?? false));
     }
 
     private void ReportPlaybackFailureIfNeeded()
@@ -1378,6 +1407,8 @@ internal sealed class WatchAlongSession : IDisposable
     private void StartViewing(string url, CallControl message)
     {
         sync.Reset();
+        viewingDurationSeconds = 0d;
+        viewerPlaybackEnded = false;
         if (LocalMediaToken.TryParse(url, out var identity))
         {
             rejectedRemoteUrl = null;
@@ -2190,6 +2221,7 @@ internal sealed class WatchAlongSession : IDisposable
     {
         session.Changed -= OnSessionChanged;
         queue.Changed -= RequestPublish;
+        video.Finished -= OnVideoFinished;
         stream.Joined -= OnJoined;
         stream.Declined -= OnDeclined;
         stream.RosterReceived -= OnRoster;

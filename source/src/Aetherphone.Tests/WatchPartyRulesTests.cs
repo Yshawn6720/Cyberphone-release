@@ -69,6 +69,39 @@ public sealed class WatchPartyRulesTests
         Assert.Equal(0f, PartyIdle.RemainingSeconds(10_000, 999_000));
     }
 
+    [Fact]
+    public void AViewerWhoseStreamEndedMidVideoReopensItWhileTheHostPlaysOn()
+    {
+        const string url = "https://youtu.be/abc";
+
+        Assert.True(PartyFollow.ShouldReopen(url, url, 1800d, 1026d));
+    }
+
+    [Fact]
+    public void AViewerWhoFinishedJustAheadOfTheHostWaitsForTheNextVideo()
+    {
+        const string url = "https://youtu.be/abc";
+
+        Assert.False(PartyFollow.ShouldReopen(url, url, 600d, 599.4d));
+        Assert.False(PartyFollow.ShouldReopen(url, url, 600d, 600d - PartyFollow.EndGuardSeconds));
+        Assert.True(PartyFollow.ShouldReopen(url, url, 600d, 600d - PartyFollow.EndGuardSeconds - 0.1d));
+    }
+
+    [Fact]
+    public void AViewerFollowsAnotherVideoThroughTheRoomStateRatherThanReopening()
+    {
+        Assert.False(PartyFollow.ShouldReopen("https://youtu.be/next", "https://youtu.be/abc", 600d, 12d));
+        Assert.False(PartyFollow.ShouldReopen(null, "https://youtu.be/abc", 600d, 12d));
+    }
+
+    [Fact]
+    public void AStreamWithoutAKnownLengthIsReopenedWhileTheHostStillShowsIt()
+    {
+        const string url = "https://youtu.be/live";
+
+        Assert.True(PartyFollow.ShouldReopen(url, url, 0d, 3600d));
+    }
+
     [Theory]
     [InlineData("\"C:\\Videos\\show.mkv\"", "C:\\Videos\\show.mkv")]
     [InlineData("  'D:\\clip.mp4'  ", "D:\\clip.mp4")]

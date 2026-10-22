@@ -107,6 +107,16 @@ internal static class PartyIdle
         idleSinceTicks != 0 && nowTicks - idleSinceTicks >= GraceMilliseconds;
 }
 
+internal static class PartyFollow
+{
+    internal const double EndGuardSeconds = 10.0;
+
+    internal static bool ShouldReopen(string? roomUrl, string viewingUrl, double viewerDurationSeconds,
+        double hostPositionSeconds) =>
+        string.Equals(roomUrl, viewingUrl, StringComparison.Ordinal)
+        && (viewerDurationSeconds <= 0d || hostPositionSeconds < viewerDurationSeconds - EndGuardSeconds);
+}
+
 internal static class MediaInput
 {
     internal static string Normalize(string? raw)

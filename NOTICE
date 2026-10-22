@@ -156,6 +156,10 @@ Modifications (AGPL-3.0 section 5(a)), first made 2026-10-21:
               unlisted. When the relay answers 404 for news, curated stations
               or the nearby list, those pages say the relay does not support
               the feature yet instead of reporting a connection failure.
+- 2026-10-23  A watch party viewer whose player ends the video early, as
+              mpv does when a download drops, reopens the host's link at the
+              host's position while the host still plays it, instead of
+              staying stopped until the viewer leaves and rejoins.
 
 Corresponding source: the Git repository above, at the commit whose version
 matches the build. Upstream's original README is kept in
