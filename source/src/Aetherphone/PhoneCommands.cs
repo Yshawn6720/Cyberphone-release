@@ -6,6 +6,7 @@ using Aetherphone.Core.Localization;
 using Aetherphone.Core.Notifications;
 using Aetherphone.Core.Shell.Spotlight;
 using Aetherphone.Core.Telephony;
+using Aetherphone.Core.Video;
 using Aetherphone.Windows;
 using Aetherphone.Windows.Components;
 using Dalamud.Game.ClientState.Objects.SubKinds;
@@ -26,16 +27,18 @@ internal sealed class PhoneCommands
     private readonly PhoneWindow phoneWindow;
     private readonly IReadOnlyList<IPhoneApp> apps;
     private readonly VideoDebugWindow videoDebugWindow;
+    private readonly WatchAlongSession watchAlong;
     private readonly IChatGui chat;
     private int sampleCounter;
 
     public PhoneCommands(PhoneServices services, PhoneWindow phoneWindow, IReadOnlyList<IPhoneApp> apps,
-        VideoDebugWindow videoDebugWindow, IChatGui chat)
+        VideoDebugWindow videoDebugWindow, WatchAlongSession watchAlong, IChatGui chat)
     {
         this.services = services;
         this.phoneWindow = phoneWindow;
         this.apps = apps;
         this.videoDebugWindow = videoDebugWindow;
+        this.watchAlong = watchAlong;
         this.chat = chat;
     }
 
@@ -98,6 +101,9 @@ internal sealed class PhoneCommands
                 break;
             case "market":
                 OpenMarket(rest);
+                break;
+            case "dm":
+                SendDanmaku(rest);
                 break;
             case "reset":
                 phoneWindow.Recenter();
@@ -467,6 +473,33 @@ internal sealed class PhoneCommands
         }
 
         phoneWindow.OpenApp(MarketAppId);
+    }
+
+    private void SendDanmaku(string text)
+    {
+        switch (watchAlong.SendDanmaku(text))
+        {
+            case DanmakuRefusal.None:
+                break;
+            case DanmakuRefusal.Empty:
+                PrintUsage(L.Plugin.DanmakuUsage);
+                break;
+            case DanmakuRefusal.NotInParty:
+                chat.Print(Loc.T(L.Plugin.DanmakuNotInParty));
+                break;
+            case DanmakuRefusal.Offline:
+                chat.Print(Loc.T(L.Plugin.DanmakuOffline));
+                break;
+            case DanmakuRefusal.Unsupported:
+                chat.Print(Loc.T(L.Plugin.DanmakuUnsupported));
+                break;
+            case DanmakuRefusal.OffByHost:
+                chat.Print(Loc.T(L.AetherStream.DanmakuOffByHost));
+                break;
+            case DanmakuRefusal.TooFast:
+                chat.Print(Loc.T(L.Plugin.DanmakuTooFast));
+                break;
+        }
     }
 
     private void SendSampleNotification()

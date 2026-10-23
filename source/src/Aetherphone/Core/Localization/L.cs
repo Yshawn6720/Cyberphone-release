@@ -2191,6 +2191,7 @@ internal static class L
         public static readonly LocString CommandToggle = new("settings.commandToggle", "Show or hide the phone");
         public static readonly LocString CommandAlias = new("settings.commandAlias", "Alias for /cyberphone");
         public static readonly LocString CommandMarket = new("settings.commandMarket", "Open the market board, optionally searching an item");
+        public static readonly LocString CommandDanmaku = new("settings.commandDanmaku", "Send a scrolling comment to your MogCast watch party");
         public static readonly LocString CommandReset = new("settings.commandReset", "Move the phone back to the center of the screen");
         public static readonly LocString CommandTest = new("settings.commandTest", "Send a sample notification");
         public static readonly LocString CommandMini = new("settings.commandMini", "Switch between the full and mini phone, or bring up the mini phone");
@@ -7743,7 +7744,7 @@ internal static class L
             "Require approval to join");
         public static readonly LocString SettingsApprovalRequiredHint = new(
             "aetherstream.settingsApprovalRequiredHint",
-            "New viewers must be approved by you before they can watch. Applies the next time you go live.");
+            "New viewers, including players who find this party under Nearby, wait for your approval before they can watch. Changes apply right away.");
         public static readonly LocString SettingsDiscoverable = new("aetherstream.settingsDiscoverable",
             "List me in this zone");
         public static readonly LocString SettingsDiscoverableHint = new(
@@ -7751,7 +7752,7 @@ internal static class L
             "Players in the same zone can find your stream under Nearby. Off keeps it to people you invite, though the screen itself stays visible.");
         public static readonly LocString SettingsDiscoverableRelayHint = new(
             "aetherstream.settingsDiscoverableRelayHint",
-            "Players in the same zone can find this party under Nearby. Tapping it sends you a join request, and they get in only after you approve. Off for every new party.");
+            "Players in the same zone can find this party under Nearby and join right away. While Require approval to join is on, they send you a join request instead. Off for every new party.");
         public static readonly LocString SettingsHardwareDecoding = new("aetherstream.settingsHardwareDecoding",
             "Hardware decoding");
         public static readonly LocString SettingsHardwareDecodingHint = new(
@@ -8191,6 +8192,36 @@ internal static class L
             "Connection code rejected");
         public static readonly LocString RelayInviteRejectedBody = new("aetherstream.relayInviteRejectedBody",
             "The party server didn't accept your connection code. Check it in MogCast Settings, or paste your friend's invite again.");
+        public static readonly LocString ScreenA = new("aetherstream.screenA", "Screen A");
+        public static readonly LocString ScreenB = new("aetherstream.screenB", "Screen B");
+        public static readonly LocString ScreenBOneVideo = new("aetherstream.screenBOneVideo",
+            "Screen B plays one video at a time. Paste a link to a single video.");
+        public static readonly LocString ScreenBFailedTitle = new("aetherstream.screenBFailedTitle",
+            "Screen B can't play this");
+        public static readonly LocString StopScreenB = new("aetherstream.stopScreenB", "Stop Screen B");
+        public static readonly LocString FailureViewersBTitle = new("aetherstream.failureViewersBTitle",
+            "{0} of {1} watching can't play Screen B");
+        public static readonly LocString FailureViewersBHint = new("aetherstream.failureViewersBHint",
+            "Stop Screen B, or play a link on it that works for everyone.");
+        public static readonly LocString HostScreenBFarAway = new("aetherstream.hostScreenBFarAway",
+            "The host's Screen B is somewhere else, so yours is placed near you.");
+        public static readonly LocString PartyScreens = new("aetherstream.partyScreens", "Screens");
+        public static readonly LocString PlayModeBoth = new("aetherstream.playModeBoth", "Both");
+        public static readonly LocString PlayModeAOnly = new("aetherstream.playModeAOnly", "A Only");
+        public static readonly LocString PlayModeBOnly = new("aetherstream.playModeBOnly", "B Only");
+        public static readonly LocString PartyPlayModeHint = new("aetherstream.partyPlayModeHint",
+            "What the party sees by default. Each member can still pick their own.");
+        public static readonly LocString WatchChoiceFollowHost = new("aetherstream.watchChoiceFollowHost",
+            "Follow Host");
+        public static readonly LocString WatchChoiceHint = new("aetherstream.watchChoiceHint",
+            "Pick which screens play for you, or follow the host's pick.");
+        public static readonly LocString ServerLacksDualVideo = new("aetherstream.serverLacksDualVideo",
+            "This party server can't share Screen B, so members only see Screen A.");
+        public static readonly LocString PlaceBesideScreenA = new("aetherstream.placeBesideScreenA",
+            "Place Beside Screen A");
+        public static readonly LocString MainScreen = new("aetherstream.mainScreen", "Main screen");
+        public static readonly LocString MainScreenHint = new("aetherstream.mainScreenHint",
+            "If sound doesn't fade with distance, you only hear the main screen. If it does, you hear each screen by how close you are.");
     }
 
     internal static class Relay
@@ -10659,6 +10690,11 @@ internal static class L
         public static readonly LocString UnknownCommand = new("plugin.unknownCommand", "Unknown command {0}. Type {1} help to see every command.");
         public static readonly LocString RunUsage = new("plugin.runUsage", "Type /cyberphone run followed by a shortcut name.");
         public static readonly LocString ShortcutNotFound = new("plugin.shortcutNotFound", "No shortcut named {0}.");
+        public static readonly LocString DanmakuUsage = new("plugin.danmakuUsage", "Type {0} dm followed by a comment.");
+        public static readonly LocString DanmakuNotInParty = new("plugin.danmakuNotInParty", "Join or host a MogCast watch party first.");
+        public static readonly LocString DanmakuOffline = new("plugin.danmakuOffline", "Not connected to the watch party right now. Try again in a moment.");
+        public static readonly LocString DanmakuUnsupported = new("plugin.danmakuUnsupported", "This watch party's server does not carry scrolling comments.");
+        public static readonly LocString DanmakuTooFast = new("plugin.danmakuTooFast", "Sending too fast. Wait a moment and try again.");
         public static readonly LocString SearchTheMarket = new("plugin.searchTheMarket", "Search the Market");
         public static readonly LocString SideButtonHint = new("plugin.sideButtonHint", "Tap to minimize · Hold to turn off");
         public static readonly LocString MinimizedHint = new("plugin.minimizedHint", "Tap to open");

@@ -5,6 +5,9 @@ namespace Aetherphone.Core.Telephony;
 internal readonly record struct StreamScreenPose(Vector3 Position, float Yaw, float Pitch, float Roll, float Scale,
     float Curve);
 
+internal readonly record struct StreamChannelState(string Url, double PositionSeconds, bool Paused,
+    StreamScreenPose? Screen);
+
 internal readonly record struct StreamPublication(
     string Url,
     double PositionSeconds,
@@ -18,7 +21,9 @@ internal readonly record struct StreamPublication(
     bool DanmakuEnabled,
     StreamMember[]? Members,
     StreamQueueEntry[]? UpcomingQueue,
-    StreamScreenPose? Screen);
+    StreamScreenPose? Screen,
+    StreamChannelState? ChannelB = null,
+    string? PlayMode = null);
 
 internal sealed class StreamSignalRouter : IDisposable
 {
@@ -72,14 +77,19 @@ internal sealed class StreamSignalRouter : IDisposable
 
     public void SetRelayCode(string code) => calls.SetRelayCode(code);
 
-    public void ReportPlaybackFailure(string url, string? reason)
+    public void ReportPlaybackFailure(string url, string? reason, string? channel = null)
     {
-        calls.Send(new CallControl { Type = SignalType.StreamPlaybackFailed, Url = url, Reason = reason });
+        calls.Send(new CallControl
+        {
+            Type = SignalType.StreamPlaybackFailed, Url = url, Reason = reason, Channel = channel,
+        });
     }
 
     public void PublishState(in StreamPublication publication)
     {
         var screen = publication.Screen;
+        var channelB = publication.ChannelB;
+        var screenB = channelB?.Screen;
         calls.Send(new CallControl
         {
             Type = SignalType.StreamState,
@@ -91,6 +101,7 @@ internal sealed class StreamSignalRouter : IDisposable
             ApprovalRequired = publication.ApprovalRequired,
             Discoverable = publication.Discoverable,
             NearbyOptIn = publication.Discoverable,
+            NearbyFollowsApproval = true,
             CodeEnabled = publication.CodeEnabled,
             GuestPermissions = publication.GuestPermissions,
             DanmakuEnabled = publication.DanmakuEnabled,
@@ -105,6 +116,18 @@ internal sealed class StreamSignalRouter : IDisposable
             ScreenPitch = screen?.Pitch,
             ScreenRoll = screen?.Roll,
             ScreenCurve = screen?.Curve,
+            UrlB = channelB?.Url,
+            PositionSecondsB = channelB?.PositionSeconds,
+            PausedB = channelB?.Paused,
+            ScreenXB = screenB?.Position.X,
+            ScreenYB = screenB?.Position.Y,
+            ScreenZB = screenB?.Position.Z,
+            ScreenYawB = screenB?.Yaw,
+            ScreenScaleB = screenB?.Scale,
+            ScreenPitchB = screenB?.Pitch,
+            ScreenRollB = screenB?.Roll,
+            ScreenCurveB = screenB?.Curve,
+            PlayMode = publication.PlayMode,
         });
     }
 
@@ -153,11 +176,11 @@ internal sealed class StreamSignalRouter : IDisposable
         calls.Send(new CallControl { Type = SignalType.StreamTransfer, UserId = userId });
     }
 
-    public void Control(string action, double? positionSeconds = null)
+    public void Control(string action, double? positionSeconds = null, string? channel = null)
     {
         calls.Send(new CallControl
         {
-            Type = SignalType.StreamControl, Action = action, PositionSeconds = positionSeconds,
+            Type = SignalType.StreamControl, Action = action, PositionSeconds = positionSeconds, Channel = channel,
         });
     }
 
@@ -166,9 +189,9 @@ internal sealed class StreamSignalRouter : IDisposable
         return calls.Send(new CallControl { Type = SignalType.StreamReact, Reaction = reaction });
     }
 
-    public bool SendDanmaku(string text)
+    public bool SendDanmaku(string text, string? screen = null)
     {
-        return calls.Send(new CallControl { Type = SignalType.StreamDanmaku, Text = text });
+        return calls.Send(new CallControl { Type = SignalType.StreamDanmaku, Text = text, Screen = screen });
     }
 
     public void RequestNearby(uint territoryId, uint worldId)

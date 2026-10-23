@@ -286,13 +286,11 @@ internal sealed class AetherStreamScreenWindow : Window
         if (result.Dragging && Math.Abs(result.Value - configuration.VideoVolume) > 0.001f)
         {
             configuration.VideoVolume = result.Value;
-            suite.Player.SetVolume((int)(result.Value * 100f));
         }
 
         if (result.Released)
         {
             configuration.VideoVolume = result.Value;
-            suite.Player.SetVolume((int)(result.Value * 100f));
             configuration.Save();
         }
     }

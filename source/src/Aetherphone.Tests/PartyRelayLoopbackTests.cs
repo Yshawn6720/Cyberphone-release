@@ -1,3 +1,4 @@
+using System.Numerics;
 using System.Text.Json;
 using Aetherphone.Core;
 using Aetherphone.Core.Aethernet;
@@ -236,7 +237,7 @@ public sealed class PartyRelayLoopbackTests
     [Theory]
     [InlineData(true)]
     [InlineData(false)]
-    public async Task TheHostStateCarriesTheNearbyOptInBesideDiscoverable(bool discoverable)
+    public async Task TheHostStateCarriesTheNearbyOptInAndSaysNearbyFollowsApproval(bool discoverable)
     {
         using var server = new LoopbackRelayServer();
         using var router = CreateRouter(server.Url);
@@ -252,7 +253,86 @@ public sealed class PartyRelayLoopbackTests
         Assert.Equal("stream.state", sent.RootElement.GetProperty("type").GetString());
         Assert.Equal(discoverable, sent.RootElement.GetProperty("discoverable").GetBoolean());
         Assert.Equal(discoverable, sent.RootElement.GetProperty("nearbyOptIn").GetBoolean());
+        Assert.True(sent.RootElement.GetProperty("nearbyFollowsApproval").GetBoolean());
         Assert.False(sent.RootElement.GetProperty("danmakuEnabled").GetBoolean());
+    }
+
+    [Fact]
+    public async Task TheHostStateCarriesScreenBAndThePlayModeBesideScreenA()
+    {
+        using var server = new LoopbackRelayServer();
+        using var router = CreateRouter(server.Url);
+        using var stream = new StreamSignalRouter(router);
+        Assert.True(router.BeginRelay(null));
+        Assert.True(await LoopbackRelayServer.WaitUntilAsync(() => router.RelayConnected, Patience));
+        var screenB = new StreamScreenPose(new Vector3(1f, 2f, 3f), 0.5f, 0.1f, 0.2f, 1.5f, 0.25f);
+
+        stream.PublishState(new StreamPublication("https://video.test/a", 1, false, 132, 73, false, false, false, 0,
+            false, null, null, null, new StreamChannelState("https://video.test/b", 42.5, true, screenB), "b"));
+
+        Assert.True(await LoopbackRelayServer.WaitUntilAsync(() => server.ReceivedTexts.Length > 0, Patience));
+        using var sent = JsonDocument.Parse(server.ReceivedTexts[0]);
+        var root = sent.RootElement;
+        Assert.Equal("https://video.test/a", root.GetProperty("url").GetString());
+        Assert.Equal("https://video.test/b", root.GetProperty("urlB").GetString());
+        Assert.Equal(42.5, root.GetProperty("positionSecondsB").GetDouble());
+        Assert.True(root.GetProperty("pausedB").GetBoolean());
+        Assert.Equal(1f, root.GetProperty("screenXB").GetSingle());
+        Assert.Equal(2f, root.GetProperty("screenYB").GetSingle());
+        Assert.Equal(3f, root.GetProperty("screenZB").GetSingle());
+        Assert.Equal(0.5f, root.GetProperty("screenYawB").GetSingle());
+        Assert.Equal(0.1f, root.GetProperty("screenPitchB").GetSingle());
+        Assert.Equal(0.2f, root.GetProperty("screenRollB").GetSingle());
+        Assert.Equal(1.5f, root.GetProperty("screenScaleB").GetSingle());
+        Assert.Equal(0.25f, root.GetProperty("screenCurveB").GetSingle());
+        Assert.Equal("b", root.GetProperty("playMode").GetString());
+    }
+
+    [Fact]
+    public async Task AStateWithoutScreenBSendsNoScreenBFields()
+    {
+        using var server = new LoopbackRelayServer();
+        using var router = CreateRouter(server.Url);
+        using var stream = new StreamSignalRouter(router);
+        Assert.True(router.BeginRelay(null));
+        Assert.True(await LoopbackRelayServer.WaitUntilAsync(() => router.RelayConnected, Patience));
+
+        stream.PublishState(new StreamPublication("https://video.test/a", 1, false, 132, 73, false, false, false, 0,
+            false, null, null, null));
+
+        Assert.True(await LoopbackRelayServer.WaitUntilAsync(() => server.ReceivedTexts.Length > 0, Patience));
+        using var sent = JsonDocument.Parse(server.ReceivedTexts[0]);
+        foreach (var property in sent.RootElement.EnumerateObject())
+        {
+            Assert.False(property.Name.EndsWith('B'), property.Name);
+            Assert.NotEqual("playMode", property.Name);
+        }
+    }
+
+    [Fact]
+    public async Task ControlsFailuresAndDanmakuForScreenBNameTheirScreen()
+    {
+        using var server = new LoopbackRelayServer();
+        using var router = CreateRouter(server.Url);
+        using var stream = new StreamSignalRouter(router);
+        Assert.True(router.BeginRelay(null));
+        Assert.True(await LoopbackRelayServer.WaitUntilAsync(() => router.RelayConnected, Patience));
+
+        stream.Control(StreamControlAction.Pause, null, "b");
+        stream.ReportPlaybackFailure("https://video.test/b", "gone", "b");
+        Assert.True(stream.SendDanmaku("hello", "b"));
+        stream.Control(StreamControlAction.Play);
+
+        Assert.True(await LoopbackRelayServer.WaitUntilAsync(() => server.ReceivedTexts.Length >= 4, Patience));
+        var texts = server.ReceivedTexts;
+        using var control = JsonDocument.Parse(texts[0]);
+        using var failure = JsonDocument.Parse(texts[1]);
+        using var danmaku = JsonDocument.Parse(texts[2]);
+        using var controlA = JsonDocument.Parse(texts[3]);
+        Assert.Equal("b", control.RootElement.GetProperty("channel").GetString());
+        Assert.Equal("b", failure.RootElement.GetProperty("channel").GetString());
+        Assert.Equal("b", danmaku.RootElement.GetProperty("screen").GetString());
+        Assert.False(controlA.RootElement.TryGetProperty("channel", out _));
     }
 
     private static long MaskedFrameBytes(int payloadLength)

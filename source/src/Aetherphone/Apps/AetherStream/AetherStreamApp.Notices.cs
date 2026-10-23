@@ -99,21 +99,12 @@ internal sealed partial class AetherStreamApp
     private void DrawFailureCard(float scale, string title, string body, bool resumeFromPosition)
     {
         var viewing = watchAlong.IsViewing;
-        var countdown = viewing ? watchAlong.AutoReplayInSeconds : 0f;
-        string? footnote = null;
-        if (countdown >= 60f)
-        {
-            footnote = retryText.Format(Loc.T(L.AetherStream.FailureRetryingInMinutes),
-                (int)MathF.Ceiling(countdown / 60f));
-        }
-        else if (countdown > 0f)
-        {
-            footnote = retryText.Format(Loc.T(L.AetherStream.FailureRetryingIn), (int)MathF.Ceiling(countdown));
-        }
+        var footnote = RetryFootnote(ref retryText, viewing ? watchAlong.AutoReplayInSeconds : 0f);
 
         var canSkip = !viewing && queue.HasNext;
-        DrawActionCard(scale, theme.Danger, title, body, footnote, Loc.T(L.AetherStream.FailureRetry),
-            canSkip ? Loc.T(L.AetherStream.FailureSkip) : null, out var retry, out var skip);
+        DrawActionCard("aetherstream.failure", scale, theme.Danger, title, body, footnote,
+            Loc.T(L.AetherStream.FailureRetry), canSkip ? Loc.T(L.AetherStream.FailureSkip) : null, out var retry,
+            out var skip);
         if (retry)
         {
             RetryPlayback(resumeFromPosition);
@@ -123,6 +114,21 @@ internal sealed partial class AetherStreamApp
         {
             queue.Advance();
         }
+    }
+
+    private static string? RetryFootnote(ref TextCache cache, float countdown)
+    {
+        if (countdown >= 60f)
+        {
+            return cache.Format(Loc.T(L.AetherStream.FailureRetryingInMinutes), (int)MathF.Ceiling(countdown / 60f));
+        }
+
+        if (countdown > 0f)
+        {
+            return cache.Format(Loc.T(L.AetherStream.FailureRetryingIn), (int)MathF.Ceiling(countdown));
+        }
+
+        return null;
     }
 
     private void RetryPlayback(bool resumeFromPosition)
@@ -150,7 +156,8 @@ internal sealed partial class AetherStreamApp
         var watchers = Math.Max(failures.Count, watchAlong.Roster.Count - 1);
         var title = viewerFailureTitle.Format(Loc.T(L.AetherStream.FailureViewersTitle), failures.Count, watchers);
         var canSkip = queue.HasNext;
-        DrawActionCard(scale, ui.Accent, title, viewerFailureNames, Loc.T(L.AetherStream.FailureViewersHint),
+        DrawActionCard("aetherstream.viewerFailures", scale, ui.Accent, title, viewerFailureNames,
+            Loc.T(L.AetherStream.FailureViewersHint),
             canSkip ? Loc.T(L.AetherStream.FailureSkip) : Loc.T(L.AetherStream.FailureDismiss),
             canSkip ? Loc.T(L.AetherStream.FailureDismiss) : null, out var primary, out var secondary);
         if (primary && canSkip)
@@ -177,7 +184,7 @@ internal sealed partial class AetherStreamApp
         return string.Join(", ", names);
     }
 
-    private void DrawActionCard(float scale, Vector4 tint, string title, string body, string? footnote,
+    private void DrawActionCard(string id, float scale, Vector4 tint, string title, string body, string? footnote,
         string primaryLabel, string? secondaryLabel, out bool primary, out bool secondary)
     {
         Gap(Metrics.Space.Md);
@@ -210,6 +217,7 @@ internal sealed partial class AetherStreamApp
 
         var buttonsTop = card.Max.Y - pad - buttonHeight;
         secondary = false;
+        ImGui.PushID(id);
         if (secondaryLabel is null)
         {
             primary = SmallButton(new Rect(new Vector2(textX, buttonsTop),
@@ -224,6 +232,7 @@ internal sealed partial class AetherStreamApp
                 new Vector2(textX + textWidth, buttonsTop + buttonHeight)), secondaryLabel, false);
         }
 
+        ImGui.PopID();
         EndBlock();
     }
 

@@ -7,8 +7,19 @@ namespace Aetherphone.Core.Video;
 
 internal delegate float DanmakuMeasure(string text);
 
-internal readonly record struct DanmakuLine(string UserId, string Name, string Text, bool Own, long StartedAtTicks,
-    int Lane, float NameWidth, float Width);
+internal readonly record struct DanmakuLine(string UserId, string Name, string Text, long StartedAtTicks, int Lane,
+    float NameWidth, float Width);
+
+internal enum DanmakuRefusal : byte
+{
+    None,
+    Empty,
+    NotInParty,
+    Offline,
+    Unsupported,
+    OffByHost,
+    TooFast,
+}
 
 internal sealed class PartyDanmaku
 {
@@ -38,6 +49,26 @@ internal sealed class PartyDanmaku
 
     internal static bool CanSend(int serverFeatures, bool roomEnabled) =>
         (serverFeatures & StreamFeature.Danmaku) != 0 && roomEnabled;
+
+    internal static DanmakuRefusal Refusal(string line, bool inParty, int serverFeatures, bool roomEnabled)
+    {
+        if (line.Length == 0)
+        {
+            return DanmakuRefusal.Empty;
+        }
+
+        if (!inParty)
+        {
+            return DanmakuRefusal.NotInParty;
+        }
+
+        if ((serverFeatures & StreamFeature.Danmaku) == 0)
+        {
+            return DanmakuRefusal.Unsupported;
+        }
+
+        return roomEnabled ? DanmakuRefusal.None : DanmakuRefusal.OffByHost;
+    }
 
     internal static string Clean(string? value)
     {
@@ -97,7 +128,7 @@ internal sealed class PartyDanmaku
         return true;
     }
 
-    internal void Enqueue(string userId, string name, string text, bool own)
+    internal void Enqueue(string userId, string name, string text)
     {
         if (WaitingCount == WaitingCapacity)
         {
@@ -106,7 +137,7 @@ internal sealed class PartyDanmaku
             WaitingCount--;
         }
 
-        waiting[(waitingStart + WaitingCount) % WaitingCapacity] = new DanmakuLine(userId, name, text, own, 0, -1, 0f, 0f);
+        waiting[(waitingStart + WaitingCount) % WaitingCapacity] = new DanmakuLine(userId, name, text, 0, -1, 0f, 0f);
         WaitingCount++;
     }
 

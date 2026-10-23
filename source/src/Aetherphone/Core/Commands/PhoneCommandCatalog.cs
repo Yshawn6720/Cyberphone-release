@@ -27,6 +27,7 @@ internal static class PhoneCommandCatalog
         new($"{Primary} call [contact]", L.Settings.CommandCall, CallsAppId),
         new($"{Primary} run [shortcut]", L.Settings.CommandRun),
         new($"{Primary} market [item]", L.Settings.CommandMarket),
+        new($"{Primary} dm [text]", L.Settings.CommandDanmaku),
         new($"{Primary} reset", L.Settings.CommandReset),
         new($"{Primary} test", L.Settings.CommandTest),
         new($"{Primary} help", L.Settings.CommandHelp),

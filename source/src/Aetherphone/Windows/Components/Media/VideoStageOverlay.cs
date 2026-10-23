@@ -23,9 +23,6 @@ internal static class VideoStageOverlay
     private const float ReactionRise = 0.72f;
     private const float ReactionFadeStart = 0.7f;
     private const float DanmakuInset = 6f;
-    private const float DanmakuOwnPad = 3f;
-    private const float DanmakuOwnRadius = 6f;
-    private const float DanmakuOwnStroke = 1.5f;
     private const float DanmakuShadowOffset = 1f;
 
     private static readonly TextStyle SenderStyle = TextStyles.FootnoteEmphasized;
@@ -42,7 +39,6 @@ internal static class VideoStageOverlay
     private static readonly Vector4 DanmakuNameInk = new(0.78f, 0.84f, 0.92f, 0.9f);
     private static readonly Vector4 DanmakuInk = new(1f, 1f, 1f, 1f);
     private static readonly Vector4 DanmakuShadowInk = new(0f, 0f, 0f, 0.75f);
-    private static readonly Vector4 DanmakuOwnInk = new(1f, 1f, 1f, 0.85f);
 
     public static void DrawDanmaku(ImDrawListPtr drawList, Rect stage, PartyDanmaku danmaku, int lanes, float scale)
     {
@@ -61,7 +57,6 @@ internal static class VideoStageOverlay
 
         var top = stage.Min.Y + DanmakuInset * scale;
         var shadow = new Vector2(DanmakuShadowOffset * scale);
-        var pad = DanmakuOwnPad * scale;
         var active = danmaku.Active;
         drawList.PushClipRect(stage.Min, stage.Max, true);
         for (var index = 0; index < active.Length; index++)
@@ -77,13 +72,6 @@ internal static class VideoStageOverlay
             var y = top + line.Lane * laneHeight + (laneHeight - fontHeight) * 0.5f;
             var namePosition = new Vector2(left, y);
             var textPosition = new Vector2(left + (line.NameWidth + PartyDanmaku.NameGap) * fontHeight, y);
-            if (line.Own)
-            {
-                Squircle.Stroke(drawList, new Vector2(left - pad, y - pad),
-                    new Vector2(left + width + pad, y + fontHeight + pad), DanmakuOwnRadius * scale,
-                    ImGui.GetColorU32(DanmakuOwnInk), DanmakuOwnStroke * scale);
-            }
-
             Typography.Draw(drawList, namePosition + shadow, line.Name, DanmakuShadowInk, style);
             Typography.Draw(drawList, namePosition, line.Name, DanmakuNameInk, style);
             Typography.Draw(drawList, textPosition + shadow, line.Text, DanmakuShadowInk, style);

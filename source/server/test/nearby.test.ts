@@ -17,11 +17,19 @@ async function nearby(kind: string, territory = TERRITORY, world = WORLD): Promi
   return await response.json() as Message;
 }
 
-async function openDiscoverableParty(name = "Host"): Promise<{ host: Peer; code: string }> {
-  const host = await connect(`create=1&${identity(name)}`);
-  host.send({ type: "stream.state", url: URL_A, positionSeconds: 1, paused: false, discoverable: true, nearbyOptIn: true, territoryId: TERRITORY, worldId: WORLD });
+async function openDiscoverableParty({ approvalRequired = false, legacy = false } = {}): Promise<{ host: Peer; code: string }> {
+  const host = await connect(`create=1&${identity("Host")}`);
+  const nearbyFollowsApproval = legacy ? {} : { nearbyFollowsApproval: true };
+  host.send({ type: "stream.state", url: URL_A, positionSeconds: 1, paused: false, discoverable: true, nearbyOptIn: true, territoryId: TERRITORY, worldId: WORLD, approvalRequired, ...nearbyFollowsApproval });
   const echo = await host.next("stream.state");
   return { host, code: echo.code as string };
+}
+
+async function knockFromList(name = "Guest"): Promise<Peer> {
+  const entry = ((await nearby("party")).nearbyStreams as Message[])[0];
+  const guest = await connect(`nearby=${entry.code}&${identity(name)}`);
+  guest.send({ type: "stream.join", code: entry.code, features: 1 });
+  return guest;
 }
 
 async function startDiscoverableJam(name = "Host"): Promise<{ host: Peer; code: string }> {
@@ -86,12 +94,28 @@ describe("nearby parties", () => {
     expect(listed.nearbyStreams).toEqual([]);
   });
 
-  it("sends a join from the list to the host for approval even with approval off, then hands over the room code", async () => {
+  it("lets a join from the list straight in when approval is off, then hands over the room code", async () => {
     const { host, code } = await openDiscoverableParty();
-    const entry = ((await nearby("party")).nearbyStreams as Message[])[0];
 
-    const guest = await connect(`nearby=${entry.code}&${identity("Guest")}`);
-    guest.send({ type: "stream.join", code: entry.code, features: 1 });
+    const guest = await knockFromList();
+    const roster = await host.next("stream.roster");
+    host.send({ type: "stream.state", url: URL_A, positionSeconds: 3, paused: false });
+    await host.next("stream.state");
+    const joined = await guest.next("stream.joined");
+
+    expect(roster.participants).toEqual([
+      expect.objectContaining({ userId: "Host@伊弗利特" }),
+      expect.objectContaining({ userId: "Guest@伊弗利特" }),
+    ]);
+    expect(joined.code).toBe(code);
+    expect(guest.inbox.some((message) => message.type === "stream.joinPending")).toBe(false);
+    expect(host.inbox.some((message) => message.type === "stream.joinRequest")).toBe(false);
+  });
+
+  it("sends a join from the list to the host for approval when approval is on, then hands over the room code", async () => {
+    const { host, code } = await openDiscoverableParty({ approvalRequired: true });
+
+    const guest = await knockFromList();
     const pending = await guest.next("stream.joinPending");
     const request = await host.next("stream.joinRequest");
     host.send({ type: "stream.approve", userId: "Guest@伊弗利特" });
@@ -103,6 +127,64 @@ describe("nearby parties", () => {
     expect(pending.hostId).toBe("Host@伊弗利特");
     expect(request.from).toMatchObject({ userId: "Guest@伊弗利特", displayName: "Guest" });
     expect(joined.code).toBe(code);
+  });
+
+  it("lets a join from the list that is waiting in once the host turns approval off", async () => {
+    const { host } = await openDiscoverableParty({ approvalRequired: true });
+    const guest = await knockFromList();
+    await guest.next("stream.joinPending");
+    await host.next("stream.joinRequest");
+
+    host.send({ type: "stream.state", url: URL_A, positionSeconds: 4, paused: false, approvalRequired: false, nearbyFollowsApproval: true });
+    const joined = await guest.next("stream.joined");
+
+    expect(joined).toMatchObject({ approvalRequired: false, positionSeconds: 4 });
+  });
+
+  it("still holds a join from the list for approval under a host that does not say nearby follows approval", async () => {
+    const { host } = await openDiscoverableParty({ legacy: true });
+
+    const guest = await knockFromList();
+    const pending = await guest.next("stream.joinPending");
+    const request = await host.next("stream.joinRequest");
+
+    expect(pending.hostId).toBe("Host@伊弗利特");
+    expect(request.userId).toBe("Guest@伊弗利特");
+  });
+
+  it("keeps a join from the list waiting when such a host turns approval off, until the host approves it", async () => {
+    const { host } = await openDiscoverableParty({ approvalRequired: true, legacy: true });
+    const guest = await knockFromList();
+    await guest.next("stream.joinPending");
+    await host.next("stream.joinRequest");
+
+    host.send({ type: "stream.state", url: URL_A, positionSeconds: 5, paused: false, approvalRequired: false });
+    await host.next("stream.state");
+    host.send({ type: "stream.approve", userId: "Guest@伊弗利特" });
+    await host.next("stream.roster");
+    host.send({ type: "stream.state", url: URL_A, positionSeconds: 6, paused: false });
+    const joined = await guest.next("stream.joined");
+
+    expect(joined.positionSeconds).toBe(6);
+  });
+
+  it("holds a join from the list for approval again once the room passes to a host that does not say nearby follows approval", async () => {
+    const { host } = await openDiscoverableParty();
+    const first = await knockFromList("First");
+    await host.next("stream.roster");
+    host.send({ type: "stream.state", url: URL_A, positionSeconds: 2, paused: false });
+    await first.next("stream.joined");
+
+    host.send({ type: "stream.transfer", userId: "First@伊弗利特" });
+    await host.next("stream.roster");
+    host.send({ type: "stream.state", url: URL_A, positionSeconds: 3, paused: false, nearbyFollowsApproval: true });
+    await first.next("stream.hostChanged");
+    const late = await knockFromList("Late");
+    const pending = await late.next("stream.joinPending");
+    const request = await first.next("stream.joinRequest");
+
+    expect(pending.hostId).toBe("First@伊弗利特");
+    expect(request.userId).toBe("Late@伊弗利特");
   });
 
   it("refuses a nearby code once discovery is off and never accepts the room code as a nearby code", async () => {

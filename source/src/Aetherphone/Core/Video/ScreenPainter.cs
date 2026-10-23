@@ -44,6 +44,10 @@ internal sealed unsafe class ScreenPainter : IDisposable
 	private bool depthViewUnavailable;
 	private readonly ScreenDrawDiagnostics diagnostics = new();
 
+	private static readonly List<ScreenPainter> painters = [];
+	private static float[] paintDistances = new float[2];
+	private static int[] paintOrder = new int[2];
+
 	private const int MaxUiRects = 64;
 
 	private const int CurveSegments = 24;
@@ -164,7 +168,11 @@ internal sealed unsafe class ScreenPainter : IDisposable
 		constantBuffer = new Buffer(DxHandler.Device, sizeof(ScreenParams), ResourceUsage.Default,
 			BindFlags.ConstantBuffer, CpuAccessFlags.None, ResourceOptionFlags.None, 0);
 
-		DxHandler.OnPresent += DrawIfReady;
+		painters.Add(this);
+		if (painters.Count == 1)
+		{
+			DxHandler.OnPresent += DrawFarToNear;
+		}
 	}
 
 	internal void SetTarget(Texture2D? texture)
@@ -196,6 +204,36 @@ internal sealed unsafe class ScreenPainter : IDisposable
 		WorldPitch = worldPitch;
 		WorldRoll = worldRoll;
 		Scale = scale;
+	}
+
+	private static void DrawFarToNear()
+	{
+		var count = painters.Count;
+		if (count == 1)
+		{
+			painters[0].DrawIfReady();
+			return;
+		}
+
+		if (paintOrder.Length < count)
+		{
+			paintDistances = new float[count];
+			paintOrder = new int[count];
+		}
+
+		var cameraManager = GameControl.CameraManager.Instance();
+		var camera = cameraManager == null ? null : cameraManager->GetActiveCamera();
+		var cameraPosition = camera == null ? Vector3.Zero : ToNumerics(camera->CameraBase.SceneCamera.Position);
+		for (var index = 0; index < count; index++)
+		{
+			paintDistances[index] = Vector3.DistanceSquared(cameraPosition, painters[index].WorldPosition);
+		}
+
+		ScreenGeometry.OrderFarToNear(paintDistances.AsSpan(0, count), paintOrder.AsSpan(0, count));
+		for (var index = 0; index < count; index++)
+		{
+			painters[paintOrder[index]].DrawIfReady();
+		}
 	}
 
 	private void DrawIfReady()
@@ -644,7 +682,10 @@ internal sealed unsafe class ScreenPainter : IDisposable
 
 	public void Dispose()
 	{
-		DxHandler.OnPresent -= DrawIfReady;
+		if (painters.Remove(this) && painters.Count == 0)
+		{
+			DxHandler.OnPresent -= DrawFarToNear;
+		}
 
 		shaderResourceView?.Dispose();
 		cachedDepthView?.Dispose();

@@ -198,6 +198,7 @@ internal static class StreamFeature
 {
     public const int Party = 1;
     public const int Danmaku = 2;
+    public const int DualVideo = 4;
 }
 
 internal static class StreamControlAction
@@ -306,6 +307,48 @@ internal sealed record CallControl
     public float? ScreenRoll { get; init; }
     public float? ScreenCurve { get; init; }
 
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? UrlB { get; init; }
+
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public double? PositionSecondsB { get; init; }
+
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public bool? PausedB { get; init; }
+
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public float? ScreenXB { get; init; }
+
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public float? ScreenYB { get; init; }
+
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public float? ScreenZB { get; init; }
+
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public float? ScreenYawB { get; init; }
+
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public float? ScreenScaleB { get; init; }
+
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public float? ScreenPitchB { get; init; }
+
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public float? ScreenRollB { get; init; }
+
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public float? ScreenCurveB { get; init; }
+
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? PlayMode { get; init; }
+
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? Channel { get; init; }
+
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? Screen { get; init; }
+
     public string? Code { get; init; }
     public bool? CodeEnabled { get; init; }
     public int? Features { get; init; }
@@ -318,6 +361,7 @@ internal sealed record CallControl
     public uint? WorldId { get; init; }
     public bool? Discoverable { get; init; }
     public bool? NearbyOptIn { get; init; }
+    public bool? NearbyFollowsApproval { get; init; }
     public NearbyStreamInfo[]? NearbyStreams { get; init; }
 
     public string? App { get; init; }

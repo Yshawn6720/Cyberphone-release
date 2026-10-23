@@ -123,6 +123,19 @@ internal sealed partial class AetherStreamApp
 
             return text;
         }
+
+        public string Pair(string first, string second)
+        {
+            if (text is null || !string.Equals(template, first, StringComparison.Ordinal)
+                || !string.Equals(argument, second, StringComparison.Ordinal))
+            {
+                template = first;
+                argument = second;
+                text = string.Concat(first, " / ", second);
+            }
+
+            return text;
+        }
     }
 
     private readonly ActionSheet actions = new();
@@ -140,6 +153,7 @@ internal sealed partial class AetherStreamApp
     private Vector2 blockSize;
     private int announcedImportStamp;
     private string? pendingLocalFile;
+    private string? pendingScreenBFile;
     private string? pendingLocateFile;
 
     private static void Gap(float pixels) => ImGui.Dummy(new Vector2(0f, pixels * UiScale.Current));
@@ -160,6 +174,27 @@ internal sealed partial class AetherStreamApp
     }
 
     private static void SectionLabel(string label) => SocialChrome.DrawSectionLabel(label, Ink, SectionStyle);
+
+    private int DrawChoiceStrip(string id, string[] labels, int selected, string hint, float scale)
+    {
+        var stripHeight = SegmentHeight * scale;
+        var hintGap = Metrics.Space.Sm * scale;
+        var width = ScrollLayout.StableContentWidth() - PadX * 2f * scale;
+        var hintHeight = hint.Length > 0
+            ? Typography.MeasureWrappedBlock(hint, TextStyles.Footnote, width).Y + hintGap
+            : 0f;
+        var block = BeginBlock(stripHeight + hintHeight);
+        var picked = SegmentStrip.Draw(id, new Rect(block.Min, new Vector2(block.Max.X, block.Min.Y + stripHeight)),
+            labels, selected, ui.Palette);
+        if (hint.Length > 0)
+        {
+            Typography.DrawWrappedLeft(new Vector2(block.Min.X, block.Min.Y + stripHeight + hintGap), hint,
+                Ink.MutedInk, TextStyles.Footnote, block.Width);
+        }
+
+        EndBlock();
+        return picked;
+    }
 
     private bool PrimaryButton(Rect rect, string label, bool enabled = true) =>
         Button.Draw(rect, label, ui.Ink, ButtonStyle.Prominent, enabled: enabled);
@@ -327,6 +362,11 @@ internal sealed partial class AetherStreamApp
         if (Interlocked.Exchange(ref pendingLocalFile, null) is { } localPath)
         {
             SubmitInput(localPath);
+        }
+
+        if (Interlocked.Exchange(ref pendingScreenBFile, null) is { } screenBPath)
+        {
+            SubmitToScreenB(screenBPath);
         }
 
         if (Interlocked.Exchange(ref pendingLocateFile, null) is { } locatedPath)

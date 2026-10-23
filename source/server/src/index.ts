@@ -250,7 +250,7 @@ function nearbyEntry(kind: RoomKind, listing: RoomListing): Record<string, unkno
 }
 
 // Lists the discoverable parties or Jams whose host stands in the asker's zone. Only the host's character name and
-// the room's nearby code leave the relay; joining with that code always waits for the host's approval.
+// the room's nearby code leave the relay; whether joining with that code waits for the host is up to the room.
 async function nearbyRooms(request: Request, env: Env, url: URL, invites: readonly string[]): Promise<Response> {
   const bearer = bearerOf(request);
   if (bearer === null || await matchingInvite(bearer, invites) === null) {

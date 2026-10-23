@@ -22,6 +22,22 @@ internal static class DroppedStream
         && positionSeconds < durationSeconds - EndGuardSeconds;
 }
 
+internal static class LoadSpacing
+{
+    internal static TimeSpan Reserve(ref DateTime nextLoad, ref DateTime reserved, DateTime now, TimeSpan spacing)
+    {
+        if (reserved > now)
+        {
+            return reserved - now;
+        }
+
+        var slot = nextLoad > now ? nextLoad : now;
+        nextLoad = slot + spacing;
+        reserved = slot;
+        return slot - now;
+    }
+}
+
 internal sealed class VideoEngine : IDisposable
 {
     internal const int ScreenWidth = 1920;
@@ -37,9 +53,10 @@ internal sealed class VideoEngine : IDisposable
 
     private const long PlacementSettleMilliseconds = 1500;
     private const long StandbyBlankMilliseconds = 750;
-    private const string StandbyRenderKey = "mpv-standby";
 
     private static readonly TimeSpan YouTubeLoadSpacing = TimeSpan.FromSeconds(3);
+    private static readonly Lock youTubeLoadLock = new();
+    private static DateTime nextYouTubeLoad = DateTime.MinValue;
 
     private const long ResolverUpdateCheckCooldownMilliseconds = 10 * 60 * 1000;
     private const long RecoveryRestartBackoffMilliseconds = 15 * 1000;
@@ -61,6 +78,7 @@ internal sealed class VideoEngine : IDisposable
     private readonly SemaphoreSlim playGate = new(1, 1);
     private readonly Texture2D screenTexture;
     private readonly Action clearScreenTexture;
+    private readonly string standbyRenderKey = DxHandler.NewRenderKey("mpv-standby");
 
     private static readonly Texture2DDescription ScreenTextureDescription = new()
     {
@@ -79,7 +97,8 @@ internal sealed class VideoEngine : IDisposable
     private MpvRenderer? renderer;
     private ShaderResourceView? screenView;
     private readonly CancellationTokenSource lifetime = new();
-    private DateTime lastYouTubeLoad = DateTime.MinValue;
+    private readonly VideoEngine? companion;
+    private DateTime reservedYouTubeLoad = DateTime.MinValue;
     private int pendingVolume = 60;
     private volatile bool active;
     private int activeLoads;
@@ -113,11 +132,10 @@ internal sealed class VideoEngine : IDisposable
     private float spatialGain = 1f;
     private int appliedVolume = -1;
 
-    internal VideoEngine()
+    internal VideoEngine(MediaDependencies dependencies, VideoEngine? companion = null)
     {
-        Dependencies = new MediaDependencies();
-        DxHandler.Initialise(Plugin.PluginInterface);
-
+        this.companion = companion;
+        Dependencies = dependencies;
         screenTexture = new Texture2D(DxHandler.Device, ScreenTextureDescription);
         clearScreenTexture = ClearScreenTexture;
         screenPainter = new ScreenPainter();
@@ -125,7 +143,7 @@ internal sealed class VideoEngine : IDisposable
         screenPresets.AddRange(Plugin.Cfg.ScreenPresets);
     }
 
-    internal MediaDependencies Dependencies { get; }
+    private MediaDependencies Dependencies { get; }
 
     internal Vector3 ScreenPosition { get; private set; }
     internal float ScreenYaw { get; private set; }
@@ -281,13 +299,17 @@ internal sealed class VideoEngine : IDisposable
             return;
         }
 
-        var elapsed = DateTime.UtcNow - lastYouTubeLoad;
-        if (elapsed < YouTubeLoadSpacing)
+        TimeSpan wait;
+        lock (youTubeLoadLock)
         {
-            await Task.Delay(YouTubeLoadSpacing - elapsed, token).ConfigureAwait(false);
+            wait = LoadSpacing.Reserve(ref nextYouTubeLoad, ref reservedYouTubeLoad, DateTime.UtcNow,
+                YouTubeLoadSpacing);
         }
 
-        lastYouTubeLoad = DateTime.UtcNow;
+        if (wait > TimeSpan.Zero)
+        {
+            await Task.Delay(wait, token).ConfigureAwait(false);
+        }
     }
 
     private MpvRenderer? EnsureRenderer()
@@ -844,21 +866,69 @@ internal sealed class VideoEngine : IDisposable
             && Uri.CheckHostName(url.Host) == UriHostNameType.Dns;
     }
 
-    private void SpawnScreenInFrontOfLocalPlayer()
+    private static bool TrySpawnPose(out ScreenPose pose)
     {
+        pose = default;
         var localPlayer = Plugin.ObjectTable.LocalPlayer;
         if (localPlayer is null)
         {
-            return;
+            return false;
         }
 
         var yaw = localPlayer.Rotation;
         var forward = Vector3.Transform(Vector3.UnitZ, Quaternion.CreateFromAxisAngle(Vector3.UnitY, yaw));
-
         var position = localPlayer.Position + forward * DefaultScreenSpawnDistance
             + new Vector3(0, DefaultScreenHeightOffset, 0);
+        pose = new ScreenPose(position, yaw + MathF.PI, 0f, 0f, 1.0f);
+        return true;
+    }
+
+    private void SpawnScreenInFrontOfLocalPlayer()
+    {
+        if (!TrySpawnPose(out var pose))
+        {
+            return;
+        }
+
+        ScreenSpawnAnchor = pose.Position;
+        ApplyScreenTransform(pose.Position, pose.Yaw, pose.Pitch, pose.Roll, pose.Scale);
+    }
+
+    internal void PlaceBesideCompanion()
+    {
+        if (companion is null)
+        {
+            return;
+        }
+
+        ScreenPose anchor;
+        if (companion.IsActive)
+        {
+            anchor = companion.ScreenPose;
+            ScreenCurve = companion.ScreenCurve;
+        }
+        else if (!TrySpawnPose(out anchor))
+        {
+            return;
+        }
+
+        var position = ScreenGeometry.Beside(anchor);
         ScreenSpawnAnchor = position;
-        ApplyScreenTransform(position, yaw + MathF.PI, 0f, 0f, 1.0f);
+        ApplyScreenTransform(position, anchor.Yaw, anchor.Pitch, anchor.Roll, anchor.Scale);
+    }
+
+    private void PlaceForNewSession()
+    {
+        if (companion is not null)
+        {
+            PlaceBesideCompanion();
+            return;
+        }
+
+        if (!TryRestorePlacement())
+        {
+            SpawnScreenInFrontOfLocalPlayer();
+        }
     }
 
     internal void RecenterScreen()
@@ -983,7 +1053,7 @@ internal sealed class VideoEngine : IDisposable
     {
         var isNewSession = !active;
         standby = false;
-        DxHandler.CancelRenderThreadWork(StandbyRenderKey);
+        DxHandler.CancelRenderThreadWork(standbyRenderKey);
         screenPainter.SetTarget(screenTexture);
         if (!isNewSession)
         {
@@ -992,10 +1062,7 @@ internal sealed class VideoEngine : IDisposable
 
         placementTerritory = Plugin.ClientState.TerritoryType;
         placementWard = Maps.LocationShare.CurrentHousing().Ward;
-        if (!TryRestorePlacement())
-        {
-            SpawnScreenInFrontOfLocalPlayer();
-        }
+        PlaceForNewSession();
     }
 
     private bool TryRestorePlacement()
@@ -1045,7 +1112,7 @@ internal sealed class VideoEngine : IDisposable
         }
 
         placementEdited = false;
-        if (!active || !Plugin.Cfg.VideoRememberPlacement || Plugin.ObjectTable.LocalPlayer is null)
+        if (companion is not null || !active || !Plugin.Cfg.VideoRememberPlacement || Plugin.ObjectTable.LocalPlayer is null)
         {
             return;
         }
@@ -1098,10 +1165,7 @@ internal sealed class VideoEngine : IDisposable
             return;
         }
 
-        if (!TryRestorePlacement())
-        {
-            SpawnScreenInFrontOfLocalPlayer();
-        }
+        PlaceForNewSession();
     }
 
     internal void OnFrameworkUpdate()
@@ -1145,7 +1209,7 @@ internal sealed class VideoEngine : IDisposable
         renderer?.SetVolume(target);
     }
 
-    private void BlankScreen() => DxHandler.RunOnRenderThread(StandbyRenderKey, clearScreenTexture);
+    private void BlankScreen() => DxHandler.RunOnRenderThread(standbyRenderKey, clearScreenTexture);
 
     private void ClearScreenTexture()
     {
@@ -1183,11 +1247,10 @@ internal sealed class VideoEngine : IDisposable
     {
         lifetime.Cancel();
         DetachRenderer();
-        DxHandler.CancelRenderThreadWork(StandbyRenderKey);
+        DxHandler.CancelRenderThreadWork(standbyRenderKey);
         screenPainter.Dispose();
         screenView?.Dispose();
         screenTexture.Dispose();
-        Dependencies.Dispose();
         playGate.Dispose();
         lifetime.Dispose();
     }

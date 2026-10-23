@@ -185,6 +185,26 @@ Modifications (AGPL-3.0 section 5(a)), first made 2026-10-21:
               publishing the position it projected for that link until the
               link loads again, instead of the restarting player's position 0,
               which sent the viewers back to the start of the video.
+- 2026-10-23  The watch party host also keeps publishing its projected
+              position for the same link while mpv has no position to report:
+              in the moment between mpv ending the file and the restart
+              starting, and while the host reloads the same link. A restart
+              that began in that moment no longer sends the viewers back to
+              the start either.
+- 2026-10-23  /cyberphone dm <text> (and /cphone dm) sends a watch party
+              danmaku line from the game's chat box through the composer's
+              path, and prints why in chat when it cannot: empty text, not in
+              a party, not connected, a relay without danmaku, the host
+              turned it off, or sending too fast. Your own lines are drawn
+              like everyone else's, without the outline.
+- 2026-10-23  A watch party join from the nearby list follows the host's
+              Require approval to join, like a join with the invite: with
+              approval off it enters at once, and turning approval off
+              mid-party lets everyone waiting in. The relay applies this only
+              while the current host's state carries nearbyFollowsApproval,
+              so hosts on 1.3.6.0 and earlier, whose settings say such a join
+              always waits, keep holding it for approval. Jam joins from the
+              nearby list still always wait.
 
 Corresponding source: the Git repository above, at the commit whose version
 matches the build. Upstream's original README is kept in

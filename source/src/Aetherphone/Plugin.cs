@@ -132,7 +132,7 @@ public sealed class Plugin : IDalamudPlugin
             Wallpapers = services.Wallpapers;
             LiveBackdrop = services.LiveBackdrop;
             videoSuite = new VideoSuite(services, Cfg, ChatGui);
-            services.SongResolver.Attach(videoSuite.Screen.Engine.Dependencies);
+            services.SongResolver.Attach(videoSuite.Screen.Dependencies);
             Framework.Update += OnVideoFrameworkUpdate;
             Framework.Update += OnDeviceLinkTick;
             Framework.Update += OnCallsTick;
@@ -152,7 +152,8 @@ public sealed class Plugin : IDalamudPlugin
             services.NameplateTitles.Bind(videoSuite.WatchAlong, () => shell.ForegroundApp, bundle.Apps);
             screenshotImport = new ScreenshotImportService(bundle.Photos, Cfg);
             phoneWindow = new PhoneWindow(shell, Cfg, screenWindow);
-            commands = new PhoneCommands(services, phoneWindow, bundle.Apps, videoDebugWindow, ChatGui);
+            commands = new PhoneCommands(services, phoneWindow, bundle.Apps, videoDebugWindow, videoSuite.WatchAlong,
+                ChatGui);
             Updates = new UpdateCheckService(services.Http, PluginInterface);
             updateChipWindow = new UpdateChipWindow(phoneWindow, Updates, services.Themes);
             huntsMapMarkersIndicatorWindow =

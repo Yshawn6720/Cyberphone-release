@@ -39,6 +39,14 @@ internal sealed class VideoWorldOverlay
     private static readonly Vector4 DoneFill = new(0.07f, 0.07f, 0.09f, 0.88f);
     private static readonly Vector4 DoneInk = new(1f, 1f, 1f, 1f);
 
+    private static readonly PlacementIds[] Placements =
+    [
+        new("##aepScreenTurn", "##aepScreenSize", "##aepScreenRight", "##aepScreenUp", "##aepScreenToward",
+            "##aepScreenDone"),
+        new("##aepScreenTurnB", "##aepScreenSizeB", "##aepScreenRightB", "##aepScreenUpB", "##aepScreenTowardB",
+            "##aepScreenDoneB"),
+    ];
+
     private readonly VideoSuite suite;
     private readonly Configuration configuration;
 
@@ -50,41 +58,69 @@ internal sealed class VideoWorldOverlay
 
     public void Draw()
     {
-        var engine = suite.Screen.Engine;
-        if (!engine.IsActive || !engine.ScreenVisible || Plugin.ObjectTable.LocalPlayer is not { } localPlayer)
+        if (Plugin.ObjectTable.LocalPlayer is not { } localPlayer)
         {
             return;
         }
 
+        var screen = suite.Screen;
+        var shared = DualVideo.WatchedScreen(suite.WatchAlong.View, configuration.VideoMainChannel);
+        if (!Shows(screen.EngineFor(shared)))
+        {
+            shared = shared == VideoChannel.B ? VideoChannel.A : VideoChannel.B;
+        }
+
+        var eye = localPlayer.Position + new Vector3(0f, ViewerEyeHeight, 0f);
+        DrawScreen(VideoChannel.A, shared == VideoChannel.A, eye);
+        DrawScreen(VideoChannel.B, shared == VideoChannel.B, eye);
+    }
+
+    private static bool Shows(VideoEngine engine) => engine.IsActive && engine.ScreenVisible;
+
+    private bool Placing(VideoChannel channel) =>
+        channel == VideoChannel.B ? suite.PlacingScreenB : suite.PlacingScreen;
+
+    private void DrawScreen(VideoChannel channel, bool shared, Vector3 eye)
+    {
+        var engine = suite.Screen.EngineFor(channel);
+        if (!Shows(engine))
+        {
+            return;
+        }
+
+        var placing = Placing(channel);
         var pose = engine.ScreenPose;
         var projected = TryProjectStage(pose, engine.ScreenCurveDepth, out var corners, out var stage);
-        if (!projected && !suite.PlacingScreen)
+        if (!projected && !placing)
         {
             return;
         }
 
         var scale = UiScale.Global;
         var drawList = ImGui.GetBackgroundDrawList();
-        var eye = localPlayer.Position + new Vector3(0f, ViewerEyeHeight, 0f);
         var facesViewer = Vector3.Dot(ScreenGeometry.Facing(pose), eye - pose.Position) > 0f;
         if (projected && facesViewer)
         {
-            if (configuration.VideoChatBubbles)
+            if (shared && configuration.VideoChatBubbles)
             {
                 VideoStageOverlay.DrawBubbles(drawList, stage, suite.ChatFeed, scale);
             }
 
-            VideoStageOverlay.DrawReactions(drawList, stage, suite.WatchAlong.Reactions, scale);
+            if (shared)
+            {
+                VideoStageOverlay.DrawReactions(drawList, stage, suite.WatchAlong.Reactions, scale);
+            }
+
             if (configuration.VideoDanmaku)
             {
-                VideoStageOverlay.DrawDanmaku(drawList, stage, suite.WatchAlong.Danmaku,
+                VideoStageOverlay.DrawDanmaku(drawList, stage, suite.WatchAlong.DanmakuFor(channel),
                     configuration.VideoDanmakuLanes, scale);
             }
         }
 
-        if (suite.PlacingScreen)
+        if (placing)
         {
-            DrawPlacement(drawList, engine, pose, projected, corners, stage, scale);
+            DrawPlacement(drawList, channel, engine, pose, projected, corners, stage, scale);
         }
     }
 
@@ -111,12 +147,13 @@ internal sealed class VideoWorldOverlay
         return true;
     }
 
-    private void DrawPlacement(ImDrawListPtr drawList, VideoEngine engine, in ScreenPose pose, bool projected,
-        in StageCorners corners, Rect stage, float scale)
+    private void DrawPlacement(ImDrawListPtr drawList, VideoChannel channel, VideoEngine engine, in ScreenPose pose,
+        bool projected, in StageCorners corners, Rect stage, float scale)
     {
+        var ids = Placements[(int)channel];
         var viewport = ImGui.GetMainViewport();
         var bounds = new Rect(viewport.Pos, viewport.Pos + viewport.Size);
-        DrawDone(drawList, projected, stage, bounds, scale);
+        DrawDone(drawList, channel, ids.Done, projected, stage, bounds, scale);
         if (projected)
         {
             var outline = ImGui.GetColorU32(OutlineInk);
@@ -128,14 +165,14 @@ internal sealed class VideoWorldOverlay
         }
 
         var pointerDelta = ImGui.GetIO().MouseDelta;
-        if (projected && DragKnob(drawList, "##aepScreenTurn", corners.TopRight, TurnInk,
+        if (projected && DragKnob(drawList, ids.Turn, corners.TopRight, TurnInk,
                 Loc.T(L.AetherStream.PlaceHandleTurn), bounds, scale))
         {
             engine.SetScreenTransform(pose.Position, pose.Yaw + pointerDelta.X * TurnPerPixel, pose.Pitch, pose.Roll,
                 pose.Scale);
         }
 
-        if (projected && DragKnob(drawList, "##aepScreenSize", corners.BottomRight, SizeInk,
+        if (projected && DragKnob(drawList, ids.Size, corners.BottomRight, SizeInk,
                 Loc.T(L.AetherStream.PlaceHandleSize), bounds, scale))
         {
             engine.SetScreenTransform(pose.Position, pose.Yaw, pose.Pitch, pose.Roll,
@@ -149,19 +186,19 @@ internal sealed class VideoWorldOverlay
 
         var arm = ArmLength * MathF.Max(1f, pose.Scale * 0.5f);
 
-        if (DragArm(drawList, "##aepScreenRight", center, pose.Position + ScreenGeometry.Right(pose) * arm, RightInk,
+        if (DragArm(drawList, ids.Right, center, pose.Position + ScreenGeometry.Right(pose) * arm, RightInk,
                 Loc.T(L.AetherStream.PlaceHandleSide), bounds, scale, out var rightTip))
         {
             engine.NudgeScreen(ScreenGeometry.AlongAxis(pointerDelta, center, rightTip, arm), 0f, 0f);
         }
 
-        if (DragArm(drawList, "##aepScreenUp", center, pose.Position + ScreenGeometry.Up(pose) * arm, UpInk,
+        if (DragArm(drawList, ids.Up, center, pose.Position + ScreenGeometry.Up(pose) * arm, UpInk,
                 Loc.T(L.AetherStream.PlaceHandleHeight), bounds, scale, out var upTip))
         {
             engine.NudgeScreen(0f, ScreenGeometry.AlongAxis(pointerDelta, center, upTip, arm), 0f);
         }
 
-        if (DragArm(drawList, "##aepScreenToward", center, pose.Position + ScreenGeometry.Facing(pose) * arm,
+        if (DragArm(drawList, ids.Toward, center, pose.Position + ScreenGeometry.Facing(pose) * arm,
                 TowardInk, Loc.T(L.AetherStream.PlaceHandleDepth), bounds, scale, out var towardTip))
         {
             engine.NudgeScreen(0f, 0f, ScreenGeometry.AlongAxis(pointerDelta, center, towardTip, arm));
@@ -224,7 +261,8 @@ internal sealed class VideoWorldOverlay
         return active;
     }
 
-    private void DrawDone(ImDrawListPtr drawList, bool projected, Rect stage, in Rect bounds, float scale)
+    private void DrawDone(ImDrawListPtr drawList, VideoChannel channel, string id, bool projected, Rect stage,
+        in Rect bounds, float scale)
     {
         var size = new Vector2(DonePillWidth * scale, DonePillHeight * scale);
         var margin = new Vector2(DonePillMargin * scale, DonePillMargin * scale);
@@ -241,7 +279,7 @@ internal sealed class VideoWorldOverlay
         using (ImRaii.PushStyle(ImGuiStyleVar.WindowBorderSize, 0f))
         using (ImRaii.PushStyle(ImGuiStyleVar.WindowMinSize, Vector2.One))
         {
-            ImGui.Begin("##aepScreenDone", GripFlags);
+            ImGui.Begin(id, GripFlags);
             clicked = ImGui.InvisibleButton("##done", size);
             hovered = ImGui.IsItemHovered();
             ImGui.End();
@@ -257,7 +295,11 @@ internal sealed class VideoWorldOverlay
             ImGui.SetMouseCursor(ImGuiMouseCursor.Hand);
         }
 
-        if (clicked)
+        if (clicked && channel == VideoChannel.B)
+        {
+            suite.PlacingScreenB = false;
+        }
+        else if (clicked)
         {
             suite.PlacingScreen = false;
         }
@@ -265,4 +307,7 @@ internal sealed class VideoWorldOverlay
 
     private readonly record struct StageCorners(Vector2 TopLeft, Vector2 TopRight, Vector2 BottomRight,
         Vector2 BottomLeft);
+
+    private readonly record struct PlacementIds(string Turn, string Size, string Right, string Up, string Toward,
+        string Done);
 }

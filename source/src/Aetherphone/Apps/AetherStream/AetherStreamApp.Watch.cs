@@ -81,9 +81,26 @@ internal sealed partial class AetherStreamApp
             watchAlong.RequestNearbyStreams();
         }
 
-        DrawPartyStandby(scale);
+        var screenBOnly = suite.PlayerB.HasMedia || watchAlong.RoomHasChannelB;
+        if (!screenBOnly)
+        {
+            DrawPartyStandby(scale);
+        }
+
         DrawLocalMediaPrompt(scale);
         DrawPromptCard(scale);
+        if (screenBOnly)
+        {
+            DrawVolume(scale);
+        }
+
+        DrawScreenBSection(scale);
+        if (screenBOnly)
+        {
+            DrawReactionBar(scale);
+            DrawDanmakuComposer(scale);
+        }
+
         DrawCopiedLinkChip(scale);
         DrawImportProgress(scale);
         DrawUpNextCard(scale);
@@ -171,7 +188,7 @@ internal sealed partial class AetherStreamApp
                 Loc.T(L.AetherStream.BrowseLocalFile), Ink.AccentLink))
         {
             addMode = QueueAddMode.PlayNow;
-            PickLocalFile();
+            PickLocalFile(false);
         }
 
         EndBlock();
@@ -512,6 +529,7 @@ internal sealed partial class AetherStreamApp
         }
 
         DrawVolume(scale);
+        DrawScreenBSection(scale);
         DrawReactionBar(scale);
         DrawDanmakuComposer(scale);
         DrawImportProgress(scale);
@@ -851,13 +869,11 @@ internal sealed partial class AetherStreamApp
         if (result.Dragging && Math.Abs(result.Value - configuration.VideoVolume) > 0.001f)
         {
             configuration.VideoVolume = result.Value;
-            video.SetVolume((int)(result.Value * 100f));
         }
 
         if (result.Released)
         {
             configuration.VideoVolume = result.Value;
-            video.SetVolume((int)(result.Value * 100f));
             configuration.Save();
         }
 

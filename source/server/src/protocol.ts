@@ -10,6 +10,7 @@ export const ROOM_LIFETIME_MS = 6 * 60 * 60 * 1000;
 export const ALONE_TIMEOUT_MS = 30 * 60 * 1000;
 export const FEATURE_PARTY = 1;
 export const FEATURE_DANMAKU = 2;
+export const FEATURE_DUAL_VIDEO = 4;
 export const PERMISSION_GRANT_MASK = 1 | 2;
 export const PERMISSION_CAN_HOST = 4;
 export const MAX_SHARED_QUEUE = 64;

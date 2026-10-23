@@ -121,9 +121,11 @@ internal static class PartyFollow
 
 internal static class PartyHostPosition
 {
-    internal static double Report(string url, string? publishedUrl, bool restarting, double position,
-        double expectedPosition) =>
-        restarting && string.Equals(url, publishedUrl, StringComparison.Ordinal) ? expectedPosition : position;
+    internal static double Report(string url, string? publishedUrl, bool restarting, bool positionUnavailable,
+        double position, double expectedPosition) =>
+        (restarting || positionUnavailable) && string.Equals(url, publishedUrl, StringComparison.Ordinal)
+            ? expectedPosition
+            : position;
 }
 
 internal static class MediaInput

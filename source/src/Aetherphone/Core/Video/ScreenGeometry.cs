@@ -77,6 +77,32 @@ internal static class ScreenGeometry
 
         return Vector2.Dot(pointerDelta, axis) / lengthSquared * axisWorldLength;
     }
+
+    internal const float CompanionGapShare = 0.2f;
+
+    internal static Vector3 Beside(in ScreenPose pose) =>
+        pose.Position + Right(pose) * (2f * HalfWidth * pose.Scale * (1f + CompanionGapShare));
+
+    internal static void OrderFarToNear(ReadOnlySpan<float> distances, Span<int> order)
+    {
+        for (var index = 0; index < order.Length; index++)
+        {
+            order[index] = index;
+        }
+
+        for (var index = 1; index < order.Length; index++)
+        {
+            var current = order[index];
+            var slot = index;
+            while (slot > 0 && distances[order[slot - 1]] < distances[current])
+            {
+                order[slot] = order[slot - 1];
+                slot--;
+            }
+
+            order[slot] = current;
+        }
+    }
 }
 
 internal static class SpatialVolume

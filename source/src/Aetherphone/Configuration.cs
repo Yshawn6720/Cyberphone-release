@@ -305,6 +305,9 @@ internal sealed class Configuration : IPluginConfiguration, IHomeConfiguration, 
     public bool VideoSpatialAudio { get; set; }
     public float VideoSpatialRange { get; set; } = Core.Video.SpatialVolume.DefaultRange;
     public bool VideoMuteInBackground { get; set; }
+    public Core.Video.VideoChannel VideoMainChannel { get; set; } = Core.Video.VideoChannel.A;
+    public Core.Video.VideoWatchChoice VideoWatchChoice { get; set; } = Core.Video.VideoWatchChoice.FollowHost;
+    public Core.Video.VideoPlayMode VideoPartyPlayMode { get; set; } = Core.Video.VideoPlayMode.Both;
     public bool VideoPartyGuestsCanAdd { get; set; }
     public bool VideoPartyGuestsCanControl { get; set; }
     public bool VideoPartyCodeEnabled { get; set; }

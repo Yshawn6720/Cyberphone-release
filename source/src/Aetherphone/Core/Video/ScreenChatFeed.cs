@@ -36,15 +36,15 @@ internal sealed class ScreenChatFeed : IDisposable
 
     private readonly IChatGui chatGui;
     private readonly Configuration configuration;
-    private readonly VideoEngine engine;
+    private readonly ScreenController screen;
     private readonly ScreenChatLine[] lines = new ScreenChatLine[Capacity];
     private int next;
 
-    internal ScreenChatFeed(IChatGui chatGui, Configuration configuration, VideoEngine engine)
+    internal ScreenChatFeed(IChatGui chatGui, Configuration configuration, ScreenController screen)
     {
         this.chatGui = chatGui;
         this.configuration = configuration;
-        this.engine = engine;
+        this.screen = screen;
         chatGui.ChatMessage += OnChatMessage;
     }
 
@@ -52,7 +52,7 @@ internal sealed class ScreenChatFeed : IDisposable
 
     internal int Newest => (next + Capacity - 1) % Capacity;
 
-    internal bool Enabled => configuration.VideoChatBubbles && engine.IsActive;
+    internal bool Enabled => configuration.VideoChatBubbles && (screen.Engine.IsActive || screen.EngineB.IsActive);
 
     internal static bool TryAge(in ScreenChatLine line, long nowTicks, out float age)
     {

@@ -145,7 +145,7 @@ describe("watch party", () => {
     const echo = await host.next("stream.state");
 
     expect(echo.code).toMatch(/^[A-Z0-9]{6}$/);
-    expect(echo.features).toBe(3);
+    expect(echo.features).toBe(7);
     expect(echo.hostId).toBe("Host@伊弗利特");
     expect(typeof echo.stateAtUnixMs).toBe("number");
     expect(echo.participants).toEqual([expect.objectContaining({ userId: "Host@伊弗利特", slot: 0 })]);
@@ -167,7 +167,7 @@ describe("watch party", () => {
       expect.objectContaining({ userId: "Host@伊弗利特", slot: 0 }),
       expect.objectContaining({ userId: "Guest@伊弗利特", slot: 1, displayName: "Guest" }),
     ]);
-    expect(joined).toMatchObject({ hostId: "Host@伊弗利特", code, features: 3, url: "https://video.test/a", positionSeconds: 9, guestPermissions: 2 });
+    expect(joined).toMatchObject({ hostId: "Host@伊弗利特", code, features: 7, url: "https://video.test/a", positionSeconds: 9, guestPermissions: 2 });
     expect(typeof joined.stateAtUnixMs).toBe("number");
     expect(echo.members).toEqual([{ userId: "Guest@伊弗利特", flags: 4 }]);
     expect(state).toMatchObject({ url: "https://video.test/b", paused: true, hostId: "Host@伊弗利特" });
@@ -870,6 +870,94 @@ describe("danmaku", () => {
     }
 
     expect(await sender.closed()).toBe(CloseCode.rate);
+  });
+});
+
+describe("two video channels", () => {
+  const channelB = {
+    urlB: "https://video.test/b",
+    positionSecondsB: 12.5,
+    pausedB: true,
+    screenXB: 1,
+    screenYB: 2,
+    screenZB: 3,
+    screenYawB: 0.5,
+    screenPitchB: 0.1,
+    screenRollB: -0.2,
+    screenScaleB: 1.5,
+    screenCurveB: 0.25,
+  };
+
+  it("forwards channel B and the host's play mode to the room and to a newcomer", async () => {
+    const { host, code } = await openRoom();
+    const viewer = await joinRoom(host, code, "Guest");
+    host.send({ type: "stream.state", url: "https://video.test/a", positionSeconds: 4, paused: false, playMode: "both", ...channelB });
+    const state = await viewer.next("stream.state");
+    await host.next("stream.state");
+    const late = await connect(`code=${code}&${identity("Late")}`);
+    late.send({ type: "stream.join", code, features: 1 });
+    await host.next("stream.roster");
+    host.send({ type: "stream.state", url: "https://video.test/a", positionSeconds: 5, paused: false, playMode: "b", ...channelB });
+    const joined = await late.next("stream.joined");
+
+    expect(state).toMatchObject({ ...channelB, playMode: "both", features: 7 });
+    expect(joined).toMatchObject({ ...channelB, playMode: "b", url: "https://video.test/a" });
+  });
+
+  it("drops a play mode it does not know and channel B fields of the wrong type", async () => {
+    const { host, code } = await openRoom();
+    const viewer = await joinRoom(host, code, "Guest");
+    host.send({
+      type: "stream.state", url: "https://video.test/a", positionSeconds: 4, paused: false,
+      playMode: "c", urlB: 7, positionSecondsB: "12", pausedB: "yes", screenXB: null, screenCurveB: { depth: 1 },
+    });
+    const state = await viewer.next("stream.state");
+
+    for (const field of ["playMode", "urlB", "positionSecondsB", "pausedB", "screenXB", "screenCurveB"]) {
+      expect(state).not.toHaveProperty(field);
+    }
+    expect(state.url).toBe("https://video.test/a");
+  });
+
+  it("hands channel B to the new host's room on a host change", async () => {
+    const { host, code } = await openRoom();
+    const viewer = await joinRoom(host, code, "Guest");
+    host.send({ type: "stream.transfer", userId: "Guest@伊弗利特" });
+    await host.next("stream.roster");
+    host.send({ type: "stream.state", url: "https://video.test/a", positionSeconds: 30, paused: false, playMode: "a", ...channelB });
+    const changed = await viewer.next("stream.hostChanged");
+
+    expect(changed).toMatchObject({ ...channelB, playMode: "a", hostId: "Guest@伊弗利特" });
+  });
+
+  it("tells the host which channel a viewer control is for, and nothing it does not know", async () => {
+    const { host, code } = await openRoom();
+    const viewer = await joinRoom(host, code, "Guest");
+
+    viewer.send({ type: "stream.control", action: "pause", channel: "b" });
+    viewer.send({ type: "stream.control", action: "pause", channel: "x" });
+    viewer.send({ type: "stream.control", action: "pause" });
+    const named = await host.next("stream.controlRequest");
+    const unknown = await host.next("stream.controlRequest");
+    const plain = await host.next("stream.controlRequest");
+
+    expect(named).toMatchObject({ action: "pause", channel: "b", userId: "Guest@伊弗利特" });
+    expect(unknown).not.toHaveProperty("channel");
+    expect(plain).not.toHaveProperty("channel");
+  });
+
+  it("tells the host which channel a viewer could not play, and nothing it does not know", async () => {
+    const { host, code } = await openRoom();
+    const viewer = await joinRoom(host, code, "Guest");
+
+    viewer.send({ type: "stream.playbackFailed", url: "https://video.test/b", reason: "gone", channel: "b" });
+    viewer.send({ type: "stream.playbackFailed", url: "https://video.test/a", reason: "gone", channel: "both" });
+    const named = await host.next("stream.viewerFailed");
+    const unknown = await host.next("stream.viewerFailed");
+
+    expect(named).toMatchObject({ url: "https://video.test/b", channel: "b", userId: "Guest@伊弗利特" });
+    expect(unknown).toMatchObject({ url: "https://video.test/a" });
+    expect(unknown).not.toHaveProperty("channel");
   });
 });
 

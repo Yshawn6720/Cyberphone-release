@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Globalization;
 using Dalamud.Interface;
 using Dalamud.Plugin;
 using D3D11 = SharpDX.Direct3D11;
@@ -15,13 +16,22 @@ internal static class DxHandler
 	internal static event Action? OnPresent;
 
 	private static IUiBuilder? pumpBuilder;
+	private static long renderKeySequence;
 
 	internal static void Initialise(IDalamudPluginInterface pluginInterface)
 	{
+		if (pumpBuilder is not null)
+		{
+			return;
+		}
+
 		Device = new D3D11.Device(pluginInterface.UiBuilder.DeviceHandle);
 		pumpBuilder = pluginInterface.UiBuilder;
 		pumpBuilder.Draw += PumpRenderThread;
 	}
+
+	internal static string NewRenderKey(string prefix) =>
+		prefix + "-" + Interlocked.Increment(ref renderKeySequence).ToString(CultureInfo.InvariantCulture);
 
 	internal static void RunOnRenderThread(string key, Action work)
 	{

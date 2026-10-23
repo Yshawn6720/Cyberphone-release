@@ -18,9 +18,10 @@ internal sealed partial class AetherStreamApp
     private const int MaxLinkLength = 2000;
     private const int PlaylistActionOne = 0;
     private const int PlaylistActionAll = 1;
+    private const int AddTargetScreenB = 3;
 
     private readonly SheetSurface addSheet = new("aetherstream.add");
-    private readonly string[] addModeLabels = new string[3];
+    private readonly string[] addModeLabels = new string[4];
     private readonly Action<Rect> drawAddContent;
 
     private string linkInput = string.Empty;
@@ -28,6 +29,7 @@ internal sealed partial class AetherStreamApp
     private string copiedLinkHost = string.Empty;
     private string dismissedCopiedLink = string.Empty;
     private QueueAddMode addMode = QueueAddMode.PlayNow;
+    private bool addTargetsScreenB;
     private QueueAddMode pendingPlaylistMode = QueueAddMode.PlayNow;
     private RefreshCadence clipboardCadence;
     private uint clipboardSequence = ClipboardWatch.UnseenSequence;
@@ -35,6 +37,7 @@ internal sealed partial class AetherStreamApp
     private void OpenAddSheet()
     {
         addMode = video.HasMedia || queue.Current is not null ? QueueAddMode.AddToQueue : QueueAddMode.PlayNow;
+        addTargetsScreenB = false;
         tracksSheet.Close();
         addSheet.Open();
     }
@@ -64,9 +67,16 @@ internal sealed partial class AetherStreamApp
             addModeLabels[0] = Loc.T(L.AetherStream.PlayNow);
             addModeLabels[1] = Loc.T(L.AetherStream.PlayNext);
             addModeLabels[2] = Loc.T(L.AetherStream.AddToQueue);
+            addModeLabels[3] = Loc.T(L.AetherStream.ScreenB);
             var strip = new Rect(new Vector2(content.Min.X, top), new Vector2(content.Max.X, top + 36f * scale));
-            addMode = (QueueAddMode)SegmentStrip.Draw("aetherstream.addMode", strip, addModeLabels, (int)addMode,
-                ui.Palette);
+            var picked = SegmentStrip.Draw("aetherstream.addMode", strip, addModeLabels,
+                addTargetsScreenB ? AddTargetScreenB : (int)addMode, ui.Palette);
+            addTargetsScreenB = picked == AddTargetScreenB;
+            if (!addTargetsScreenB)
+            {
+                addMode = (QueueAddMode)picked;
+            }
+
             top += 36f * scale + Metrics.Space.Md * scale;
         }
 
@@ -74,9 +84,17 @@ internal sealed partial class AetherStreamApp
         var primary = new Rect(new Vector2(content.Min.X, top), new Vector2(content.Max.X, top + ButtonHeight * scale));
         var primaryLabel = viewing
             ? Loc.T(watchAlong.CanAddDirectly ? L.AetherStream.AddToQueue : L.AetherStream.SuggestAction)
-            : Loc.T(addMode == QueueAddMode.PlayNow ? L.AetherStream.PlayAction : L.AetherStream.QueueSuggestionAdd);
+            : Loc.T(addTargetsScreenB || addMode == QueueAddMode.PlayNow
+                ? L.AetherStream.PlayAction
+                : L.AetherStream.QueueSuggestionAdd);
         if (PrimaryButton(primary, primaryLabel, canSubmit) || (submitted && canSubmit))
         {
+            if (!viewing && addTargetsScreenB)
+            {
+                SubmitToScreenB(linkInput);
+                return;
+            }
+
             SubmitInput(linkInput, addMode);
             return;
         }
@@ -91,7 +109,7 @@ internal sealed partial class AetherStreamApp
         var browse = new Rect(new Vector2(content.Min.X, top), new Vector2(content.Max.X, top + ButtonHeight * scale));
         if (QuietButton(browse, Loc.T(L.AetherStream.BrowseLocalFile)))
         {
-            PickLocalFile();
+            PickLocalFile(addTargetsScreenB);
         }
 
         DrawSupportedSitesHint(content, top + ButtonHeight * scale + Metrics.Space.Md * scale);
@@ -125,10 +143,51 @@ internal sealed partial class AetherStreamApp
         return submitted;
     }
 
-    private void PickLocalFile()
+    private void PickLocalFile(bool screenB)
     {
+        if (screenB)
+        {
+            FilePicker.PickVideo(Loc.T(L.AetherStream.BrowseLocalFile),
+                path => Interlocked.Exchange(ref pendingScreenBFile, path));
+            return;
+        }
+
         FilePicker.PickVideo(Loc.T(L.AetherStream.BrowseLocalFile),
             path => Interlocked.Exchange(ref pendingLocalFile, path));
+    }
+
+    private void SubmitToScreenB(string raw)
+    {
+        if (watchAlong.IsViewing)
+        {
+            SubmitInput(raw, QueueAddMode.AddToQueue);
+            return;
+        }
+
+        var input = MediaInput.Normalize(raw);
+        if (input.Length == 0)
+        {
+            return;
+        }
+
+        var localPath = MediaInput.LooksLikeLocalPath(input);
+        if (!localPath && !VideoEngine.ValidateURL(input, out _))
+        {
+            ShellToast.Show(Loc.T(L.AetherStream.NotALink));
+            return;
+        }
+
+        if (!localPath && VideoUrlResolver.IsPlaylistUrl(input) && !VideoUrlResolver.NamesOneVideo(input))
+        {
+            ShellToast.Show(Loc.T(L.AetherStream.ScreenBOneVideo));
+            return;
+        }
+
+        linkInput = string.Empty;
+        CancelPendingJoin();
+        suite.ChannelB.Play(input);
+        addSheet.Close();
+        activeTab = StreamTab.Watch;
     }
 
     private void SubmitInput(string raw) => SubmitInput(raw, addMode);

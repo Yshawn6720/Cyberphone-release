@@ -16,11 +16,11 @@ internal sealed partial class AetherStreamApp
     private bool setupDismissed;
     private bool setupChecked;
 
-    private bool NeedsSetup => !screen.Engine.Dependencies.IsReady && !setupDismissed;
+    private bool NeedsSetup => !screen.Dependencies.IsReady && !setupDismissed;
 
     private void DrawSetupGate(Rect area, float scale)
     {
-        var dependencies = screen.Engine.Dependencies;
+        var dependencies = screen.Dependencies;
         ui.Body(area);
 
         if (!setupChecked)

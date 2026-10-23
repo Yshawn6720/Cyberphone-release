@@ -34,7 +34,7 @@ internal readonly record struct PendingAlert(LocString Title, LocString Body);
 
 internal readonly record struct PendingToast(LocString Text, string? Argument);
 
-internal readonly record struct PendingDanmaku(string UserId, string Text);
+internal readonly record struct PendingDanmaku(string UserId, string Text, string? Screen);
 
 internal enum WatchAlongMode : byte
 {
@@ -47,12 +47,8 @@ internal sealed class WatchAlongSession : IDisposable
 {
     private const int CheckEveryTicks = 30;
     private const float HeartbeatSeconds = 30f;
-    private const double PositionJumpTolerance = 2.0;
-    private const double StaleStateSeconds = 90.0;
-    private const long AutoReplayInitialDelayMilliseconds = 10 * 1000;
-    private const long AutoReplayMaxDelayMilliseconds = 60 * 1000;
-    private const long AutoReplayBotCheckDelayMilliseconds = 5 * 60 * 1000;
-    private const long AutoReplayBotCheckMaxDelayMilliseconds = 15 * 60 * 1000;
+    internal const double PositionJumpTolerance = 2.0;
+    internal const double StaleStateSeconds = 90.0;
     private const long ReactionCooldownMilliseconds = 250;
     private const long ControlCooldownMilliseconds = 250;
     private const long MinimumPublishIntervalMilliseconds = 250;
@@ -64,7 +60,7 @@ internal sealed class WatchAlongSession : IDisposable
     private const float ScreenPositionDriftTolerance = 0.01f;
     private const float ScreenAngleDriftTolerance = 0.005f;
     private const float ScreenScaleDriftTolerance = 0.005f;
-    private const float HostScreenReach = 120f;
+    internal const float HostScreenReach = 120f;
 
     private readonly AethernetSession session;
     private readonly Configuration configuration;
@@ -101,12 +97,9 @@ internal sealed class WatchAlongSession : IDisposable
     private string? viewingUrl;
     private string? viewingPlaybackUrl;
     private string? rejectedRemoteUrl;
-    private string? autoReplayUrl;
     private string? reportedFailureUrl;
     private string? mismatchCandidatePath;
     private long mismatchCandidateSizeBytes;
-    private long autoReplayDelayMilliseconds;
-    private long autoReplayNextAtTicks;
     private long idleSinceTicks;
     private long reactedAtTicks;
     private long controlledAtTicks;
@@ -151,9 +144,14 @@ internal sealed class WatchAlongSession : IDisposable
     private string? accountToken;
     private bool relayDiscoverable;
 
+    private readonly PartyAutoReplay autoReplay = new();
+    private readonly ChannelBPlayback playbackB;
+    private readonly PartyChannelB channelB;
+    private string? lastPublishedPlayMode;
+
     internal WatchAlongSession(AethernetSession session, Configuration configuration, ConfirmService confirm,
         VideoPlayer video, AetherStreamQueue queue, StreamSignalRouter stream, ScreenController screen,
-        HttpService http)
+        HttpService http, ChannelBPlayback playbackB)
     {
         this.session = session;
         this.configuration = configuration;
@@ -162,6 +160,9 @@ internal sealed class WatchAlongSession : IDisposable
         this.queue = queue;
         this.stream = stream;
         this.screen = screen;
+        this.playbackB = playbackB;
+        channelB = new PartyChannelB(playbackB, stream, configuration, serverClock);
+        playbackB.Changed += RequestPublish;
         relayNearby = new RelayNearbyQuery(http, configuration, PartyRelayKind.Party);
         accountToken = session.Token;
         session.Changed += OnSessionChanged;
@@ -211,10 +212,15 @@ internal sealed class WatchAlongSession : IDisposable
     internal IReadOnlyList<PendingJoinRequest> PendingRequests { get; private set; } = [];
     internal IReadOnlyList<QueueSuggestion> PendingQueueSuggestions { get; private set; } = [];
     internal IReadOnlyList<ViewerFailure> ViewerFailures { get; private set; } = [];
+    internal IReadOnlyList<ViewerFailure> ViewerFailuresB { get; private set; } = [];
 
     internal PartyReactions Reactions { get; } = new();
 
     internal PartyDanmaku Danmaku { get; } = new();
+
+    internal PartyDanmaku DanmakuB { get; } = new();
+
+    internal PartyDanmaku DanmakuFor(VideoChannel channel) => channel == VideoChannel.B ? DanmakuB : Danmaku;
 
     internal bool ServerSupportsParty => (serverFeatures & StreamFeature.Party) != 0;
 
@@ -223,6 +229,33 @@ internal sealed class WatchAlongSession : IDisposable
     internal bool ServerSupportsDanmaku => (serverFeatures & StreamFeature.Danmaku) != 0;
 
     internal bool ServerLacksDanmaku => serverSeen && !ServerSupportsDanmaku;
+
+    internal bool ServerSupportsDualVideo => DualVideo.Supported(serverFeatures);
+
+    internal bool ServerLacksDualVideo => serverSeen && !ServerSupportsDualVideo;
+
+    internal bool HostScreenBOutOfReach => channelB.ScreenOutOfReach;
+
+    internal float AutoReplayBInSeconds => channelB.AutoReplayInSeconds;
+
+    internal ChannelView View
+    {
+        get
+        {
+            if (IsViewing && lastStateMessage is { } message)
+            {
+                return ViewOf(message);
+            }
+
+            return DualVideo.LocalView(video.HasMedia, playbackB.Player.HasMedia);
+        }
+    }
+
+    internal bool RoomHasChannelB => IsViewing && ServerSupportsDualVideo && lastStateMessage?.UrlB is { Length: > 0 };
+
+    private ChannelView ViewOf(CallControl message) => DualVideo.View(configuration.VideoWatchChoice,
+        DualVideo.ParsePlayMode(message.PlayMode), message.Url is { Length: > 0 },
+        ServerSupportsDualVideo && message.UrlB is { Length: > 0 });
 
     internal bool RoomDanmakuEnabled => IsHosting ? Policy.DanmakuEnabled : remoteDanmakuEnabled;
 
@@ -265,9 +298,7 @@ internal sealed class WatchAlongSession : IDisposable
     internal bool CanControlPlayback => IsViewing && ServerSupportsParty
         && PartyPermissions.Allows(MyPermissions, StreamPermission.ControlPlayback);
 
-    internal float AutoReplayInSeconds => autoReplayUrl is null
-        ? 0f
-        : Math.Max(0f, (autoReplayNextAtTicks - Environment.TickCount64) / 1000f);
+    internal float AutoReplayInSeconds => autoReplay.InSeconds(Environment.TickCount64);
 
     internal event Action<QueueSuggestion>? QueueSuggestionArrived;
 
@@ -391,6 +422,7 @@ internal sealed class WatchAlongSession : IDisposable
 
         joinRequested = true;
         queue.Suspend();
+        playbackB.Stop();
     }
 
     internal void OpenParty()
@@ -429,12 +461,52 @@ internal sealed class WatchAlongSession : IDisposable
 
     internal void RetryNow()
     {
-        autoReplayUrl = null;
+        autoReplay.Clear();
         video.ResetRecoveryBudget();
-        ResyncNow();
+        if (Mode == WatchAlongMode.Viewing && lastStateMessage is { } message)
+        {
+            ApplyStateSyncA(message, force: true);
+        }
+    }
+
+    internal void RetryChannelB()
+    {
+        if (Mode == WatchAlongMode.Viewing)
+        {
+            channelB.Retry();
+        }
+    }
+
+    internal void SetWatchChoice(VideoWatchChoice choice)
+    {
+        if (configuration.VideoWatchChoice == choice)
+        {
+            return;
+        }
+
+        configuration.VideoWatchChoice = choice;
+        configuration.Save();
+        if (Mode == WatchAlongMode.Viewing && lastStateMessage is { } message)
+        {
+            ApplyStateSync(message, force: false);
+        }
+    }
+
+    internal void SetPartyPlayMode(VideoPlayMode mode)
+    {
+        if (configuration.VideoPartyPlayMode == mode)
+        {
+            return;
+        }
+
+        configuration.VideoPartyPlayMode = mode;
+        configuration.Save();
+        RequestPublish();
     }
 
     internal void DismissViewerFailures() => ViewerFailures = [];
+
+    internal void DismissViewerFailuresB() => ViewerFailuresB = [];
 
     internal void Leave()
     {
@@ -472,6 +544,8 @@ internal sealed class WatchAlongSession : IDisposable
             ClearViewingState();
             video.HoldScreen = false;
             video.Stop();
+            screen.EngineB.ScreenCurve = configuration.VideoScreenCurve;
+            channelB.StopViewing();
         }
 
         queue.Resume();
@@ -507,8 +581,12 @@ internal sealed class WatchAlongSession : IDisposable
         lastPublishedUrl = null;
         lastPublishedQueueCount = -1;
         lastPublishedScreen = null;
+        lastPublishedPlayMode = null;
+        channelB.ResetHost();
+        ViewerFailuresB = [];
         Reactions.Clear();
         Danmaku.Clear();
+        DanmakuB.Clear();
         hiddenDanmaku.Clear();
         remoteDanmakuEnabled = true;
         while (pendingDanmaku.TryDequeue(out _))
@@ -536,7 +614,7 @@ internal sealed class WatchAlongSession : IDisposable
         viewingPlaybackUrl = null;
         ViewingEntry = null;
         lastStateMessage = null;
-        autoReplayUrl = null;
+        autoReplay.Clear();
         reportedFailureUrl = null;
         ClearLocalMediaPrompt();
     }
@@ -630,23 +708,25 @@ internal sealed class WatchAlongSession : IDisposable
         }
     }
 
-    internal void ControlPause(bool paused) =>
-        SendControl(paused ? StreamControlAction.Pause : StreamControlAction.Play, null);
+    internal void ControlPause(bool paused, VideoChannel channel = VideoChannel.A) =>
+        SendControl(paused ? StreamControlAction.Pause : StreamControlAction.Play, null, channel);
 
-    internal void ControlSeek(double seconds) => SendControl(StreamControlAction.Seek, Math.Max(0d, seconds));
+    internal void ControlSeek(double seconds, VideoChannel channel = VideoChannel.A) =>
+        SendControl(StreamControlAction.Seek, Math.Max(0d, seconds), channel);
 
-    internal void ControlNext() => SendControl(StreamControlAction.Next, null);
+    internal void ControlNext() => SendControl(StreamControlAction.Next, null, VideoChannel.A);
 
-    private void SendControl(string action, double? positionSeconds)
+    private void SendControl(string action, double? positionSeconds, VideoChannel channel)
     {
         var now = Environment.TickCount64;
-        if (!CanControlPlayback || now - controlledAtTicks < ControlCooldownMilliseconds)
+        if (!CanControlPlayback || now - controlledAtTicks < ControlCooldownMilliseconds
+            || (channel == VideoChannel.B && !ServerSupportsDualVideo))
         {
             return;
         }
 
         controlledAtTicks = now;
-        stream.Control(action, positionSeconds);
+        stream.Control(action, positionSeconds, channel == VideoChannel.B ? DualVideo.WireB : null);
     }
 
     internal void SendReaction(int kind)
@@ -666,20 +746,28 @@ internal sealed class WatchAlongSession : IDisposable
         Reactions.Add(kind, now);
     }
 
-    internal bool SendDanmaku(string text)
+    internal DanmakuRefusal SendDanmaku(string text)
     {
         var line = PartyDanmaku.Clean(text);
-        if (line.Length == 0 || !CanSendDanmaku || !stream.SendDanmaku(line))
+        var refusal = PartyDanmaku.Refusal(line, Mode != WatchAlongMode.None, serverFeatures, RoomDanmakuEnabled);
+        if (refusal != DanmakuRefusal.None)
         {
-            return false;
+            return refusal;
+        }
+
+        var watched = DualVideo.WatchedScreen(View, configuration.VideoMainChannel);
+        var screenWire = ServerSupportsDualVideo ? DualVideo.ChannelWire(watched) : null;
+        if (!stream.SendDanmaku(line, screenWire))
+        {
+            return stream.Connected ? DanmakuRefusal.TooFast : DanmakuRefusal.Offline;
         }
 
         if (configuration.VideoDanmaku && SelfId is { } selfId)
         {
-            Danmaku.Enqueue(selfId, DanmakuName(selfId), line, true);
+            DanmakuFor(DualVideo.DanmakuScreen(screenWire, View)).Enqueue(selfId, DanmakuName(selfId), line);
         }
 
-        return true;
+        return DanmakuRefusal.None;
     }
 
     internal bool IsDanmakuHidden(string userId) => hiddenDanmaku.Contains(userId);
@@ -694,6 +782,7 @@ internal sealed class WatchAlongSession : IDisposable
 
         hiddenDanmaku.Add(userId);
         Danmaku.Hide(userId);
+        DanmakuB.Hide(userId);
     }
 
     internal bool CanHideDanmakuFrom(WatchAlongParticipant member) =>
@@ -811,7 +900,7 @@ internal sealed class WatchAlongSession : IDisposable
 
     private bool HoldRoomOpen()
     {
-        var idle = queue.Current is null && !video.HasMedia;
+        var idle = queue.Current is null && !video.HasMedia && !playbackB.Player.HasMedia;
         if (!idle || partyOpen)
         {
             idleSinceTicks = 0;
@@ -1020,10 +1109,13 @@ internal sealed class WatchAlongSession : IDisposable
             sync.Reset();
             video.HoldScreen = false;
             video.Stop();
+            channelB.StopViewing();
             Reactions.Clear();
             Danmaku.Clear();
+            DanmakuB.Clear();
             hiddenDanmaku.Clear();
             screen.Engine.ScreenCurve = configuration.VideoScreenCurve;
+            screen.EngineB.ScreenCurve = configuration.VideoScreenCurve;
         }
 
         while (pendingAlerts.TryDequeue(out var alert))
@@ -1057,6 +1149,7 @@ internal sealed class WatchAlongSession : IDisposable
             Reactions.Add(reaction, now);
         }
 
+        var view = View;
         while (pendingDanmaku.TryDequeue(out var received))
         {
             if (Mode == WatchAlongMode.None || !configuration.VideoDanmaku || hiddenDanmaku.Contains(received.UserId))
@@ -1067,7 +1160,8 @@ internal sealed class WatchAlongSession : IDisposable
             var text = PartyDanmaku.Clean(received.Text);
             if (text.Length > 0)
             {
-                Danmaku.Enqueue(received.UserId, DanmakuName(received.UserId), text, false);
+                DanmakuFor(DualVideo.DanmakuScreen(received.Screen, view))
+                    .Enqueue(received.UserId, DanmakuName(received.UserId), text);
             }
         }
     }
@@ -1077,6 +1171,7 @@ internal sealed class WatchAlongSession : IDisposable
         ReportPlaybackFailureIfNeeded();
         TickAutoReplay();
         ReopenIfEndedEarly();
+        channelB.Step(deltaSeconds);
         if (video.State is VideoPlaybackState.Playing or VideoPlaybackState.Paused && video.Progress.Duration > 0f)
         {
             viewingDurationSeconds = video.Progress.Duration;
@@ -1152,51 +1247,12 @@ internal sealed class WatchAlongSession : IDisposable
 
     private void TickAutoReplay()
     {
-        if (autoReplayUrl is not null && video.State == VideoPlaybackState.Playing)
+        var failedUrl = lastStateMessage is null ? null : viewingPlaybackUrl;
+        if (autoReplay.Due(video.State, video.FailureKind, failedUrl, Environment.TickCount64)
+            && failedUrl is not null && lastStateMessage is { } message)
         {
-            autoReplayUrl = null;
+            video.Play(failedUrl, ProjectRemotePosition(message), !(message.Paused ?? false));
         }
-
-        if (video.State != VideoPlaybackState.Failed || viewingPlaybackUrl is not { } failedUrl
-            || lastStateMessage is not { } message)
-        {
-            return;
-        }
-
-        if (PlaybackFailureClassifier.RetryCannotHelp(video.FailureKind))
-        {
-            autoReplayUrl = null;
-            return;
-        }
-
-        var now = Environment.TickCount64;
-        var botCheck = video.FailureKind == PlaybackFailureKind.BotCheck;
-        if (autoReplayUrl != failedUrl)
-        {
-            autoReplayUrl = failedUrl;
-            autoReplayDelayMilliseconds = botCheck
-                ? AutoReplayBotCheckDelayMilliseconds
-                : AutoReplayInitialDelayMilliseconds;
-            autoReplayNextAtTicks = now + autoReplayDelayMilliseconds;
-            return;
-        }
-
-        if (botCheck && autoReplayDelayMilliseconds < AutoReplayBotCheckDelayMilliseconds)
-        {
-            autoReplayDelayMilliseconds = AutoReplayBotCheckDelayMilliseconds;
-            autoReplayNextAtTicks = now + autoReplayDelayMilliseconds;
-            return;
-        }
-
-        if (now < autoReplayNextAtTicks)
-        {
-            return;
-        }
-
-        var maxDelayMilliseconds = botCheck ? AutoReplayBotCheckMaxDelayMilliseconds : AutoReplayMaxDelayMilliseconds;
-        autoReplayDelayMilliseconds = Math.Min(autoReplayDelayMilliseconds * 2, maxDelayMilliseconds);
-        autoReplayNextAtTicks = now + autoReplayDelayMilliseconds;
-        video.Play(failedUrl, ProjectRemotePosition(message), !(message.Paused ?? false));
     }
 
     private void AbsorbServerClock(CallControl message)
@@ -1225,7 +1281,7 @@ internal sealed class WatchAlongSession : IDisposable
             engine.ScreenScale, engine.ScreenCurve);
     }
 
-    private static bool ScreenMoved(StreamScreenPose? current, StreamScreenPose? published)
+    internal static bool ScreenMoved(StreamScreenPose? current, StreamScreenPose? published)
     {
         if (current is not { } now)
         {
@@ -1254,18 +1310,24 @@ internal sealed class WatchAlongSession : IDisposable
         var screenPose = CurrentScreenPose();
         var screenChanged = ScreenMoved(screenPose, lastPublishedScreen);
 
+        var dualVideo = ServerSupportsDualVideo;
+        var reportB = dualVideo ? channelB.HostReport() : default;
+        var playMode = dualVideo ? DualVideo.PlayModeWire(configuration.VideoPartyPlayMode) : null;
+        screenChanged |= reportB.ScreenChanged;
+
         var policy = Policy;
         var approvalRequired = policy.ApprovalRequired;
         var sharedCount = Math.Min(queue.Entries.Count, MaxSharedQueueEntries);
         var expected = lastPublishedPaused
             ? lastPublishedPosition
             : lastPublishedPosition + (DateTime.UtcNow - lastPublishedAt).TotalSeconds;
-        var position = PartyHostPosition.Report(url, lastPublishedUrl, video.IsRestarting, progress.Position, expected);
+        var position = PartyHostPosition.Report(url, lastPublishedUrl, video.IsRestarting, video.PositionUnavailable,
+            progress.Position, expected);
         var jumped = url == lastPublishedUrl && Math.Abs(position - expected) > PositionJumpTolerance;
 
         var otherChange = url != lastPublishedUrl || paused != lastPublishedPaused || jumped
             || approvalRequired != lastPublishedApprovalRequired || sharedCount != lastPublishedQueueCount
-            || publishRequested;
+            || publishRequested || reportB.Changed || playMode != lastPublishedPlayMode;
         var heartbeatDue = heartbeatTimer >= HeartbeatSeconds;
         if (!otherChange && !screenChanged && !heartbeatDue)
         {
@@ -1295,6 +1357,13 @@ internal sealed class WatchAlongSession : IDisposable
         lastPublishedScreen = screenPose;
         lastPublishedApprovalRequired = approvalRequired;
         lastPublishedQueueCount = sharedCount;
+        lastPublishedPlayMode = playMode;
+        if (reportB.State?.Url != channelB.PublishedUrl)
+        {
+            ViewerFailuresB = [];
+        }
+
+        channelB.CommitHost(reportB.State);
 
         if (Mode != WatchAlongMode.Hosting)
         {
@@ -1305,7 +1374,7 @@ internal sealed class WatchAlongSession : IDisposable
         stream.PublishState(new StreamPublication(url, position, paused, Plugin.ClientState.TerritoryType,
             LocationShare.CurrentWorldId(), approvalRequired, policy.Discoverable, policy.CodeEnabled,
             policy.GuestPermissions, policy.DanmakuEnabled, PublishedGrants(), BuildSharedQueue(sharedCount),
-            screenPose));
+            screenPose, reportB.State, playMode));
     }
 
     private StreamMember[]? PublishedGrants()
@@ -1376,7 +1445,11 @@ internal sealed class WatchAlongSession : IDisposable
         lastPublishedUrl = null;
         lastPublishedQueueCount = -1;
         lastPublishedScreen = null;
+        lastPublishedPlayMode = null;
+        channelB.ResetHost();
+        ViewerFailuresB = [];
         Danmaku.Clear();
+        DanmakuB.Clear();
         hiddenDanmaku.Clear();
     }
 
@@ -1481,13 +1554,20 @@ internal sealed class WatchAlongSession : IDisposable
             return;
         }
 
+        var view = ViewOf(message);
+        ApplyJoinSyncA(message, view.ShowA ? message.Url : null);
+        channelB.Apply(message, view.ShowB, force: false);
+    }
+
+    private void ApplyJoinSyncA(CallControl message, string? roomUrl)
+    {
         if (viewingUrl is not null)
         {
-            ApplyStateSync(message, force: false);
+            ApplyStateSyncA(message, force: false);
             return;
         }
 
-        if (message.Url is { Length: > 0 } url)
+        if (roomUrl is { Length: > 0 } url)
         {
             StartViewing(url, message);
             return;
@@ -1628,34 +1708,39 @@ internal sealed class WatchAlongSession : IDisposable
 
     private void OnViewerFailed(CallControl message)
     {
-        if (Mode != WatchAlongMode.Hosting || message.From is not { } from || message.Url is not { Length: > 0 } url
-            || url != lastPublishedUrl)
+        if (Mode != WatchAlongMode.Hosting || message.From is not { } from || message.Url is not { Length: > 0 } url)
         {
             return;
         }
 
-        var updated = new List<ViewerFailure>(ViewerFailures.Count + 1);
-        foreach (var existing in ViewerFailures)
+        if (DualVideo.ParseChannel(message.Channel) == VideoChannel.B)
         {
-            if (existing.UserId != from.UserId)
+            if (channelB.AcceptsFailure(url))
             {
-                updated.Add(existing);
+                ViewerFailuresB = WithFailure(ViewerFailuresB, from, message.Reason);
             }
+
+            return;
         }
 
-        updated.Add(new ViewerFailure(from.UserId, from.DisplayName, message.Reason));
-        ViewerFailures = updated;
+        if (url == lastPublishedUrl)
+        {
+            ViewerFailures = WithFailure(ViewerFailures, from, message.Reason);
+        }
     }
 
-    private void RemoveViewerFailure(string userId)
+    private static List<ViewerFailure> WithFailure(IReadOnlyList<ViewerFailure> failures, ParticipantInfo from,
+        string? reason)
     {
-        if (ViewerFailures.Count == 0)
-        {
-            return;
-        }
+        var updated = WithoutFailure(failures, from.UserId);
+        updated.Add(new ViewerFailure(from.UserId, from.DisplayName, reason));
+        return updated;
+    }
 
-        var updated = new List<ViewerFailure>(ViewerFailures.Count);
-        foreach (var existing in ViewerFailures)
+    private static List<ViewerFailure> WithoutFailure(IReadOnlyList<ViewerFailure> failures, string userId)
+    {
+        var updated = new List<ViewerFailure>(failures.Count + 1);
+        foreach (var existing in failures)
         {
             if (existing.UserId != userId)
             {
@@ -1663,7 +1748,20 @@ internal sealed class WatchAlongSession : IDisposable
             }
         }
 
-        ViewerFailures = updated;
+        return updated;
+    }
+
+    private void RemoveViewerFailure(string userId)
+    {
+        if (ViewerFailures.Count > 0)
+        {
+            ViewerFailures = WithoutFailure(ViewerFailures, userId);
+        }
+
+        if (ViewerFailuresB.Count > 0)
+        {
+            ViewerFailuresB = WithoutFailure(ViewerFailuresB, userId);
+        }
     }
 
     private void OnJoinRequested(CallControl message)
@@ -1940,6 +2038,9 @@ internal sealed class WatchAlongSession : IDisposable
         heartbeatTimer = HeartbeatSeconds;
         tickCounter = CheckEveryTicks;
         queue.AdoptParty(playing, upcoming);
+        lastPublishedPlayMode = null;
+        ViewerFailuresB = [];
+        channelB.AdoptAsHost(message, ServerSupportsDualVideo);
         if (reloadInherited)
         {
             queue.AdvanceFrom(resumeAt);
@@ -1963,6 +2064,8 @@ internal sealed class WatchAlongSession : IDisposable
         PendingRequests = [];
         PendingQueueSuggestions = [];
         ViewerFailures = [];
+        ViewerFailuresB = [];
+        lastPublishedPlayMode = null;
         grants.Clear();
         publishedGrants = null;
         grantsChanged = false;
@@ -1975,6 +2078,7 @@ internal sealed class WatchAlongSession : IDisposable
         viewingPlaybackUrl = playingUrl;
         viewingUrl = playingUrl is not null && message.Url is { Length: > 0 } url ? url : null;
         lastStateMessage = message;
+        channelB.HandOver(message);
         HostQueue = ToHostQueue(message.UpcomingQueue);
         if (HostName() is { Length: > 0 } hostName)
         {
@@ -2014,6 +2118,16 @@ internal sealed class WatchAlongSession : IDisposable
         var held = GuestPermissions | grants.GetValueOrDefault(from.UserId);
         if (!PartyPermissions.Allows(held, StreamPermission.ControlPlayback))
         {
+            return;
+        }
+
+        if (DualVideo.ParseChannel(message.Channel) == VideoChannel.B)
+        {
+            if (ServerSupportsDualVideo && channelB.ApplyControl(action, message.PositionSeconds))
+            {
+                RequestPublish();
+            }
+
             return;
         }
 
@@ -2067,7 +2181,7 @@ internal sealed class WatchAlongSession : IDisposable
         if (Mode != WatchAlongMode.None && message.UserId is { Length: > 0 } userId
             && message.Text is { Length: > 0 } text)
         {
-            pendingDanmaku.Enqueue(new PendingDanmaku(userId, text));
+            pendingDanmaku.Enqueue(new PendingDanmaku(userId, text, message.Screen));
         }
     }
 
@@ -2093,9 +2207,19 @@ internal sealed class WatchAlongSession : IDisposable
             return;
         }
 
+        var view = ViewOf(message);
+        ApplyStateSyncA(message, force, view.ShowA ? message.Url : null);
+        channelB.Apply(message, view.ShowB, force);
+    }
+
+    private void ApplyStateSyncA(CallControl message, bool force) =>
+        ApplyStateSyncA(message, force, ViewOf(message).ShowA ? message.Url : null);
+
+    private void ApplyStateSyncA(CallControl message, bool force, string? roomUrl)
+    {
         HostQueue = ToHostQueue(message.UpcomingQueue);
 
-        if (message.Url is { Length: > 0 } url)
+        if (roomUrl is { Length: > 0 } url)
         {
             if (url != viewingUrl || force)
             {
@@ -2186,7 +2310,7 @@ internal sealed class WatchAlongSession : IDisposable
         ClearLocalMediaPrompt();
         if (Mode == WatchAlongMode.Viewing && lastStateMessage is { } message)
         {
-            ApplyStateSync(message, force: true);
+            ApplyStateSyncA(message, force: true);
         }
     }
 
@@ -2301,6 +2425,7 @@ internal sealed class WatchAlongSession : IDisposable
         PendingRequests = [];
         PendingQueueSuggestions = [];
         ViewerFailures = [];
+        ViewerFailuresB = [];
         HostQueue = [];
         HostScreenOutOfReach = false;
         remoteParticipants = null;
@@ -2324,6 +2449,8 @@ internal sealed class WatchAlongSession : IDisposable
     {
         session.Changed -= OnSessionChanged;
         queue.Changed -= RequestPublish;
+        playbackB.Changed -= RequestPublish;
+        channelB.Dispose();
         video.Finished -= OnVideoFinished;
         stream.Joined -= OnJoined;
         stream.Declined -= OnDeclined;

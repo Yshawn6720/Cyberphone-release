@@ -41,6 +41,8 @@ internal sealed partial class AetherStreamApp
     private TextCache inviteCodeLabel;
     private string codeDisplaySource = string.Empty;
     private string codeDisplay = string.Empty;
+    private readonly string[] playModeLabels = new string[3];
+    private readonly string[] watchChoiceLabels = new string[4];
 
     private readonly record struct FriendRow(UserDto User, string Handle);
 
@@ -244,6 +246,7 @@ internal sealed partial class AetherStreamApp
     {
         var hosting = !watchAlong.IsViewing;
         DrawPartySummary(hosting, scale);
+        DrawPartyScreens(hosting, scale);
 
         if (hosting && watchAlong.PendingRequests.Count > 0)
         {
@@ -300,6 +303,48 @@ internal sealed partial class AetherStreamApp
         }
 
         EndBlock();
+    }
+
+    private void DrawPartyScreens(bool hosting, float scale)
+    {
+        if (hosting)
+        {
+            if (watchAlong.ServerSupportsDualVideo)
+            {
+                playModeLabels[0] = Loc.T(L.AetherStream.PlayModeBoth);
+                playModeLabels[1] = Loc.T(L.AetherStream.PlayModeAOnly);
+                playModeLabels[2] = Loc.T(L.AetherStream.PlayModeBOnly);
+                Gap(Metrics.Space.Md);
+                SectionLabel(Loc.T(L.AetherStream.PartyScreens));
+                var mode = DrawChoiceStrip("aetherstream.partyPlayMode", playModeLabels,
+                    (int)configuration.VideoPartyPlayMode, Loc.T(L.AetherStream.PartyPlayModeHint), scale);
+                watchAlong.SetPartyPlayMode((VideoPlayMode)mode);
+                return;
+            }
+
+            if (watchAlong.ServerLacksDualVideo && (suite.ChannelB.Current is not null || suite.PlayerB.HasMedia))
+            {
+                Gap(Metrics.Space.Md);
+                DrawNote(Loc.T(L.AetherStream.ServerLacksDualVideo), scale);
+            }
+
+            return;
+        }
+
+        if (!watchAlong.ServerSupportsDualVideo || !watchAlong.RoomHasChannelB)
+        {
+            return;
+        }
+
+        watchChoiceLabels[0] = Loc.T(L.AetherStream.WatchChoiceFollowHost);
+        watchChoiceLabels[1] = Loc.T(L.AetherStream.PlayModeAOnly);
+        watchChoiceLabels[2] = Loc.T(L.AetherStream.PlayModeBOnly);
+        watchChoiceLabels[3] = Loc.T(L.AetherStream.PlayModeBoth);
+        Gap(Metrics.Space.Md);
+        SectionLabel(Loc.T(L.AetherStream.PartyScreens));
+        var choice = DrawChoiceStrip("aetherstream.watchChoice", watchChoiceLabels,
+            (int)configuration.VideoWatchChoice, Loc.T(L.AetherStream.WatchChoiceHint), scale);
+        watchAlong.SetWatchChoice((VideoWatchChoice)choice);
     }
 
     private void DrawPartySummary(bool hosting, float scale)

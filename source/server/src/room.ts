@@ -8,6 +8,7 @@ import {
   DANMAKU_RATE,
   DECLINE_DENIED,
   FEATURE_DANMAKU,
+  FEATURE_DUAL_VIDEO,
   FEATURE_PARTY,
   HOST_RATE,
   MAX_ADMITTED,
@@ -35,7 +36,7 @@ export const JOIN_HEADER = "X-Relay-Join";
 // The slot registry asks a room who holds its slot on this path; client requests reach rooms only as /rt.
 export const PROBE_PATH = "/probe";
 
-// nearby: the ticket came from a nearby list, so code is the room's nearby code and the join always needs approval.
+// nearby: the ticket came from a nearby list, so code is the room's nearby code rather than the room code.
 export interface JoinTicket {
   role: "host" | "viewer";
   code: string;
@@ -95,7 +96,8 @@ interface NearbySpot {
 }
 
 // nearby stays null until the host's state turns discovery on, so a private party keeps its attachment as small as
-// before.
+// before. nearbyFollowsApproval: a join from the nearby list waits for approval only when approvalRequired is on; until
+// the current host's state says so, it always waits, because 1.3.6.0 and earlier tell their hosts it does.
 interface RoomState {
   code: string;
   address: string;
@@ -105,6 +107,7 @@ interface RoomState {
   pendingTransfer: string | null;
   nextSequence: number;
   approvalRequired: boolean;
+  nearbyFollowsApproval: boolean;
   danmakuEnabled: boolean;
   admitted: string[];
   nearby: NearbySpot | null;
@@ -151,7 +154,29 @@ const forwardedStateFields: Readonly<Record<string, "string" | "number" | "boole
   screenRoll: "number",
   screenScale: "number",
   screenCurve: "number",
+  urlB: "string",
+  positionSecondsB: "number",
+  pausedB: "boolean",
+  screenXB: "number",
+  screenYB: "number",
+  screenZB: "number",
+  screenYawB: "number",
+  screenPitchB: "number",
+  screenRollB: "number",
+  screenScaleB: "number",
+  screenCurveB: "number",
 };
+
+const RELAY_FEATURES = FEATURE_PARTY | FEATURE_DANMAKU | FEATURE_DUAL_VIDEO;
+
+// "a" and "b" name the two video channels; the host's play mode adds "both".
+function isChannel(value: unknown): value is "a" | "b" {
+  return value === "a" || value === "b";
+}
+
+function isPlayMode(value: unknown): value is "a" | "b" | "both" {
+  return isChannel(value) || value === "both";
+}
 
 const SUGGESTION_ID = /^[A-Za-z0-9-]{1,64}$/;
 
@@ -264,6 +289,10 @@ function nearbySpot(room: RoomState, message: Message): NearbySpot | null {
   };
 }
 
+function holdsForApproval(room: RoomState, member: Member): boolean {
+  return room.approvalRequired || (member.nearby && !room.nearbyFollowsApproval);
+}
+
 export class PartyRoom extends DurableObject<Env> {
   async fetch(request: Request): Promise<Response> {
     if (isProbe(request)) {
@@ -302,6 +331,7 @@ export class PartyRoom extends DurableObject<Env> {
         pendingTransfer: null,
         nextSequence: 1,
         approvalRequired: false,
+        nearbyFollowsApproval: false,
         danmakuEnabled: true,
         admitted: [],
         nearby: null,
@@ -562,7 +592,7 @@ export class PartyRoom extends DurableObject<Env> {
       type: SignalType.roster,
       hostId: host.id,
       code: room.code,
-      features: FEATURE_PARTY | FEATURE_DANMAKU,
+      features: RELAY_FEATURES,
       participants: this.roster(connections),
       members: this.members(room, connections),
       guestPermissions,
@@ -577,10 +607,14 @@ export class PartyRoom extends DurableObject<Env> {
       }
     }
 
+    if (isPlayMode(message.playMode)) {
+      state.playMode = message.playMode;
+    }
+
     state.upcomingQueue = sharedQueue(message.upcomingQueue);
     state.hostId = host.id;
     state.code = room.code;
-    state.features = FEATURE_PARTY | FEATURE_DANMAKU;
+    state.features = RELAY_FEATURES;
     state.danmakuEnabled = room.danmakuEnabled;
     state.stateAtUnixMs = Date.now();
     state.members = this.members(room, connections);
@@ -599,6 +633,10 @@ export class PartyRoom extends DurableObject<Env> {
     room.grants = readGrants(message.members);
     if (typeof message.approvalRequired === "boolean") {
       room.approvalRequired = message.approvalRequired;
+    }
+
+    if (typeof message.nearbyFollowsApproval === "boolean") {
+      room.nearbyFollowsApproval = message.nearbyFollowsApproval;
     }
 
     if (typeof message.danmakuEnabled === "boolean") {
@@ -626,7 +664,7 @@ export class PartyRoom extends DurableObject<Env> {
     let approvalLifted = false;
     for (const connection of connections) {
       const candidate = connection.member;
-      const lifted = candidate.awaiting && !candidate.nearby && !room.approvalRequired;
+      const lifted = candidate.awaiting && !holdsForApproval(room, candidate);
       if (candidate.pendingJoin || lifted) {
         approvalLifted ||= lifted;
         candidate.pendingJoin = false;
@@ -675,7 +713,7 @@ export class PartyRoom extends DurableObject<Env> {
       return;
     }
 
-    if (!member.pendingJoin && (room.approvalRequired || member.nearby) && !room.admitted.includes(member.id)) {
+    if (!member.pendingJoin && holdsForApproval(room, member) && !room.admitted.includes(member.id)) {
       member.awaiting = true;
       socket.serializeAttachment(member);
       send(socket, { type: SignalType.joinPending, hostId: host.member.id });
@@ -776,9 +814,9 @@ export class PartyRoom extends DurableObject<Env> {
       return;
     }
 
-    // A line names the screen its sender watches ("a" or "b") so two video screens can place it without a relay update.
+    // A line names the screen its sender watches ("a" or "b") so two video screens can place it.
     const forwarded: Message = { type: SignalType.danmakuLine, text, userId: member.id };
-    if (message.screen === "a" || message.screen === "b") {
+    if (isChannel(message.screen)) {
       forwarded.screen = message.screen;
     }
 
@@ -846,13 +884,18 @@ export class PartyRoom extends DurableObject<Env> {
       return;
     }
 
-    send(host.socket, {
+    const request: Message = {
       type: SignalType.controlRequest,
       userId: member.id,
       action: message.action,
       positionSeconds: typeof message.positionSeconds === "number" ? message.positionSeconds : null,
       from: participant(member, member.sequence),
-    });
+    };
+    if (isChannel(message.channel)) {
+      request.channel = message.channel;
+    }
+
+    send(host.socket, request);
   }
 
   // Only the host learns who could not play the video, so it can pick another link; the rest of the room hears
@@ -869,14 +912,19 @@ export class PartyRoom extends DurableObject<Env> {
       return;
     }
 
-    send(host.socket, {
+    const failure: Message = {
       type: SignalType.viewerFailed,
       hostId: host.member.id,
       userId: member.id,
       url,
       reason: cappedText(message.reason, MAX_FAILURE_REASON),
       from: participant(member, member.sequence),
-    });
+    };
+    if (isChannel(message.channel)) {
+      failure.channel = message.channel;
+    }
+
+    send(host.socket, failure);
   }
 
   private onTransfer(socket: WebSocket, member: Member, message: Message): void {
@@ -908,6 +956,7 @@ export class PartyRoom extends DurableObject<Env> {
     previous.member.sequence = room.nextSequence;
     room.nextSequence++;
     room.grants = [];
+    room.nearbyFollowsApproval = false;
     admit(room, previous.member.id);
     next.member.role = "host";
     next.member.room = room;

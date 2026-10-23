@@ -19,7 +19,7 @@ internal readonly record struct PlaybackEnding(MpvEndReason Reason, string? Deta
 internal sealed class MpvRenderer : IDisposable
 {
     private const string Library = "libmpv-2";
-    internal const string RenderKey = "mpv";
+    private readonly string renderKey = DxHandler.NewRenderKey("mpv");
 
     private const int FormatFlag = 3;
     private const int FormatInt64 = 4;
@@ -508,7 +508,7 @@ internal sealed class MpvRenderer : IDisposable
                 return default;
             }
 
-            _ = mpv_get_property(mpvContext, "time-pos", FormatDouble, out double position);
+            var hasPosition = mpv_get_property(mpvContext, "time-pos", FormatDouble, out double position) >= 0;
             _ = mpv_get_property(mpvContext, "duration", FormatDouble, out double duration);
             _ = mpv_get_property(mpvContext, "pause", FormatFlag, out int paused);
             _ = mpv_get_property(mpvContext, "core-idle", FormatFlag, out int coreIdle);
@@ -521,7 +521,7 @@ internal sealed class MpvRenderer : IDisposable
             var videoIsStill = hasVideo
                 && ((mpv_get_property(mpvContext, "current-tracks/video/albumart", FormatFlag, out int albumArt) >= 0 && albumArt == 1)
                     || (mpv_get_property(mpvContext, "current-tracks/video/image", FormatFlag, out int image) >= 0 && image == 1));
-            return new MpvPlaybackInfo(position, duration, paused == 1, coreIdle == 1, seeking == 1,
+            return new MpvPlaybackInfo(position, hasPosition, duration, paused == 1, coreIdle == 1, seeking == 1,
                 pausedForCache == 1, hasVideo && !videoIsStill, hasAudioPosition, hasAudioPosition ? audioPosition : 0d);
         }
     }
@@ -705,7 +705,7 @@ internal sealed class MpvRenderer : IDisposable
             Interlocked.Exchange(ref consecutiveRenderFailures, 0);
 
             var rowPitch = width * 4;
-            DxHandler.RunOnRenderThread(RenderKey, () =>
+            DxHandler.RunOnRenderThread(renderKey, () =>
             {
                 DxHandler.Device?.ImmediateContext.UpdateSubresource(texture, 0, null, snapshot, rowPitch, 0);
             });
@@ -971,7 +971,7 @@ internal sealed class MpvRenderer : IDisposable
         renderThread?.Join(2000);
         eventThread?.Join(2000);
 
-        DxHandler.CancelRenderThreadWork(RenderKey);
+        DxHandler.CancelRenderThreadWork(renderKey);
 
         lock (snapshotLock)
         {
@@ -1025,6 +1025,7 @@ internal sealed class MpvRenderer : IDisposable
 
 internal readonly record struct MpvPlaybackInfo(
     double PositionSeconds,
+    bool HasPosition,
     double DurationSeconds,
     bool Paused,
     bool CoreIdle,

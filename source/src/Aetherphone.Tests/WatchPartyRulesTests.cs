@@ -107,7 +107,18 @@ public sealed class WatchPartyRulesTests
     {
         const string url = "https://youtu.be/abc";
 
-        Assert.Equal(1026d, PartyHostPosition.Report(url, url, restarting: true, 0d, 1026d));
+        Assert.Equal(1026d, PartyHostPosition.Report(url, url, restarting: true, positionUnavailable: true, 0d, 1026d));
+        Assert.Equal(1026d, PartyHostPosition.Report(url, url, restarting: true, positionUnavailable: false, 1000d,
+            1026d));
+    }
+
+    [Fact]
+    public void AHostWithoutAPositionOnTheSameLinkKeepsReportingWhereTheVideoWas()
+    {
+        const string url = "https://youtu.be/abc";
+
+        Assert.Equal(1026d, PartyHostPosition.Report(url, url, restarting: false, positionUnavailable: true, 0d,
+            1026d));
     }
 
     [Fact]
@@ -115,16 +126,20 @@ public sealed class WatchPartyRulesTests
     {
         const string url = "https://youtu.be/abc";
 
-        Assert.Equal(0d, PartyHostPosition.Report(url, url, restarting: false, 0d, 1026d));
-        Assert.Equal(1500d, PartyHostPosition.Report(url, url, restarting: false, 1500d, 1026d));
+        Assert.Equal(0d, PartyHostPosition.Report(url, url, restarting: false, positionUnavailable: false, 0d, 1026d));
+        Assert.Equal(1500d, PartyHostPosition.Report(url, url, restarting: false, positionUnavailable: false, 1500d,
+            1026d));
     }
 
     [Fact]
-    public void AHostOnAnotherLinkReportsItsOwnPositionEvenWhileRestarting()
+    public void AHostOnAnotherLinkReportsItsOwnPositionEvenWhileItHasNone()
     {
         Assert.Equal(0d, PartyHostPosition.Report("https://youtu.be/next", "https://youtu.be/abc", restarting: true,
-            0d, 1026d));
-        Assert.Equal(0d, PartyHostPosition.Report("https://youtu.be/abc", null, restarting: true, 0d, 1026d));
+            positionUnavailable: true, 0d, 1026d));
+        Assert.Equal(0d, PartyHostPosition.Report("https://youtu.be/next", "https://youtu.be/abc", restarting: false,
+            positionUnavailable: true, 0d, 1026d));
+        Assert.Equal(0d, PartyHostPosition.Report("https://youtu.be/abc", null, restarting: false,
+            positionUnavailable: true, 0d, 1026d));
     }
 
     [Theory]
@@ -457,13 +472,25 @@ public sealed class WatchPartyRulesTests
         Assert.Equal(expected, PartyDanmaku.CanSend(features, roomEnabled));
     }
 
+    [Theory]
+    [InlineData("", false, 0, false, (byte)DanmakuRefusal.Empty)]
+    [InlineData("hi", false, 0, false, (byte)DanmakuRefusal.NotInParty)]
+    [InlineData("hi", true, StreamFeature.Party, false, (byte)DanmakuRefusal.Unsupported)]
+    [InlineData("hi", true, StreamFeature.Party | StreamFeature.Danmaku, false, (byte)DanmakuRefusal.OffByHost)]
+    [InlineData("hi", true, StreamFeature.Party | StreamFeature.Danmaku, true, (byte)DanmakuRefusal.None)]
+    public void ADanmakuThatCannotGoOutNamesTheFirstReason(string line, bool inParty, int features, bool roomEnabled,
+        byte expected)
+    {
+        Assert.Equal((DanmakuRefusal)expected, PartyDanmaku.Refusal(line, inParty, features, roomEnabled));
+    }
+
     [Fact]
     public void EachDanmakuLineTakesTheTopmostFreeLaneAndTheRestWait()
     {
         var danmaku = new PartyDanmaku();
         for (var index = 0; index < 4; index++)
         {
-            danmaku.Enqueue("User" + index, "Name", "line " + index, false);
+            danmaku.Enqueue("User" + index, "Name", "line " + index);
         }
 
         danmaku.Release(1_000, 3, MeasureByLength);
@@ -483,8 +510,8 @@ public sealed class WatchPartyRulesTests
     public void ALongFastLineWaitsUntilItCannotCatchTheShortLineAheadOfIt()
     {
         var danmaku = new PartyDanmaku();
-        danmaku.Enqueue("Short", "N", "a", false);
-        danmaku.Enqueue("Long", "N", new string('x', 40), false);
+        danmaku.Enqueue("Short", "N", "a");
+        danmaku.Enqueue("Long", "N", new string('x', 40));
 
         danmaku.Release(1_000, 1, MeasureByLength);
         danmaku.Release(1_000 + PartyDanmaku.TravelMilliseconds * 3 / 10, 1, MeasureByLength);
@@ -500,7 +527,7 @@ public sealed class WatchPartyRulesTests
         var danmaku = new PartyDanmaku();
         for (var index = 0; index < PartyDanmaku.WaitingCapacity + 5; index++)
         {
-            danmaku.Enqueue("User", "N", "line " + index, false);
+            danmaku.Enqueue("User", "N", "line " + index);
         }
 
         Assert.Equal(PartyDanmaku.WaitingCapacity, danmaku.WaitingCount);
@@ -518,10 +545,10 @@ public sealed class WatchPartyRulesTests
     public void HidingSomeoneClearsTheirLinesOnScreenAndInTheQueue()
     {
         var danmaku = new PartyDanmaku();
-        danmaku.Enqueue("Loud", "Loud", "one", false);
-        danmaku.Enqueue("Calm", "Calm", "two", false);
+        danmaku.Enqueue("Loud", "Loud", "one");
+        danmaku.Enqueue("Calm", "Calm", "two");
         danmaku.Release(1_000, 1, MeasureByLength);
-        danmaku.Enqueue("Loud", "Loud", "three", false);
+        danmaku.Enqueue("Loud", "Loud", "three");
 
         danmaku.Hide("Loud");
 
@@ -542,11 +569,11 @@ public sealed class WatchPartyRulesTests
         var danmaku = new PartyDanmaku();
         for (var index = 0; index < PartyDanmaku.WaitingCapacity + 5; index++)
         {
-            danmaku.Enqueue(index % 2 == 0 ? "Calm" : "Loud", "N", "line " + index, false);
+            danmaku.Enqueue(index % 2 == 0 ? "Calm" : "Loud", "N", "line " + index);
         }
 
         danmaku.Hide("Loud");
-        danmaku.Enqueue("Calm", "N", "after", false);
+        danmaku.Enqueue("Calm", "N", "after");
 
         Assert.Equal(16, danmaku.WaitingCount);
         for (var now = 1_000L; now < 4_000; now += 100)
@@ -582,11 +609,10 @@ public sealed class WatchPartyRulesTests
     public void ADanmakuLineCrossesTheScreenInItsTravelTimeAndThenIsGone()
     {
         var danmaku = new PartyDanmaku();
-        danmaku.Enqueue("User", "N", "hello", true);
+        danmaku.Enqueue("User", "N", "hello");
         danmaku.Release(1_000, 3, MeasureByLength);
         var line = FirstStarted(danmaku);
 
-        Assert.True(line.Own);
         Assert.True(PartyDanmaku.TryProgress(line, 1_000 + PartyDanmaku.TravelMilliseconds / 2, out var progress));
         Assert.Equal(0.5f, progress, 3);
         Assert.False(PartyDanmaku.TryProgress(line, 1_000 + PartyDanmaku.TravelMilliseconds, out _));

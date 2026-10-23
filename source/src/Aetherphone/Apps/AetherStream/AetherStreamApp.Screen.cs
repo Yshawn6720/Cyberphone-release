@@ -134,10 +134,22 @@ internal sealed partial class AetherStreamApp
     {
         SocialChrome.DrawScreenHeader(area, Loc.T(L.AetherStream.Screen), Ink, back, ScreenTitleStyle);
         var content = new Rect(new Vector2(area.Min.X, area.Min.Y + AppHeader.Height * scale), area.Max);
-        var engine = screen.Engine;
+        var dual = screen.EngineB.IsActive;
+        if (!dual)
+        {
+            editedScreen = VideoChannel.A;
+        }
+
         using (var surface = AppSurface.BeginEdgeToEdge(content))
         {
             Gap(Metrics.Space.Xs);
+            if (dual)
+            {
+                DrawScreenPicker(scale);
+            }
+
+            var channel = editedScreen;
+            var engine = screen.EngineFor(channel);
             var live = engine.IsActive && engine.ScreenVisible;
             DrawStage(engine, live, scale);
             if (stageDrag != StageDrag.None)
@@ -145,14 +157,22 @@ internal sealed partial class AetherStreamApp
                 surface.CancelDrag();
             }
 
-            DrawStageActions(engine, live, scale);
+            DrawStageActions(engine, channel, live, scale);
             if (live)
             {
-                DrawShapeCard(engine, scale);
+                DrawShapeCard(engine, channel, scale);
                 DrawNudgePad(engine, scale);
             }
 
-            DrawPlacementMemory(engine, live, scale);
+            if (channel == VideoChannel.B)
+            {
+                DrawPlaceBeside(live, scale);
+            }
+            else
+            {
+                DrawPlacementMemory(engine, live, scale);
+            }
+
             DrawFollowHost(scale);
             DrawChatCard(scale);
             DrawDanmakuCard(scale);
@@ -204,7 +224,7 @@ internal sealed partial class AetherStreamApp
                 Ink.MutedInk, TextStyles.Footnote, captionWidth);
         }
 
-        DrawStageToggles(drawList, engine, card, scale);
+        DrawStageToggles(drawList, card, scale);
         EndBlock();
     }
 
@@ -356,7 +376,7 @@ internal sealed partial class AetherStreamApp
         drawList.AddCircleFilled(center, 5.5f * scale, ImGui.GetColorU32(WhiteInk), 20);
     }
 
-    private void DrawStageToggles(ImDrawListPtr drawList, VideoEngine engine, Rect card, float scale)
+    private void DrawStageToggles(ImDrawListPtr drawList, Rect card, float scale)
     {
         var radius = StageToggleRadius * scale;
         var inset = Metrics.Space.Md * scale + radius;
@@ -369,10 +389,12 @@ internal sealed partial class AetherStreamApp
         {
             configuration.VideoScreenVisible = !visible;
             configuration.Save();
-            engine.ScreenVisible = !visible;
+            screen.Engine.ScreenVisible = !visible;
+            screen.EngineB.ScreenVisible = !visible;
             if (visible)
             {
                 suite.PlacingScreen = false;
+                suite.PlacingScreenB = false;
             }
         }
 
@@ -385,7 +407,7 @@ internal sealed partial class AetherStreamApp
         }
     }
 
-    private void DrawStageActions(VideoEngine engine, bool live, float scale)
+    private void DrawStageActions(VideoEngine engine, VideoChannel channel, bool live, float scale)
     {
         Gap(Metrics.Space.Md);
         var gap = Metrics.Space.Sm * scale;
@@ -393,11 +415,11 @@ internal sealed partial class AetherStreamApp
         var row = BeginBlock(tileHeight * 2f + gap);
         var tileWidth = (row.Width - gap) * 0.5f;
         var firstBottom = row.Min.Y + tileHeight;
-        var placing = suite.PlacingScreen;
+        var placing = PlacingScreenFor(channel);
         if (ActionTile(new Rect(row.Min, new Vector2(row.Min.X + tileWidth, firstBottom)), FontAwesomeIcon.ArrowsAlt,
                 Loc.T(placing ? L.AetherStream.PlaceDone : L.AetherStream.PlaceInWorld), placing, live, scale))
         {
-            suite.PlacingScreen = !placing;
+            SetPlacingScreen(channel, !placing);
         }
 
         var middleLeft = row.Min.X + tileWidth + gap;
@@ -418,9 +440,13 @@ internal sealed partial class AetherStreamApp
         if (ActionTile(new Rect(new Vector2(middleLeft, secondTop), row.Max), FontAwesomeIcon.Expand,
                 Loc.T(L.AetherStream.LargeScreen), false, live, scale) && engine.PlaceLargeScreen())
         {
-            suite.PlacingScreen = false;
+            SetPlacingScreen(channel, false);
             stageDrag = StageDrag.None;
-            configuration.VideoScreenCurve = engine.ScreenCurve;
+            if (channel == VideoChannel.A)
+            {
+                configuration.VideoScreenCurve = engine.ScreenCurve;
+            }
+
             if (watchAlong.IsViewing)
             {
                 configuration.VideoFollowHostScreen = false;
@@ -487,7 +513,7 @@ internal sealed partial class AetherStreamApp
         new(new Vector2(card.Min.X + pad, top + index * rowHeight),
             new Vector2(card.Max.X - pad, top + (index + 1) * rowHeight));
 
-    private void DrawShapeCard(VideoEngine engine, float scale)
+    private void DrawShapeCard(VideoEngine engine, VideoChannel channel, float scale)
     {
         Gap(Metrics.Space.Md);
         SectionLabel(Loc.T(L.AetherStream.SizeAndAngle));
@@ -529,8 +555,11 @@ internal sealed partial class AetherStreamApp
         if (curveChanged)
         {
             engine.ScreenCurve = curve;
-            configuration.VideoScreenCurve = engine.ScreenCurve;
-            SaveSoon();
+            if (channel == VideoChannel.A)
+            {
+                configuration.VideoScreenCurve = engine.ScreenCurve;
+                SaveSoon();
+            }
         }
     }
 
@@ -960,6 +989,12 @@ internal sealed partial class AetherStreamApp
             Gap(Metrics.Space.Sm);
             DrawNote(Loc.T(L.AetherStream.HostScreenFarAway), scale);
         }
+
+        if (watchAlong.HostScreenBOutOfReach)
+        {
+            Gap(Metrics.Space.Sm);
+            DrawNote(Loc.T(L.AetherStream.HostScreenBFarAway), scale);
+        }
     }
 
     private void DrawChatCard(float scale)
@@ -1017,6 +1052,7 @@ internal sealed partial class AetherStreamApp
             if (!shownNext)
             {
                 watchAlong.Danmaku.Clear();
+                watchAlong.DanmakuB.Clear();
             }
         }
 
@@ -1092,14 +1128,19 @@ internal sealed partial class AetherStreamApp
         {
             configuration.VideoSpatialAudio = spatialOn;
             configuration.Save();
-            video.SpatialAudio = spatialOn;
+            suite.ApplyPlayerSettings();
         }
 
         if (rangeChanged)
         {
             configuration.VideoSpatialRange = range;
-            video.SpatialRange = range;
+            suite.ApplyPlayerSettings();
             SaveSoon();
+        }
+
+        if (screen.EngineB.IsActive)
+        {
+            DrawMainScreenChoice(scale);
         }
     }
 

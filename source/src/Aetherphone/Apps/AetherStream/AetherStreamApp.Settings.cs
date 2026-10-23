@@ -30,7 +30,7 @@ internal sealed partial class AetherStreamApp
     {
         SocialChrome.DrawScreenHeader(area, Loc.T(L.AetherStream.SettingsTitle), Ink, back, ScreenTitleStyle);
         var content = new Rect(new Vector2(area.Min.X, area.Min.Y + AppHeader.Height * scale), area.Max);
-        var dependencies = screen.Engine.Dependencies;
+        var dependencies = screen.Dependencies;
         qualityMenu.Gate();
         using (AppSurface.Begin(content))
         {
@@ -53,7 +53,7 @@ internal sealed partial class AetherStreamApp
             {
                 configuration.VideoMuteInBackground = muteInBackground;
                 configuration.Save();
-                video.MuteInBackground = muteInBackground;
+                suite.ApplyPlayerSettings();
             }
 
             if (HiddenApps.AethernetEnabled)
@@ -119,14 +119,14 @@ internal sealed partial class AetherStreamApp
             {
                 configuration.VideoHardwareDecoding = hardwareDecoding;
                 configuration.Save();
-                video.HardwareDecoding = hardwareDecoding;
+                suite.ApplyPlayerSettings();
             }
 
             if (allowInsecure != configuration.VideoAllowInsecureDirectUrls)
             {
                 configuration.VideoAllowInsecureDirectUrls = allowInsecure;
                 configuration.Save();
-                video.AllowInsecureDirectUrls = allowInsecure;
+                suite.ApplyPlayerSettings();
             }
 
             Gap(Metrics.Space.Md);
@@ -256,7 +256,7 @@ internal sealed partial class AetherStreamApp
 
         configuration.VideoMaxQualityHeight = QualityOptions[picked];
         configuration.Save();
-        video.MaxQualityHeight = QualityOptions[picked];
+        suite.ApplyPlayerSettings();
     }
 
     private void DrawDependencyAction(Rect row, MediaDependencies dependencies, MediaDependency dependency,
