@@ -3,7 +3,7 @@
     "Author": "XeldarAlz; Cyberphone fork by Yshawn6720",
     "Name": "Cyberphone",
     "InternalName": "Cyberphone",
-    "AssemblyVersion": "1.3.7.0",
+    "AssemblyVersion": "1.3.8.0",
     "Description": "An in-game smartphone for the Traditional Chinese client. Unofficial fork of Aetherphone by XeldarAlz (AGPL-3.0-or-later); it is not affiliated with Aetherphone and never connects to the official Aethernet service.",
     "ApplicableVersion": "any",
     "RepoUrl": "https://github.com/Yshawn6720/Cyberphone-release",
@@ -24,12 +24,12 @@
     "IconUrl": "https://raw.githubusercontent.com/Yshawn6720/Cyberphone-release/main/images/icon.png",
     "Punchline": "A smartphone for the Traditional Chinese client.",
     "AcceptsFeedback": true,
-    "DownloadLinkInstall": "https://github.com/Yshawn6720/Cyberphone-release/releases/download/v1.3.7.0-0d3ab6e/Cyberphone.zip",
-    "DownloadLinkUpdate": "https://github.com/Yshawn6720/Cyberphone-release/releases/download/v1.3.7.0-0d3ab6e/Cyberphone.zip",
-    "DownloadLinkTesting": "https://github.com/Yshawn6720/Cyberphone-release/releases/download/v1.3.7.0-0d3ab6e/Cyberphone.zip",
+    "DownloadLinkInstall": "https://github.com/Yshawn6720/Cyberphone-release/releases/download/v1.3.8.0-cf33542/Cyberphone.zip",
+    "DownloadLinkUpdate": "https://github.com/Yshawn6720/Cyberphone-release/releases/download/v1.3.8.0-cf33542/Cyberphone.zip",
+    "DownloadLinkTesting": "https://github.com/Yshawn6720/Cyberphone-release/releases/download/v1.3.8.0-cf33542/Cyberphone.zip",
     "IsHide": false,
     "IsTestingExclusive": false,
-    "LastUpdate": 1792730962,
-    "Changelog": "MogCast 雙螢幕：新增影片時可選「螢幕 B」，在世界中再開一台螢幕播放另一部影片，兩台各自播放；看片派對中主持人可設定預設播放方式（都播、僅 A、僅 B），成員也能自己改（需要伺服器支援雙螢幕，舊版伺服器只會看到螢幕 A）。新增 /cphone dm <文字> 直接在對話框送出派對彈幕，自己送的彈幕不再加外框。從「附近的聚會」加入時改照主持人的「加入需要批准」設定，沒勾就直接進房。派對主持人的播放器重新開始播放時，觀眾不會再被拉回片頭。"
+    "LastUpdate": 1792739966,
+    "Changelog": "MogCast 雙螢幕聲音切換：兩台都在播時，播放頁多一列「聲音」（螢幕 A／螢幕 B／都播），點一下就換那台出聲、另一台自動靜音；選「都播」時兩台各有音量列，可以單獨靜音。聲音設定只存在自己這台。螢幕 B 更好開：播放頁多一顆「在螢幕 B 播放」，佇列和觀看紀錄也能直接送到螢幕 B。新增拼接大螢幕：「螢幕位置」頁的「左右拼接」和「上下拼接」會在鏡頭前把 A、B 拼成一面大螢幕。"
   }
 ]
