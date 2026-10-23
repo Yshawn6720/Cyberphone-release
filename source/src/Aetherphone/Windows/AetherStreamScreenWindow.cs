@@ -5,6 +5,7 @@ using Aetherphone.Core.Theme;
 using Aetherphone.Core.Video;
 using Aetherphone.Windows.Components;
 using Dalamud.Bindings.ImGui;
+using Dalamud.Interface;
 using Dalamud.Interface.Windowing;
 
 namespace Aetherphone.Windows;
@@ -280,12 +281,18 @@ internal sealed class AetherStreamScreenWindow : Window
     private void DrawVolume(Rect row, float opacity)
     {
         var configuration = Plugin.Cfg;
+        var silent = suite.Volumes.A == 0;
         ImGui.PushStyleVar(ImGuiStyleVar.Alpha, ImGui.GetStyle().Alpha * opacity);
-        var result = VolumeSlider.Draw("video.fullscreen.volume", row, configuration.VideoVolume, PhoneTheme.Default);
+        var result = VolumeSlider.Draw("video.fullscreen.volume", row, configuration.VideoVolume, PhoneTheme.Default,
+            icon: silent ? FontAwesomeIcon.VolumeMute : null);
         ImGui.PopStyleVar();
         if (result.Dragging && Math.Abs(result.Value - configuration.VideoVolume) > 0.001f)
         {
             configuration.VideoVolume = result.Value;
+            if (configuration.VideoHearBothScreens)
+            {
+                configuration.VideoMuteScreenA = false;
+            }
         }
 
         if (result.Released)

@@ -42,6 +42,12 @@ internal sealed partial class AetherStreamApp
         addSheet.Open();
     }
 
+    private void OpenAddSheetForScreenB()
+    {
+        OpenAddSheet();
+        addTargetsScreenB = true;
+    }
+
     private void DrawAddSheet(Rect area, float scale)
     {
         var viewing = watchAlong.IsViewing;
@@ -165,29 +171,44 @@ internal sealed partial class AetherStreamApp
         }
 
         var input = MediaInput.Normalize(raw);
-        if (input.Length == 0)
+        if (!AcceptedOnScreenB(input))
         {
             return;
         }
 
-        var localPath = MediaInput.LooksLikeLocalPath(input);
-        if (!localPath && !VideoEngine.ValidateURL(input, out _))
-        {
-            ShellToast.Show(Loc.T(L.AetherStream.NotALink));
-            return;
-        }
-
-        if (!localPath && VideoUrlResolver.IsPlaylistUrl(input) && !VideoUrlResolver.NamesOneVideo(input))
-        {
-            ShellToast.Show(Loc.T(L.AetherStream.ScreenBOneVideo));
-            return;
-        }
-
+        PlayOnScreenB(queue.CreateDisplayEntry(input), 0d);
         linkInput = string.Empty;
-        CancelPendingJoin();
-        suite.ChannelB.Play(input);
         addSheet.Close();
+    }
+
+    private bool PlayOnScreenB(VideoQueueEntry entry, double startSeconds)
+    {
+        if (!AcceptedOnScreenB(entry.Url))
+        {
+            return false;
+        }
+
+        CancelPendingJoin();
+        suite.ChannelB.Play(entry, startSeconds);
         activeTab = StreamTab.Watch;
+        return true;
+    }
+
+    private static bool AcceptedOnScreenB(string input)
+    {
+        switch (DualVideo.CheckScreenBLink(input))
+        {
+            case ScreenBLink.Empty:
+                return false;
+            case ScreenBLink.NotALink:
+                ShellToast.Show(Loc.T(L.AetherStream.NotALink));
+                return false;
+            case ScreenBLink.Playlist:
+                ShellToast.Show(Loc.T(L.AetherStream.ScreenBOneVideo));
+                return false;
+        }
+
+        return true;
     }
 
     private void SubmitInput(string raw) => SubmitInput(raw, addMode);

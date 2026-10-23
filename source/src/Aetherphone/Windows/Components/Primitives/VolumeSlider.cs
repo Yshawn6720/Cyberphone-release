@@ -27,6 +27,9 @@ internal static class VolumeSlider
         return new Slider.Result(scaled, result.Dragging, result.Released, result.Track);
     }
 
+    public static Rect IconArea(Rect row) =>
+        new(row.Min, new Vector2(row.Min.X + IconColumn * UiScale.Current, row.Max.Y));
+
     private static void DrawReadout(Rect row, float value, PhoneTheme theme)
     {
         var text = $"{(int)MathF.Round(value * 100f)}%";

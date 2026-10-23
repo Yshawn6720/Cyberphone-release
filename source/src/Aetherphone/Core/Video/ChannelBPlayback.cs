@@ -32,12 +32,17 @@ internal sealed class ChannelBPlayback : IDisposable
             return;
         }
 
+        Play(queue.CreateDisplayEntry(url), startSeconds, playing);
+    }
+
+    internal void Play(VideoQueueEntry entry, double startSeconds = 0d, bool playing = true)
+    {
         NotePosition();
-        var entry = queue.CreateDisplayEntry(url);
+        queue.EnrichIfYouTube(entry);
         Current = entry;
         remembered = true;
         library.NotePlayed(entry);
-        player.Play(url, startSeconds, playing);
+        player.Play(entry.Url, startSeconds, playing);
         Changed?.Invoke();
     }
 

@@ -24,6 +24,20 @@ internal sealed class ScreenController : IDisposable
 
     internal VideoEngine EngineFor(VideoChannel channel) => channel == VideoChannel.B ? EngineB : Engine;
 
+    internal bool BothActive => Engine.IsActive && EngineB.IsActive;
+
+    internal bool PlaceScreenWall(ScreenWallLayout layout)
+    {
+        if (!BothActive || !ScreenPainter.TryScreenWallPoses(layout, out var first, out var second))
+        {
+            return false;
+        }
+
+        Engine.PlaceFlat(first);
+        EngineB.PlaceFlat(second);
+        return true;
+    }
+
     private void OnNamePlateUpdate(INamePlateUpdateContext context, IReadOnlyList<INamePlateUpdateHandler> handlers)
     {
         var nearA = Engine.IsActive;

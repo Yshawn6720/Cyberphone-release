@@ -23,9 +23,27 @@ internal enum VideoWatchChoice : byte
     Both,
 }
 
+internal enum ScreenSoundChoice : byte
+{
+    A,
+    B,
+    Both,
+}
+
+internal enum ScreenBLink : byte
+{
+    Empty,
+    Playable,
+    NotALink,
+    Playlist,
+}
+
 internal readonly record struct ChannelView(bool ShowA, bool ShowB);
 
 internal readonly record struct ChannelVolumes(int A, int B);
+
+internal readonly record struct ScreenSound(VideoChannel MainChannel, bool BothScreens, int Volume, int VolumeB,
+    bool MutedA, bool MutedB);
 
 internal static class DualVideo
 {
@@ -78,15 +96,60 @@ internal static class DualVideo
 
     internal static ChannelView LocalView(bool playingA, bool playingB) => new(playingA || !playingB, playingB);
 
-    internal static ChannelVolumes Volumes(int volume, bool spatialAudio, VideoChannel mainChannel, bool playingA,
-        bool playingB)
+    internal static ChannelVolumes Volumes(in ScreenSound sound, bool liveA, bool liveB)
     {
-        if (spatialAudio || !playingA || !playingB)
+        if (!liveA || !liveB)
         {
-            return new ChannelVolumes(volume, volume);
+            return new ChannelVolumes(sound.Volume, sound.Volume);
         }
 
-        return mainChannel == VideoChannel.B ? new ChannelVolumes(0, volume) : new ChannelVolumes(volume, 0);
+        if (sound.BothScreens)
+        {
+            return new ChannelVolumes(sound.MutedA ? 0 : sound.Volume, sound.MutedB ? 0 : sound.VolumeB);
+        }
+
+        return sound.MainChannel == VideoChannel.B
+            ? new ChannelVolumes(0, sound.Volume)
+            : new ChannelVolumes(sound.Volume, 0);
+    }
+
+    internal static ScreenSoundChoice SoundChoice(in ScreenSound sound)
+    {
+        if (sound.BothScreens)
+        {
+            return ScreenSoundChoice.Both;
+        }
+
+        return sound.MainChannel == VideoChannel.B ? ScreenSoundChoice.B : ScreenSoundChoice.A;
+    }
+
+    internal static ScreenSound Pick(in ScreenSound sound, ScreenSoundChoice choice) => choice switch
+    {
+        ScreenSoundChoice.Both => sound with { BothScreens = true },
+        ScreenSoundChoice.B => sound with { BothScreens = false, MainChannel = VideoChannel.B },
+        _ => sound with { BothScreens = false, MainChannel = VideoChannel.A },
+    };
+
+    internal static ScreenBLink CheckScreenBLink(string input)
+    {
+        if (input.Length == 0)
+        {
+            return ScreenBLink.Empty;
+        }
+
+        if (MediaInput.LooksLikeLocalPath(input))
+        {
+            return ScreenBLink.Playable;
+        }
+
+        if (!VideoEngine.ValidateURL(input, out _))
+        {
+            return ScreenBLink.NotALink;
+        }
+
+        return VideoUrlResolver.IsPlaylistUrl(input) && !VideoUrlResolver.NamesOneVideo(input)
+            ? ScreenBLink.Playlist
+            : ScreenBLink.Playable;
     }
 
     internal static VideoChannel WatchedScreen(ChannelView view, VideoChannel mainChannel)

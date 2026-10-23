@@ -62,10 +62,27 @@ internal sealed class VideoSuite : IDisposable
         player.MuteInBackground = configuration.VideoMuteInBackground;
     }
 
+    internal bool BothScreensPlaying => Player.HasMedia && PlayerB.HasMedia;
+
+    internal ScreenSound Sound => new(configuration.VideoMainChannel, configuration.VideoHearBothScreens,
+        Percent(configuration.VideoVolume), Percent(configuration.VideoVolumeB), configuration.VideoMuteScreenA,
+        configuration.VideoMuteScreenB);
+
+    internal ChannelVolumes Volumes => DualVideo.Volumes(Sound, Player.HasMedia, PlayerB.HasMedia);
+
+    internal void PickSound(ScreenSoundChoice choice)
+    {
+        var picked = DualVideo.Pick(Sound, choice);
+        configuration.VideoMainChannel = picked.MainChannel;
+        configuration.VideoHearBothScreens = picked.BothScreens;
+        configuration.Save();
+    }
+
+    private static int Percent(float volume) => (int)(volume * 100);
+
     private void ApplyChannelVolumes()
     {
-        var volumes = DualVideo.Volumes((int)(configuration.VideoVolume * 100), configuration.VideoSpatialAudio,
-            configuration.VideoMainChannel, Player.HasMedia, PlayerB.HasMedia);
+        var volumes = Volumes;
         Player.SetVolume(volumes.A);
         PlayerB.SetVolume(volumes.B);
     }

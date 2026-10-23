@@ -2,6 +2,12 @@ namespace Aetherphone.Core.Video;
 
 internal readonly record struct ScreenPose(Vector3 Position, float Yaw, float Pitch, float Roll, float Scale);
 
+internal enum ScreenWallLayout : byte
+{
+    SideBySide,
+    Stacked,
+}
+
 internal static class ScreenGeometry
 {
     internal const float HalfWidth = 1.0f;
@@ -10,7 +16,33 @@ internal static class ScreenGeometry
     private const float LargeScreenViewShare = 0.85f;
 
     internal static bool TryLargeScreen(Vector3 cameraPosition, Vector3 cameraTarget, float fieldOfView,
-        float aspectRatio, out ScreenPose pose)
+        float aspectRatio, out ScreenPose pose) =>
+        TryFillView(cameraPosition, cameraTarget, fieldOfView, aspectRatio, HalfWidth, HalfHeight, out pose);
+
+    internal static bool TryScreenWall(Vector3 cameraPosition, Vector3 cameraTarget, float fieldOfView,
+        float aspectRatio, ScreenWallLayout layout, out ScreenPose first, out ScreenPose second)
+    {
+        first = default;
+        second = default;
+        var sideBySide = layout == ScreenWallLayout.SideBySide;
+        var wallHalfWidth = sideBySide ? 2f * HalfWidth : HalfWidth;
+        var wallHalfHeight = sideBySide ? HalfHeight : 2f * HalfHeight;
+        if (!TryFillView(cameraPosition, cameraTarget, fieldOfView, aspectRatio, wallHalfWidth, wallHalfHeight,
+                out var center))
+        {
+            return false;
+        }
+
+        var toSecond = sideBySide
+            ? Right(center) * (HalfWidth * center.Scale)
+            : Up(center) * (-HalfHeight * center.Scale);
+        first = center with { Position = center.Position - toSecond };
+        second = center with { Position = center.Position + toSecond };
+        return true;
+    }
+
+    private static bool TryFillView(Vector3 cameraPosition, Vector3 cameraTarget, float fieldOfView,
+        float aspectRatio, float halfWidth, float halfHeight, out ScreenPose pose)
     {
         pose = default;
         var direction = cameraTarget - cameraPosition;
@@ -26,7 +58,7 @@ internal static class ScreenGeometry
         var forward = direction / MathF.Sqrt(lengthSquared);
         var halfViewHeight = LargeScreenDistance * MathF.Tan(fieldOfView * 0.5f);
         var scale = LargeScreenViewShare
-            * MathF.Min(halfViewHeight / HalfHeight, halfViewHeight * aspectRatio / HalfWidth);
+            * MathF.Min(halfViewHeight / halfHeight, halfViewHeight * aspectRatio / halfWidth);
         pose = new ScreenPose(cameraPosition + forward * LargeScreenDistance,
             MathF.Atan2(-forward.X, -forward.Z), MathF.Asin(Math.Clamp(forward.Y, -1f, 1f)), 0f,
             Math.Clamp(scale, VideoEngine.MinScreenScale, VideoEngine.MaxScreenScale));

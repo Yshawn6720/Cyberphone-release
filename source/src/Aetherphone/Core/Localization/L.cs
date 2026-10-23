@@ -8219,9 +8219,16 @@ internal static class L
             "This party server can't share Screen B, so members only see Screen A.");
         public static readonly LocString PlaceBesideScreenA = new("aetherstream.placeBesideScreenA",
             "Place Beside Screen A");
-        public static readonly LocString MainScreen = new("aetherstream.mainScreen", "Main screen");
-        public static readonly LocString MainScreenHint = new("aetherstream.mainScreenHint",
-            "If sound doesn't fade with distance, you only hear the main screen. If it does, you hear each screen by how close you are.");
+        public static readonly LocString ScreenSound = new("aetherstream.screenSound", "Sound");
+        public static readonly LocString ScreenSoundOneHint = new("aetherstream.screenSoundOneHint",
+            "Only the screen you pick plays sound. Pick Both to hear the two together.");
+        public static readonly LocString ScreenSoundBothHint = new("aetherstream.screenSoundBothHint",
+            "Each screen has its own volume. Tap a speaker to mute or unmute that screen.");
+        public static readonly LocString PlayOnScreenB = new("aetherstream.playOnScreenB", "Play on Screen B");
+        public static readonly LocString WallSideBySide = new("aetherstream.wallSideBySide", "Side by Side");
+        public static readonly LocString WallStacked = new("aetherstream.wallStacked", "Stacked");
+        public static readonly LocString WallHint = new("aetherstream.wallHint",
+            "Joins Screens A and B edge to edge in front of your camera, like one big screen.");
     }
 
     internal static class Relay

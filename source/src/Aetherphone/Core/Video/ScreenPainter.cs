@@ -617,6 +617,26 @@ internal sealed unsafe class ScreenPainter : IDisposable
 	internal static bool TryLargeScreenPose(out ScreenPose pose)
 	{
 		pose = default;
+		return TryActiveCamera(out var position, out var target, out var fieldOfView, out var aspectRatio)
+			&& ScreenGeometry.TryLargeScreen(position, target, fieldOfView, aspectRatio, out pose);
+	}
+
+	internal static bool TryScreenWallPoses(ScreenWallLayout layout, out ScreenPose first, out ScreenPose second)
+	{
+		first = default;
+		second = default;
+		return TryActiveCamera(out var position, out var target, out var fieldOfView, out var aspectRatio)
+			&& ScreenGeometry.TryScreenWall(position, target, fieldOfView, aspectRatio, layout, out first,
+				out second);
+	}
+
+	private static bool TryActiveCamera(out Vector3 position, out Vector3 target, out float fieldOfView,
+		out float aspectRatio)
+	{
+		position = default;
+		target = default;
+		fieldOfView = 0f;
+		aspectRatio = 0f;
 		var manager = GameControl.CameraManager.Instance();
 		var gameCamera = manager == null ? null : manager->GetActiveCamera();
 		if (gameCamera == null)
@@ -626,8 +646,16 @@ internal sealed unsafe class ScreenPainter : IDisposable
 
 		var camera = &gameCamera->CameraBase.SceneCamera;
 		var renderCamera = camera->RenderCamera;
-		return renderCamera != null && ScreenGeometry.TryLargeScreen(ToNumerics(camera->Position),
-			ToNumerics(camera->LookAtVector), renderCamera->FoV, renderCamera->AspectRatio, out pose);
+		if (renderCamera == null)
+		{
+			return false;
+		}
+
+		position = ToNumerics(camera->Position);
+		target = ToNumerics(camera->LookAtVector);
+		fieldOfView = renderCamera->FoV;
+		aspectRatio = renderCamera->AspectRatio;
+		return true;
 	}
 
 	private NumericsMatrix4x4? ComputeWorldViewProj()

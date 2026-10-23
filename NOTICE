@@ -205,6 +205,23 @@ Modifications (AGPL-3.0 section 5(a)), first made 2026-10-21:
               so hosts on 1.3.6.0 and earlier, whose settings say such a join
               always waits, keep holding it for approval. Jam joins from the
               nearby list still always wait.
+- 2026-10-23  With both MogCast screens playing, the Watch page shows a Sound
+              row (Screen A, Screen B, Both) above the Screen B card. Only the
+              picked screen is heard, so picking the other one moves the
+              sound in one tap; Both plays the two together, each with its own
+              volume and a speaker that mutes it. A screen that fails or
+              stops hands the sound to the other until it plays again. Sound
+              fading with distance no longer decides which screen is heard,
+              and the main screen choice left the Screen page.
+- 2026-10-23  Screen B is easier to reach: while it is empty and screen A has
+              a video, the Watch page shows Play on Screen B, which opens the
+              add sheet with Screen B picked, and queue and history rows offer
+              the same action, keeping the title and thumbnail (a queue entry
+              leaves the queue, a history entry resumes where it stopped).
+              Viewers do not see these entries. While both screens are up,
+              Side by Side and Stacked under Big Screen join A and B edge to
+              edge in front of the camera as one flat wall, A on the left or
+              top.
 
 Corresponding source: the Git repository above, at the commit whose version
 matches the build. Upstream's original README is kept in

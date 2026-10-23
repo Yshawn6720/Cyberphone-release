@@ -586,7 +586,7 @@ internal sealed class AetherStreamQueue : IDisposable
         }).ConfigureAwait(false);
     }
 
-    private void EnrichIfYouTube(VideoQueueEntry entry)
+    internal void EnrichIfYouTube(VideoQueueEntry entry)
     {
         if (entry.EnrichRequested || MediaInput.LooksLikeLocalPath(entry.Url) || !VideoUrlResolver.IsYouTubeUrl(entry.Url))
         {

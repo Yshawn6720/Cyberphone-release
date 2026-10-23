@@ -456,6 +456,11 @@ internal sealed partial class AetherStreamApp
         }
 
         EndBlock();
+        if (screen.BothActive)
+        {
+            DrawScreenWall(live, scale);
+        }
+
         if (placing)
         {
             Gap(Metrics.Space.Sm);
@@ -1136,11 +1141,6 @@ internal sealed partial class AetherStreamApp
             configuration.VideoSpatialRange = range;
             suite.ApplyPlayerSettings();
             SaveSoon();
-        }
-
-        if (screen.EngineB.IsActive)
-        {
-            DrawMainScreenChoice(scale);
         }
     }
 

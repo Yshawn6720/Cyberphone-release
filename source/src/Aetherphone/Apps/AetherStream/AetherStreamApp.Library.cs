@@ -30,6 +30,7 @@ internal sealed partial class AetherStreamApp
     private const int RowActionAddToQueue = 2;
     private const int RowActionRemove = 3;
     private const int RowActionSuggest = 4;
+    private const int RowActionPlayOnScreenB = 5;
     private const int QueueActionShuffle = 10;
     private const int QueueActionSave = 11;
     private const int QueueActionClear = 12;
@@ -262,6 +263,11 @@ internal sealed partial class AetherStreamApp
                 AddAction(RowActionPlayNext, Loc.T(L.AetherStream.PlayNext));
             }
 
+            if (!watchAlong.IsViewing && !LocalMediaToken.IsToken(entry.Url))
+            {
+                AddAction(RowActionPlayOnScreenB, Loc.T(L.AetherStream.PlayOnScreenB));
+            }
+
             AddAction(RowActionRemove, Loc.T(L.AetherStream.Remove), danger: true);
             actions.Open();
         }
@@ -314,6 +320,13 @@ internal sealed partial class AetherStreamApp
                 return;
             case RowActionRemove:
                 queue.Remove(entry);
+                return;
+            case RowActionPlayOnScreenB:
+                if (PlayOnScreenB(entry, 0d))
+                {
+                    queue.Remove(entry);
+                }
+
                 return;
         }
     }
@@ -478,6 +491,7 @@ internal sealed partial class AetherStreamApp
                 : L.AetherStream.PlayNow));
             AddAction(RowActionPlayNext, Loc.T(L.AetherStream.PlayNext));
             AddAction(RowActionAddToQueue, Loc.T(L.AetherStream.AddToQueue));
+            AddAction(RowActionPlayOnScreenB, Loc.T(L.AetherStream.PlayOnScreenB));
         }
 
         AddAction(RowActionRemove, Loc.T(L.AetherStream.HistoryRemove), danger: true);
@@ -508,6 +522,9 @@ internal sealed partial class AetherStreamApp
                 return;
             case RowActionRemove:
                 library.RemoveHistory(record);
+                return;
+            case RowActionPlayOnScreenB:
+                PlayOnScreenB(HistoryEntry(record), record.PositionSeconds);
                 return;
         }
     }

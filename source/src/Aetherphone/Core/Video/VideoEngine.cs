@@ -944,10 +944,15 @@ internal sealed class VideoEngine : IDisposable
             return false;
         }
 
+        PlaceFlat(pose);
+        return true;
+    }
+
+    internal void PlaceFlat(in ScreenPose pose)
+    {
         ScreenSpawnAnchor = pose.Position;
         ScreenCurve = 0f;
         SetScreenTransform(pose.Position, pose.Yaw, pose.Pitch, pose.Roll, pose.Scale);
-        return true;
     }
 
     internal void FaceLocalPlayer()

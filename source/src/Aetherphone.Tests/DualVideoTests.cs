@@ -7,6 +7,9 @@ namespace Aetherphone.Tests;
 
 public sealed class DualVideoTests
 {
+    private static readonly ScreenSound ScreenAPicked = new(VideoChannel.A, BothScreens: false, Volume: 60,
+        VolumeB: 40, MutedA: false, MutedB: false);
+
     [Theory]
     [InlineData((byte)VideoPlayMode.Both, true, true)]
     [InlineData((byte)VideoPlayMode.A, true, false)]
@@ -75,31 +78,79 @@ public sealed class DualVideoTests
     [Theory]
     [InlineData((byte)VideoChannel.A, 60, 0)]
     [InlineData((byte)VideoChannel.B, 0, 60)]
-    public void WithoutSpatialAudioOnlyTheMainScreenIsHeard(byte main, int volumeA, int volumeB)
+    public void ByDefaultOnlyTheMainScreenIsHeardAtTheSharedVolume(byte main, int volumeA, int volumeB)
     {
-        var volumes = DualVideo.Volumes(60, spatialAudio: false, (VideoChannel)main, playingA: true, playingB: true);
+        var sound = ScreenAPicked with { MainChannel = (VideoChannel)main };
 
-        Assert.Equal(new ChannelVolumes(volumeA, volumeB), volumes);
+        Assert.Equal(new ChannelVolumes(volumeA, volumeB), DualVideo.Volumes(sound, liveA: true, liveB: true));
     }
 
     [Fact]
-    public void WithSpatialAudioBothScreensAreHeard()
+    public void PickingScreenBMovesTheSoundToBAndSilencesAInOneStep()
     {
-        var volumes = DualVideo.Volumes(60, spatialAudio: true, VideoChannel.A, playingA: true, playingB: true);
+        var picked = DualVideo.Pick(ScreenAPicked, ScreenSoundChoice.B);
 
-        Assert.Equal(new ChannelVolumes(60, 60), volumes);
+        Assert.Equal(ScreenSoundChoice.B, DualVideo.SoundChoice(picked));
+        Assert.Equal(new ChannelVolumes(0, 60), DualVideo.Volumes(picked, liveA: true, liveB: true));
+        var back = DualVideo.Pick(picked, ScreenSoundChoice.A);
+        Assert.Equal(new ChannelVolumes(60, 0), DualVideo.Volumes(back, liveA: true, liveB: true));
+    }
+
+    [Fact]
+    public void BothScreensPlayTogetherEachAtItsOwnVolumeAndMute()
+    {
+        var both = DualVideo.Pick(ScreenAPicked, ScreenSoundChoice.Both);
+
+        Assert.Equal(ScreenSoundChoice.Both, DualVideo.SoundChoice(both));
+        Assert.Equal(new ChannelVolumes(60, 40), DualVideo.Volumes(both, liveA: true, liveB: true));
+        Assert.Equal(new ChannelVolumes(0, 40),
+            DualVideo.Volumes(both with { MutedA = true }, liveA: true, liveB: true));
+        Assert.Equal(new ChannelVolumes(60, 0),
+            DualVideo.Volumes(both with { MutedB = true }, liveA: true, liveB: true));
+    }
+
+    [Fact]
+    public void MutesOnlyApplyWhileBothScreensPlayTogether()
+    {
+        var muted = ScreenAPicked with { MainChannel = VideoChannel.B, MutedA = true, MutedB = true };
+
+        Assert.Equal(new ChannelVolumes(0, 60), DualVideo.Volumes(muted, liveA: true, liveB: true));
+    }
+
+    [Fact]
+    public void TurningBothOffReturnsToTheScreenPickedBefore()
+    {
+        var onB = DualVideo.Pick(ScreenAPicked, ScreenSoundChoice.B);
+
+        var both = DualVideo.Pick(onB, ScreenSoundChoice.Both);
+
+        Assert.Equal(VideoChannel.B, both.MainChannel);
+        Assert.Equal(new ChannelVolumes(0, 60),
+            DualVideo.Volumes(both with { BothScreens = false }, liveA: true, liveB: true));
     }
 
     [Theory]
-    [InlineData(true, false)]
-    [InlineData(false, true)]
-    public void ALoneScreenIsHeardEvenWhenItIsNotTheMainOne(bool playingA, bool playingB)
+    [InlineData(true, false, (byte)VideoChannel.B, false)]
+    [InlineData(false, true, (byte)VideoChannel.A, false)]
+    [InlineData(true, false, (byte)VideoChannel.A, true)]
+    [InlineData(false, true, (byte)VideoChannel.B, true)]
+    public void ALoneScreenIsHeardAtTheSharedVolumeWhateverWasPicked(bool liveA, bool liveB, byte main, bool both)
     {
-        var main = playingA ? VideoChannel.B : VideoChannel.A;
+        var sound = ScreenAPicked with
+        {
+            MainChannel = (VideoChannel)main, BothScreens = both, MutedA = both, MutedB = both,
+        };
 
-        var volumes = DualVideo.Volumes(60, spatialAudio: false, main, playingA, playingB);
+        Assert.Equal(new ChannelVolumes(60, 60), DualVideo.Volumes(sound, liveA, liveB));
+    }
 
-        Assert.Equal(new ChannelVolumes(60, 60), volumes);
+    [Fact]
+    public void WhenTheHeardScreenStopsTheOtherTakesOverAndItGetsTheSoundBackWhenItPlaysAgain()
+    {
+        var onB = DualVideo.Pick(ScreenAPicked, ScreenSoundChoice.B);
+
+        Assert.Equal(new ChannelVolumes(60, 60), DualVideo.Volumes(onB, liveA: true, liveB: false));
+        Assert.Equal(new ChannelVolumes(0, 60), DualVideo.Volumes(onB, liveA: true, liveB: true));
     }
 
     [Theory]
@@ -147,6 +198,20 @@ public sealed class DualVideoTests
     public void ScreenBNeedsARelayThatAdvertisesBothPartyAndDualVideo(int features, bool supported)
     {
         Assert.Equal(supported, DualVideo.Supported(features));
+    }
+
+    [Theory]
+    [InlineData("", (byte)ScreenBLink.Empty)]
+    [InlineData("hello there", (byte)ScreenBLink.NotALink)]
+    [InlineData("https://www.youtube.com/playlist?list=PLFgquLnL59alCl_2TQvOiD5Vgm1hCaGSI",
+        (byte)ScreenBLink.Playlist)]
+    [InlineData("https://www.youtube.com/watch?v=dQw4w9WgXcQ&list=PLFgquLnL59alCl_2TQvOiD5Vgm1hCaGSI",
+        (byte)ScreenBLink.Playable)]
+    [InlineData("youtube.com/watch?v=dQw4w9WgXcQ", (byte)ScreenBLink.Playable)]
+    [InlineData("C:\\Videos\\show.mkv", (byte)ScreenBLink.Playable)]
+    public void ScreenBTakesOneVideoOrALocalFileButNotAWholePlaylist(string input, byte expected)
+    {
+        Assert.Equal((ScreenBLink)expected, DualVideo.CheckScreenBLink(input));
     }
 
     [Fact]

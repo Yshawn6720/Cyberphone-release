@@ -91,7 +91,7 @@ internal sealed partial class AetherStreamApp
         DrawPromptCard(scale);
         if (screenBOnly)
         {
-            DrawVolume(scale);
+            DrawSound(scale);
         }
 
         DrawScreenBSection(scale);
@@ -347,9 +347,8 @@ internal sealed partial class AetherStreamApp
             ImGui.GetColorU32(Ink.Accent), 2f * scale);
     }
 
-    private void PlayHistory(VideoHistoryRecord record, QueueAddMode mode)
-    {
-        var entry = AetherStreamQueue.FromRecord(new VideoQueueRecord
+    private static VideoQueueEntry HistoryEntry(VideoHistoryRecord record) =>
+        AetherStreamQueue.FromRecord(new VideoQueueRecord
         {
             Url = record.Url,
             Title = record.Title,
@@ -357,6 +356,10 @@ internal sealed partial class AetherStreamApp
             DurationSeconds = record.DurationSeconds,
             ThumbnailUrl = record.ThumbnailUrl,
         });
+
+    private void PlayHistory(VideoHistoryRecord record, QueueAddMode mode)
+    {
+        var entry = HistoryEntry(record);
         if (mode != QueueAddMode.PlayNow)
         {
             queue.Insert(entry, mode);
@@ -528,7 +531,7 @@ internal sealed partial class AetherStreamApp
             DrawFollowing(scale);
         }
 
-        DrawVolume(scale);
+        DrawSound(scale);
         DrawScreenBSection(scale);
         DrawReactionBar(scale);
         DrawDanmakuComposer(scale);
