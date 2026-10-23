@@ -82,6 +82,8 @@ internal sealed class RealtimeConnection : IDisposable
             var connectedAtUtc = DateTime.MinValue;
             int? refusedStatus = null;
             RelayFailure? refusal = null;
+            WebSocketCloseStatus? closeStatus = null;
+            string? closeDescription = null;
             try
             {
                 var realtimeUri = endpoint.ResolveUri();
@@ -95,6 +97,8 @@ internal sealed class RealtimeConnection : IDisposable
                 connectedAtUtc = DateTime.UtcNow;
                 SetConnected(true);
                 refusal = await ReceiveLoopAsync(ws, token).ConfigureAwait(false);
+                closeStatus = ws.CloseStatus;
+                closeDescription = ws.CloseStatusDescription;
             }
             catch (OperationCanceledException)
             {
@@ -118,6 +122,12 @@ internal sealed class RealtimeConnection : IDisposable
             if (token.IsCancellationRequested)
             {
                 break;
+            }
+
+            if (connectedAtUtc != DateTime.MinValue)
+            {
+                AepLog.Info($"[realtime] closed code={(closeStatus is { } status ? (int)status : 0)} "
+                    + $"description={closeDescription ?? string.Empty} heldSeconds={(DateTime.UtcNow - connectedAtUtc).TotalSeconds:F0}");
             }
 
             if (refusal is { } refused)

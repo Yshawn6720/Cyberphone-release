@@ -9,17 +9,31 @@ namespace Aetherphone.Apps.AetherStream;
 
 internal sealed partial class AetherStreamApp
 {
-    private const float ScreenVolumeLabelShare = 0.35f;
-
     private IReadOnlyList<ViewerFailure>? viewerFailureNamesSourceB;
     private string viewerFailureNamesB = string.Empty;
     private TextCache viewerFailureTitleB;
     private TextCache retryTextB;
-    private TextCache screenBLabel;
-    private TextCache screenBTime;
     private readonly string[] screenChannelLabels = new string[2];
     private readonly string[] soundChoiceLabels = new string[3];
     private VideoChannel editedScreen = VideoChannel.A;
+    private VideoChannel watchScreen = VideoChannel.A;
+    private VideoChannel playerActionsScreen = VideoChannel.A;
+    private bool screenTabsShown;
+
+    private bool ScreenBPresent => suite.ChannelB.Current is not null || suite.PlayerB.HasMedia
+        || suite.PlayerB.State == VideoPlaybackState.Failed;
+
+    private VideoPlayer PlayerFor(VideoChannel channel) => channel == VideoChannel.B ? suite.PlayerB : video;
+
+    private VideoQueueEntry? EntryFor(VideoChannel channel) =>
+        channel == VideoChannel.B ? suite.ChannelB.Current : CurrentEntry;
+
+    private void ShowWatch(VideoChannel channel)
+    {
+        activeTab = StreamTab.Watch;
+        watchScreen = channel;
+        screenTabsShown = true;
+    }
 
     private void FillScreenChannelLabels()
     {
@@ -72,60 +86,96 @@ internal sealed partial class AetherStreamApp
         EndBlock();
     }
 
-    private void DrawSound(float scale)
+    private void DrawScreenTabs(float scale)
     {
-        if (!suite.BothScreensPlaying)
-        {
-            DrawVolume(scale);
-            return;
-        }
-
-        soundChoiceLabels[0] = Loc.T(L.AetherStream.ScreenA);
-        soundChoiceLabels[1] = Loc.T(L.AetherStream.ScreenB);
-        soundChoiceLabels[2] = Loc.T(L.AetherStream.PlayModeBoth);
-        var sound = suite.Sound;
-        var choice = DualVideo.SoundChoice(sound);
+        FillScreenChannelLabels();
+        var stripHeight = SegmentHeight * scale;
+        var captionGap = Metrics.Space.Xs * scale;
+        var captionHeight = Typography.LineHeight(TextStyles.Caption1);
+        var block = BeginBlock(stripHeight + captionGap + captionHeight);
+        var strip = new Rect(block.Min, new Vector2(block.Max.X, block.Min.Y + stripHeight));
+        var picked = (VideoChannel)SegmentStrip.Draw("aetherstream.watchScreen", strip, screenChannelLabels,
+            (int)watchScreen, ui.Palette);
+        var drawList = ImGui.GetWindowDrawList();
+        var volumes = suite.Volumes;
+        var captionTop = strip.Max.Y + captionGap;
+        DrawScreenTabCaption(drawList, SegmentStrip.SegmentRect(strip, 0, 2), captionTop, VideoChannel.A, volumes.A,
+            scale);
+        DrawScreenTabCaption(drawList, SegmentStrip.SegmentRect(strip, 1, 2), captionTop, VideoChannel.B, volumes.B,
+            scale);
+        EndBlock();
         Gap(Metrics.Space.Md);
-        SectionLabel(Loc.T(L.AetherStream.ScreenSound));
-        var picked = (ScreenSoundChoice)DrawChoiceStrip("aetherstream.screenSound", soundChoiceLabels, (int)choice,
-            Loc.T(sound.BothScreens ? L.AetherStream.ScreenSoundBothHint : L.AetherStream.ScreenSoundOneHint), scale);
-        if (picked != choice)
+        watchScreen = picked;
+    }
+
+    private void DrawScreenTabCaption(ImDrawListPtr drawList, Rect segment, float top, VideoChannel channel,
+        int volume, float scale)
+    {
+        var player = PlayerFor(channel);
+        var status = DualVideo.Status(player.State, player.Progress.Paused, player.RecoveryExhausted);
+        var text = Loc.T(status switch
         {
-            suite.PickSound(picked);
+            ScreenStatus.Loading => L.AetherStream.LoadingVideo,
+            ScreenStatus.Playing => L.AetherStream.ScreenPlaying,
+            ScreenStatus.Paused => L.AetherStream.ScreenPaused,
+            ScreenStatus.Failed => L.AetherStream.ScreenCantPlay,
+            _ => L.AetherStream.NothingPlaying,
+        });
+        var style = TextStyles.Caption1;
+        var lineHeight = Typography.LineHeight(style);
+        var iconSize = lineHeight * 0.9f;
+        var iconSpace = player.HasMedia ? iconSize + Metrics.Space.Xs * scale : 0f;
+        var fitted = Typography.FitText(text,
+            MathF.Max(1f, segment.Width - Metrics.Space.Sm * scale - iconSpace), style);
+        var left = segment.Center.X - (iconSpace + Typography.Measure(fitted, style).X) * 0.5f;
+        if (player.HasMedia)
+        {
+            var heard = volume > 0;
+            ProgressRing.CenterIcon(drawList, new Vector2(left + iconSize * 0.5f, top + lineHeight * 0.5f),
+                heard ? FontAwesomeIcon.VolumeUp : FontAwesomeIcon.VolumeMute,
+                heard ? Ink.AccentLink : Ink.MutedInk, iconSize);
         }
 
-        if (!sound.BothScreens)
+        Typography.Draw(drawList, new Vector2(left + iconSpace, top), fitted,
+            status == ScreenStatus.Failed ? theme.Danger : Ink.MutedInk, style);
+    }
+
+    private void DrawSound(VideoChannel channel, float scale)
+    {
+        if (suite.BothScreensPlaying)
         {
-            DrawVolume(scale);
-            return;
+            soundChoiceLabels[0] = Loc.T(L.AetherStream.ScreenA);
+            soundChoiceLabels[1] = Loc.T(L.AetherStream.ScreenB);
+            soundChoiceLabels[2] = Loc.T(L.AetherStream.PlayModeBoth);
+            var sound = suite.Sound;
+            var choice = DualVideo.SoundChoice(sound);
+            Gap(Metrics.Space.Md);
+            SectionLabel(Loc.T(L.AetherStream.ScreenSound));
+            var picked = (ScreenSoundChoice)DrawChoiceStrip("aetherstream.screenSound", soundChoiceLabels,
+                (int)choice,
+                Loc.T(sound.BothScreens ? L.AetherStream.ScreenSoundBothHint : L.AetherStream.ScreenSoundOneHint),
+                scale);
+            if (picked != choice)
+            {
+                suite.PickSound(picked);
+            }
         }
 
-        DrawScreenVolume(VideoChannel.A, scale);
-        DrawScreenVolume(VideoChannel.B, scale);
+        DrawScreenVolume(channel, scale);
     }
 
     private void DrawScreenVolume(VideoChannel channel, float scale)
     {
         Gap(Metrics.Space.Xs);
         var row = BeginBlock(26f * scale);
-        var drawList = ImGui.GetWindowDrawList();
-        var labelA = Loc.T(L.AetherStream.ScreenA);
-        var labelB = Loc.T(L.AetherStream.ScreenB);
-        var labelWidth = MathF.Min(row.Width * ScreenVolumeLabelShare,
-            MathF.Max(Typography.Measure(labelA, TextStyles.Footnote).X,
-                Typography.Measure(labelB, TextStyles.Footnote).X));
         var isB = channel == VideoChannel.B;
-        var labelHeight = Typography.LineHeight(TextStyles.Footnote);
-        Typography.Draw(drawList, new Vector2(row.Min.X, row.Center.Y - labelHeight * 0.5f),
-            Typography.FitText(isB ? labelB : labelA, labelWidth, TextStyles.Footnote), Ink.MutedInk,
-            TextStyles.Footnote);
-
-        var sliderRow = new Rect(new Vector2(row.Min.X + labelWidth + Metrics.Space.Md * scale, row.Min.Y), row.Max);
+        var volumes = suite.Volumes;
+        var silent = (isB ? volumes.B : volumes.A) == 0;
         var muted = isB ? configuration.VideoMuteScreenB : configuration.VideoMuteScreenA;
         var volume = isB ? configuration.VideoVolumeB : configuration.VideoVolume;
-        var result = VolumeSlider.Draw(isB ? "aetherstream.volumeB" : "aetherstream.volumeA", sliderRow, volume,
-            accentedTheme, icon: muted ? FontAwesomeIcon.VolumeMute : null);
-        var icon = VolumeSlider.IconArea(sliderRow);
+        var result = VolumeSlider.Draw(isB ? "aetherstream.volumeB" : "aetherstream.volumeA", row, volume,
+            accentedTheme, icon: silent ? FontAwesomeIcon.VolumeMute : null);
+        var icon = VolumeSlider.IconArea(row);
         var iconHovered = UiInteract.Hover(icon.Min, icon.Max);
         if (iconHovered)
         {
@@ -134,14 +184,16 @@ internal sealed partial class AetherStreamApp
 
         if (UiInteract.Click(icon.Min, icon.Max, iconHovered))
         {
-            SetScreenMuted(isB, !muted);
-            configuration.Save();
+            suite.TapSpeaker(channel);
         }
 
         if (result.Dragging && Math.Abs(result.Value - volume) > 0.001f)
         {
             SetScreenVolume(isB, result.Value);
-            SetScreenMuted(isB, false);
+            if (muted)
+            {
+                SetScreenMuted(isB, false);
+            }
         }
 
         if (result.Released)
@@ -175,33 +227,16 @@ internal sealed partial class AetherStreamApp
         configuration.VideoMuteScreenA = muted;
     }
 
-    private void DrawScreenBSection(float scale)
+    private void DrawScreenBNotices(float scale)
     {
-        if (watchAlong.IsHosting && watchAlong.ViewerFailuresB.Count > 0)
-        {
-            DrawViewerFailuresBCard(scale);
-        }
+        DrawViewerFailuresB(scale);
 
         var playerB = suite.PlayerB;
         var failed = playerB.State == VideoPlaybackState.Failed;
         var stalled = playerB.RecoveryExhausted;
-        if (suite.ChannelB.Current is null && !playerB.HasMedia && !failed)
-        {
-            if (!watchAlong.IsViewing && video.HasMedia)
-            {
-                DrawPlayOnScreenBButton(scale);
-            }
-
-            return;
-        }
-
         if (failed || stalled)
         {
             DrawScreenBFailureCard(scale, stalled && !failed);
-        }
-        else
-        {
-            DrawScreenBCard(scale);
         }
 
         if (watchAlong.IsViewing && watchAlong.HostScreenBOutOfReach)
@@ -211,16 +246,12 @@ internal sealed partial class AetherStreamApp
         }
     }
 
-    private void DrawPlayOnScreenBButton(float scale)
+    private void DrawViewerFailuresB(float scale)
     {
-        Gap(Metrics.Space.Md);
-        var row = BeginBlock(ButtonHeight * scale);
-        if (QuietButton(row, Loc.T(L.AetherStream.PlayOnScreenB)))
+        if (watchAlong.IsHosting && watchAlong.ViewerFailuresB.Count > 0)
         {
-            OpenAddSheetForScreenB();
+            DrawViewerFailuresBCard(scale);
         }
-
-        EndBlock();
     }
 
     private void DrawScreenWall(bool live, float scale)
@@ -261,105 +292,26 @@ internal sealed partial class AetherStreamApp
         configuration.Save();
     }
 
-    private void DrawScreenBCard(float scale)
-    {
-        var playerB = suite.PlayerB;
-        var current = suite.ChannelB.Current;
-        var viewing = watchAlong.IsViewing;
-        var canPause = playerB.HasMedia && (!viewing || watchAlong.CanControlPlayback);
-        var canStop = !viewing;
-        Gap(Metrics.Space.Md);
-        var pad = Metrics.Space.Md * scale;
-        var labelHeight = Typography.LineHeight(TextStyles.FootnoteEmphasized);
-        var titleHeight = Typography.LineHeight(TextStyles.BodyEmphasized);
-        var timeHeight = Typography.LineHeight(TextStyles.Caption1);
-        var textHeight = labelHeight + titleHeight + timeHeight;
-        var card = BeginBlock(MathF.Max(UpNextCardHeight * scale, textHeight + pad * 1.4f));
-        var drawList = ImGui.GetWindowDrawList();
-        GlassCard(drawList, card);
-        var thumbHeight = card.Height - pad * 1.4f;
-        var thumbMin = new Vector2(card.Min.X + pad * 0.7f, card.Center.Y - thumbHeight * 0.5f);
-        var thumb = new Rect(thumbMin, thumbMin + new Vector2(thumbHeight * ThumbAspect, thumbHeight));
-        DrawThumb(drawList, thumb, current?.Url, current?.ThumbnailUrl, Metrics.Radius.Sm * scale);
-
-        var radius = RoundButton.SmallRadius * scale;
-        var buttonRight = card.Max.X - pad;
-        var textRight = buttonRight;
-        var stopCenter = new Vector2(buttonRight - radius, card.Center.Y);
-        if (canStop)
-        {
-            buttonRight = stopCenter.X - radius - Metrics.Space.Sm * scale;
-            textRight = stopCenter.X - radius - pad;
-        }
-
-        var pauseCenter = new Vector2(buttonRight - radius, card.Center.Y);
-        if (canPause)
-        {
-            textRight = pauseCenter.X - radius - pad;
-        }
-
-        var textLeft = thumb.Max.X + pad;
-        var top = card.Center.Y - textHeight * 0.5f;
-        var labelLeft = textLeft;
-        if (suite.BothScreensPlaying)
-        {
-            var audible = suite.Volumes.B > 0;
-            ProgressRing.CenterIcon(drawList, new Vector2(textLeft + labelHeight * 0.5f, top + labelHeight * 0.5f),
-                audible ? FontAwesomeIcon.VolumeUp : FontAwesomeIcon.VolumeMute,
-                audible ? Ink.AccentLink : Ink.MutedInk, labelHeight * 0.8f);
-            labelLeft += labelHeight + Metrics.Space.Xs * scale;
-        }
-
-        var textWidth = MathF.Max(1f, textRight - textLeft);
-        var labelWidth = MathF.Max(1f, textRight - labelLeft);
-        Typography.Draw(drawList, new Vector2(labelLeft, top),
-            Typography.FitText(screenBLabel.Upper(Loc.T(L.AetherStream.ScreenB)), labelWidth,
-                TextStyles.FootnoteEmphasized), Ink.AccentLink, TextStyles.FootnoteEmphasized);
-        Typography.Draw(drawList, new Vector2(textLeft, top + labelHeight),
-            Typography.FitText(current?.Title ?? Loc.T(L.AetherStream.NothingPlaying), textWidth,
-                TextStyles.BodyEmphasized), Ink.TitleInk, TextStyles.BodyEmphasized);
-        var timeText = playerB.State == VideoPlaybackState.Loading
-            ? Loc.T(L.AetherStream.LoadingVideo)
-            : ScreenBTimeText(playerB.Progress);
-        Typography.Draw(drawList, new Vector2(textLeft, top + labelHeight + titleHeight),
-            Typography.FitText(timeText, textWidth, TextStyles.Caption1), Ink.MutedInk, TextStyles.Caption1);
-
-        if (canPause && StreamRoundButton(drawList, "aetherstream.screenB.pause", pauseCenter, radius,
-                playerB.Progress.Paused ? FontAwesomeIcon.Play : FontAwesomeIcon.Pause, ButtonStyle.Gray))
-        {
-            ToggleScreenBPlayback();
-        }
-
-        if (canStop && StreamRoundButton(drawList, "aetherstream.screenB.stop", stopCenter, radius,
-                FontAwesomeIcon.Stop, ButtonStyle.Gray, Loc.T(L.AetherStream.StopScreenB)))
-        {
-            suite.ChannelB.Stop();
-        }
-
-        EndBlock();
-    }
-
-    private string ScreenBTimeText(PlaybackProgress progress)
-    {
-        var position = TimeText.MinutesSeconds((int)MathF.Max(0f, progress.Position));
-        if (progress.Duration <= 0f)
-        {
-            return position;
-        }
-
-        return screenBTime.Pair(position, TimeText.MinutesSeconds((int)progress.Duration));
-    }
-
     private void ToggleScreenBPlayback()
     {
-        var paused = suite.PlayerB.Progress.Paused;
+        var playerB = suite.PlayerB;
+        var paused = playerB.Progress.Paused;
         if (watchAlong.IsViewing)
         {
             watchAlong.ControlPause(!paused, VideoChannel.B);
             return;
         }
 
-        suite.PlayerB.Pause(!paused);
+        if (playerB.HasMedia)
+        {
+            playerB.Pause(!paused);
+            return;
+        }
+
+        if (playerB.State == VideoPlaybackState.Failed)
+        {
+            RetryScreenB(false);
+        }
     }
 
     private void DrawScreenBFailureCard(float scale, bool stalled)

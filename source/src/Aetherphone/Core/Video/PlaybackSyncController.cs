@@ -1,6 +1,7 @@
 namespace Aetherphone.Core.Video;
 
-internal readonly record struct SyncDecision(bool SpeedChanged, double Speed, bool Seek, double SeekTarget)
+internal readonly record struct SyncDecision(bool SpeedChanged, double Speed, bool Seek, double SeekTarget,
+    bool Reopen = false)
 {
     internal static readonly SyncDecision Hold = new(false, 1d, false, 0d);
 }
@@ -14,21 +15,32 @@ internal sealed class PlaybackSyncController
     internal const double SeekSettleSeconds = 2.0;
     internal const double EndGuardSeconds = 0.5;
     internal const double SpeedStep = 0.005;
+    internal const double MaxSeekLeadSeconds = 10.0;
+    internal const int HardSeeksBeforeReopen = 3;
 
     private double appliedSpeed = 1d;
     private double seekSettleRemaining;
+    private double seekLead;
+    private double seekElapsed;
+    private double seekTarget;
+    private bool measuringSeek;
+    private int consecutiveHardSeeks;
+    private double previousTarget = double.NaN;
 
     internal double AppliedSpeed => appliedSpeed;
+
+    internal double SeekLead => seekLead;
 
     internal void Reset()
     {
         appliedSpeed = 1d;
-        seekSettleRemaining = 0d;
+        seekLead = 0d;
+        EndRound();
     }
 
     internal bool Release()
     {
-        seekSettleRemaining = 0d;
+        EndRound();
         if (appliedSpeed == 1d)
         {
             return false;
@@ -38,9 +50,34 @@ internal sealed class PlaybackSyncController
         return true;
     }
 
+    private void EndRound()
+    {
+        seekSettleRemaining = 0d;
+        seekElapsed = 0d;
+        measuringSeek = false;
+        consecutiveHardSeeks = 0;
+        previousTarget = double.NaN;
+    }
+
     internal SyncDecision Step(double localPosition, double targetPosition, double durationSeconds, bool localSeeking,
         float deltaSeconds)
     {
+        if (Math.Abs(targetPosition - previousTarget - deltaSeconds) > HardSeekToleranceSeconds)
+        {
+            consecutiveHardSeeks = 0;
+        }
+
+        previousTarget = targetPosition;
+        if (measuringSeek)
+        {
+            seekElapsed += deltaSeconds;
+            if (!localSeeking && Math.Abs(localPosition - seekTarget) <= HardSeekToleranceSeconds)
+            {
+                seekLead = Math.Min(seekElapsed, MaxSeekLeadSeconds);
+                measuringSeek = false;
+            }
+        }
+
         seekSettleRemaining = Math.Max(0d, seekSettleRemaining - deltaSeconds);
         if (localSeeking || seekSettleRemaining > 0d)
         {
@@ -57,12 +94,10 @@ internal sealed class PlaybackSyncController
         var magnitude = Math.Abs(drift);
         if (magnitude > HardSeekToleranceSeconds)
         {
-            seekSettleRemaining = SeekSettleSeconds;
-            var speedChanged = appliedSpeed != 1d;
-            appliedSpeed = 1d;
-            return new SyncDecision(speedChanged, 1d, true, Math.Max(0d, targetPosition));
+            return HardSeek(targetPosition, durationSeconds);
         }
 
+        consecutiveHardSeeks = 0;
         if (magnitude <= DeadZoneSeconds)
         {
             return ApplySpeed(1d);
@@ -72,6 +107,31 @@ internal sealed class PlaybackSyncController
             * MaxSpeedDeviation;
         var desired = drift > 0d ? 1d - deviation : 1d + deviation;
         return ApplySpeed(Quantize(desired));
+    }
+
+    private SyncDecision HardSeek(double targetPosition, double durationSeconds)
+    {
+        seekSettleRemaining = SeekSettleSeconds;
+        var speedChanged = appliedSpeed != 1d;
+        appliedSpeed = 1d;
+        var aim = consecutiveHardSeeks > 0 ? targetPosition + seekLead : targetPosition;
+        if (durationSeconds > 0d)
+        {
+            aim = Math.Min(aim, durationSeconds - EndGuardSeconds);
+        }
+
+        aim = Math.Max(0d, aim);
+        seekTarget = aim;
+        seekElapsed = 0d;
+        measuringSeek = true;
+        consecutiveHardSeeks++;
+        if (consecutiveHardSeeks < HardSeeksBeforeReopen)
+        {
+            return new SyncDecision(speedChanged, 1d, true, aim);
+        }
+
+        consecutiveHardSeeks = 1;
+        return new SyncDecision(speedChanged, 1d, false, aim, true);
     }
 
     private SyncDecision ApplySpeed(double speed)

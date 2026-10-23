@@ -289,10 +289,7 @@ internal sealed class AetherStreamScreenWindow : Window
         if (result.Dragging && Math.Abs(result.Value - configuration.VideoVolume) > 0.001f)
         {
             configuration.VideoVolume = result.Value;
-            if (configuration.VideoHearBothScreens)
-            {
-                configuration.VideoMuteScreenA = false;
-            }
+            configuration.VideoMuteScreenA = false;
         }
 
         if (result.Released)

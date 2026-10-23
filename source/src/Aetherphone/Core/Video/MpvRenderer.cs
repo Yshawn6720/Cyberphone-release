@@ -31,6 +31,11 @@ internal sealed class MpvRenderer : IDisposable
     private const int EventEndFile = 7;
     private const int EventFileLoaded = 8;
     private const int EventPlaybackRestart = 21;
+    private const int EventHook = 25;
+
+    private const string PreloadedHook = "on_preloaded";
+    private const string LiveStreamTag = "metadata/by-key/ytdl_is_live";
+    private const string NoStart = "none";
 
     private const int ParamInvalid = 0;
     private const int ParamApiType = 1;
@@ -166,6 +171,13 @@ internal sealed class MpvRenderer : IDisposable
     [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
     private static extern IntPtr mpv_error_string(int error);
 
+    [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
+    private static extern int mpv_hook_add(IntPtr ctx, ulong replyUserdata,
+        [MarshalAs(UnmanagedType.LPUTF8Str)] string name, int priority);
+
+    [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
+    private static extern int mpv_hook_continue(IntPtr ctx, ulong id);
+
     [StructLayout(LayoutKind.Sequential)]
     private struct MpvRenderParam
     {
@@ -206,6 +218,7 @@ internal sealed class MpvRenderer : IDisposable
     private volatile bool disposed;
     private volatile bool started;
     private volatile string? currentUrl;
+    private volatile string? liveUrl;
     private volatile string? lastErrorDetail;
     private volatile bool lastErrorFromResolver;
     private int consecutiveRenderFailures;
@@ -279,6 +292,12 @@ internal sealed class MpvRenderer : IDisposable
         if (initialized < 0)
         {
             throw new InvalidOperationException($"mpv could not start: {ErrorText(initialized)}");
+        }
+
+        var hooked = mpv_hook_add(mpvContext, 0, PreloadedHook, 0);
+        if (hooked < 0)
+        {
+            AepLog.Warning($"[MPV] Could not watch for live streams: {ErrorText(hooked)}");
         }
 
         CreateRenderContext();
@@ -366,8 +385,7 @@ internal sealed class MpvRenderer : IDisposable
             return false;
         }
 
-        var start = ((int)Math.Max(0d, startSeconds)).ToString(CultureInfo.InvariantCulture);
-        var options = playing ? $"start={start},pause=no" : $"start={start},pause=yes";
+        var options = $"start={StartOption(startSeconds)},pause={(playing ? "no" : "yes")}";
 
         lock (commandLock)
         {
@@ -529,6 +547,8 @@ internal sealed class MpvRenderer : IDisposable
     internal string? ReadMediaTitle() => ReadStringProperty("media-title");
 
     internal string? CurrentUrl => currentUrl;
+
+    internal bool IsLiveUrl(string url) => string.Equals(url, liveUrl, StringComparison.Ordinal);
 
     private string? ReadStringProperty(string name)
     {
@@ -751,6 +771,9 @@ internal sealed class MpvRenderer : IDisposable
                     case EventFileLoaded:
                         FileLoaded?.Invoke();
                         break;
+                    case EventHook:
+                        HandleHook(handle);
+                        break;
                     case EventPlaybackRestart:
                         AepLog.Verbose("[MPV] Playback running");
                         break;
@@ -766,6 +789,48 @@ internal sealed class MpvRenderer : IDisposable
         {
             AepLog.Warning($"[MPV] Event loop stopped: {exception.Message}");
         }
+    }
+
+    private void HandleHook(IntPtr handle)
+    {
+        var data = Marshal.ReadIntPtr(handle + 16);
+        if (data == IntPtr.Zero)
+        {
+            return;
+        }
+
+        var hookId = (ulong)Marshal.ReadInt64(data + 8);
+        lock (commandLock)
+        {
+            if (mpvContext == IntPtr.Zero)
+            {
+                return;
+            }
+
+            try
+            {
+                StartLiveStreamAtTheLiveEdgeLocked();
+            }
+            finally
+            {
+                _ = mpv_hook_continue(mpvContext, hookId);
+            }
+        }
+    }
+
+    private void StartLiveStreamAtTheLiveEdgeLocked()
+    {
+        var url = currentUrl;
+        var live = url is not null
+            && string.Equals(ReadStringLocked(LiveStreamTag), "true", StringComparison.Ordinal);
+        liveUrl = live ? url : null;
+        if (!live)
+        {
+            return;
+        }
+
+        AepLog.Verbose("[MPV] Live stream; starting at the live edge");
+        _ = MpvCommand(mpvContext, ["set", "file-local-options/start", NoStart, null]);
     }
 
     private void HandleLogMessage(IntPtr handle)
@@ -824,6 +889,12 @@ internal sealed class MpvRenderer : IDisposable
     internal static string FormatSelector(int maxQualityHeight) =>
         $"bestvideo[height<=?{maxQualityHeight}][vcodec^=avc1]+bestaudio/"
         + $"bestvideo[height<=?{maxQualityHeight}][ext=mp4]+bestaudio/best[height<=?{maxQualityHeight}]/best";
+
+    internal static string StartOption(double startSeconds)
+    {
+        var wholeSeconds = (int)Math.Max(0d, startSeconds);
+        return wholeSeconds > 0 ? wholeSeconds.ToString(CultureInfo.InvariantCulture) : NoStart;
+    }
 
     private static bool IsStreamErrorText(string text)
     {

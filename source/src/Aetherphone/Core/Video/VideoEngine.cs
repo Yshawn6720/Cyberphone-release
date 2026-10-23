@@ -22,6 +22,16 @@ internal static class DroppedStream
         && positionSeconds < durationSeconds - EndGuardSeconds;
 }
 
+internal static class StuckWait
+{
+    internal static bool Waiting(bool active, bool loading, bool recovering, bool paused, bool hasPosition,
+        bool seeking, bool coreIdle) =>
+        active && !loading && !recovering && !paused && hasPosition && (seeking || coreIdle);
+
+    internal static bool Stalled(long? waitingSinceTicks, long nowTicks) =>
+        waitingSinceTicks is { } since && nowTicks - since >= VideoEngine.BufferingWatchdogMilliseconds;
+}
+
 internal static class LoadSpacing
 {
     internal static TimeSpan Reserve(ref DateTime nextLoad, ref DateTime reserved, DateTime now, TimeSpan spacing)
@@ -62,7 +72,7 @@ internal sealed class VideoEngine : IDisposable
     private const long RecoveryRestartBackoffMilliseconds = 15 * 1000;
     private const int MaxRecoveryRestartsPerUrl = 2;
     private const long StallWatchdogMilliseconds = 10 * 1000;
-    private const long BufferingWatchdogMilliseconds = 30 * 1000;
+    internal const long BufferingWatchdogMilliseconds = 30 * 1000;
     private const long HealthyPlaybackForgivesRestartsMilliseconds = 5 * 60 * 1000;
     private const long AudioReopenEscalationWindowMilliseconds = 60 * 1000;
     private const long AudioDeviceStallMilliseconds = 5 * 1000;
@@ -116,6 +126,7 @@ internal sealed class VideoEngine : IDisposable
     private long audioProgressAtTicks;
     private long healthyPlaybackSinceTicks;
     private long audioReopenAtTicks = long.MinValue;
+    private long? waitingSinceTicks;
     private int lastObservedFrameVersion;
     private double lastObservedPosition;
     private double lastObservedAudioPosition;
@@ -436,7 +447,8 @@ internal sealed class VideoEngine : IDisposable
     {
         var now = Environment.TickCount64;
         var frameVersion = renderer?.FrameVersion ?? 0;
-        if (!active || IsLoading || recovering || info.Paused || info.Seeking || renderer is not { } player)
+        if (RestartIfStuckWaiting(info, now) || !active || IsLoading || recovering || info.Paused || info.Seeking
+            || renderer is not { } player)
         {
             ResetStallTrackers(info, frameVersion, now);
             return;
@@ -557,6 +569,50 @@ internal sealed class VideoEngine : IDisposable
         AepLog.Warning($"[Video] Playback {stall} stalled; restarting the player at {lastObservedPosition:F1}s.");
         recoveryNotice = Loc.T(L.AetherStream.StreamStalledRecovering);
         _ = RestartStalledAsync(stalledUrl, lastObservedPosition);
+    }
+
+    private bool RestartIfStuckWaiting(in MpvPlaybackInfo info, long now)
+    {
+        if (!StuckWait.Waiting(active, IsLoading, recovering, info.Paused, info.HasPosition, info.Seeking,
+                info.CoreIdle))
+        {
+            waitingSinceTicks = null;
+            return false;
+        }
+
+        waitingSinceTicks ??= now;
+        if (!StuckWait.Stalled(waitingSinceTicks, now) || renderer?.CurrentUrl is not { Length: > 0 } stuckUrl)
+        {
+            return false;
+        }
+
+        waitingSinceTicks = now;
+        var wait = info.Seeking ? "seeking" : "buffering";
+        var stuckSeconds = BufferingWatchdogMilliseconds / 1000;
+        if (!TryBeginRecovery(stuckUrl))
+        {
+            if (recoveryExhaustedUrl != stuckUrl && RecoveryBudgetSpent(stuckUrl))
+            {
+                recoveryExhaustedUrl = stuckUrl;
+                AepLog.Warning(
+                    $"[Video] Playback {wait} stuck for {stuckSeconds}s at {info.PositionSeconds:F1}s, but the restart budget for this link is spent; leaving it ({stuckUrl}).");
+            }
+
+            return false;
+        }
+
+        AepLog.Warning(
+            $"[Video] Playback {wait} stuck for {stuckSeconds}s; restarting the player at {info.PositionSeconds:F1}s ({stuckUrl}).");
+        if (RefusedStreamUrl() is not null)
+        {
+            recoveryNotice = Loc.T(L.AetherStream.ResolverRecovering);
+            _ = RecoverResolverAsync(stuckUrl, info.PositionSeconds);
+            return true;
+        }
+
+        recoveryNotice = Loc.T(L.AetherStream.StreamStalledRecovering);
+        _ = RestartStalledAsync(stuckUrl, info.PositionSeconds);
+        return true;
     }
 
     private void ResetStallTrackers(in MpvPlaybackInfo info, int frameVersion, long now)
@@ -814,6 +870,8 @@ internal sealed class VideoEngine : IDisposable
     internal string? GetMediaTitle() => renderer?.ReadMediaTitle();
 
     internal string? GetCurrentUrl() => renderer?.CurrentUrl;
+
+    internal bool IsLiveUrl(string url) => renderer?.IsLiveUrl(url) ?? false;
 
     internal MediaTrack[] ReadTracks() => renderer?.ReadTracks() ?? [];
 

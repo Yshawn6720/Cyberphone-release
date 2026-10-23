@@ -8,6 +8,8 @@ export const MAX_MEMBERS = 6;
 export const MAX_MESSAGE_BYTES = 64 * 1024;
 export const ROOM_LIFETIME_MS = 6 * 60 * 60 * 1000;
 export const ALONE_TIMEOUT_MS = 30 * 60 * 1000;
+// How long a party outlives its host's dropped connection, waiting for the plugin to reconnect as that host.
+export const HOST_GRACE_MS = 60 * 1000;
 export const FEATURE_PARTY = 1;
 export const FEATURE_DANMAKU = 2;
 export const FEATURE_DUAL_VIDEO = 4;
@@ -108,6 +110,8 @@ export const SignalType = {
   playbackFailed: "stream.playbackFailed",
   viewerFailed: "stream.viewerFailed",
   nearbyRoster: "stream.nearby.roster",
+  hostAway: "stream.hostAway",
+  hostBack: "stream.hostBack",
 } as const;
 
 export const CONTROL_ACTIONS: Readonly<Record<string, true>> = { play: true, pause: true, seek: true, next: true };

@@ -77,8 +77,8 @@ public sealed class DualVideoTests
 
     [Theory]
     [InlineData((byte)VideoChannel.A, 60, 0)]
-    [InlineData((byte)VideoChannel.B, 0, 60)]
-    public void ByDefaultOnlyTheMainScreenIsHeardAtTheSharedVolume(byte main, int volumeA, int volumeB)
+    [InlineData((byte)VideoChannel.B, 0, 40)]
+    public void ByDefaultOnlyTheMainScreenIsHeardAtItsOwnVolume(byte main, int volumeA, int volumeB)
     {
         var sound = ScreenAPicked with { MainChannel = (VideoChannel)main };
 
@@ -91,7 +91,7 @@ public sealed class DualVideoTests
         var picked = DualVideo.Pick(ScreenAPicked, ScreenSoundChoice.B);
 
         Assert.Equal(ScreenSoundChoice.B, DualVideo.SoundChoice(picked));
-        Assert.Equal(new ChannelVolumes(0, 60), DualVideo.Volumes(picked, liveA: true, liveB: true));
+        Assert.Equal(new ChannelVolumes(0, 40), DualVideo.Volumes(picked, liveA: true, liveB: true));
         var back = DualVideo.Pick(picked, ScreenSoundChoice.A);
         Assert.Equal(new ChannelVolumes(60, 0), DualVideo.Volumes(back, liveA: true, liveB: true));
     }
@@ -110,11 +110,11 @@ public sealed class DualVideoTests
     }
 
     [Fact]
-    public void MutesOnlyApplyWhileBothScreensPlayTogether()
+    public void AMutedMainScreenStaysSilentWhenOnlyOneIsHeard()
     {
-        var muted = ScreenAPicked with { MainChannel = VideoChannel.B, MutedA = true, MutedB = true };
+        var muted = ScreenAPicked with { MainChannel = VideoChannel.B, MutedB = true };
 
-        Assert.Equal(new ChannelVolumes(0, 60), DualVideo.Volumes(muted, liveA: true, liveB: true));
+        Assert.Equal(new ChannelVolumes(0, 0), DualVideo.Volumes(muted, liveA: true, liveB: true));
     }
 
     [Fact]
@@ -125,7 +125,7 @@ public sealed class DualVideoTests
         var both = DualVideo.Pick(onB, ScreenSoundChoice.Both);
 
         Assert.Equal(VideoChannel.B, both.MainChannel);
-        Assert.Equal(new ChannelVolumes(0, 60),
+        Assert.Equal(new ChannelVolumes(0, 40),
             DualVideo.Volumes(both with { BothScreens = false }, liveA: true, liveB: true));
     }
 
@@ -134,14 +134,13 @@ public sealed class DualVideoTests
     [InlineData(false, true, (byte)VideoChannel.A, false)]
     [InlineData(true, false, (byte)VideoChannel.A, true)]
     [InlineData(false, true, (byte)VideoChannel.B, true)]
-    public void ALoneScreenIsHeardAtTheSharedVolumeWhateverWasPicked(bool liveA, bool liveB, byte main, bool both)
+    public void ALoneScreenIsHeardAtItsOwnVolumeWhateverWasPicked(bool liveA, bool liveB, byte main, bool both)
     {
-        var sound = ScreenAPicked with
-        {
-            MainChannel = (VideoChannel)main, BothScreens = both, MutedA = both, MutedB = both,
-        };
+        var sound = ScreenAPicked with { MainChannel = (VideoChannel)main, BothScreens = both };
 
-        Assert.Equal(new ChannelVolumes(60, 60), DualVideo.Volumes(sound, liveA, liveB));
+        Assert.Equal(new ChannelVolumes(60, 40), DualVideo.Volumes(sound, liveA, liveB));
+        Assert.Equal(new ChannelVolumes(0, 0),
+            DualVideo.Volumes(sound with { MutedA = true, MutedB = true }, liveA, liveB));
     }
 
     [Fact]
@@ -149,8 +148,109 @@ public sealed class DualVideoTests
     {
         var onB = DualVideo.Pick(ScreenAPicked, ScreenSoundChoice.B);
 
-        Assert.Equal(new ChannelVolumes(60, 60), DualVideo.Volumes(onB, liveA: true, liveB: false));
-        Assert.Equal(new ChannelVolumes(0, 60), DualVideo.Volumes(onB, liveA: true, liveB: true));
+        Assert.Equal(new ChannelVolumes(60, 40), DualVideo.Volumes(onB, liveA: true, liveB: false));
+        Assert.Equal(new ChannelVolumes(0, 40), DualVideo.Volumes(onB, liveA: true, liveB: true));
+    }
+
+    [Fact]
+    public void TappingTheSpeakerOfTheHeardScreenMutesOnlyThatScreen()
+    {
+        var tapped = DualVideo.TapSpeaker(ScreenAPicked, VideoChannel.A, bothLive: true);
+
+        Assert.True(tapped.MutedA);
+        Assert.False(tapped.MutedB);
+        Assert.Equal(VideoChannel.A, tapped.MainChannel);
+        Assert.Equal(new ChannelVolumes(0, 0), DualVideo.Volumes(tapped, liveA: true, liveB: true));
+        var again = DualVideo.TapSpeaker(tapped, VideoChannel.A, bothLive: true);
+        Assert.Equal(new ChannelVolumes(60, 0), DualVideo.Volumes(again, liveA: true, liveB: true));
+    }
+
+    [Fact]
+    public void TappingTheSpeakerOfTheSilentScreenMovesTheSoundToIt()
+    {
+        var tapped = DualVideo.TapSpeaker(ScreenAPicked with { MutedB = true }, VideoChannel.B, bothLive: true);
+
+        Assert.Equal(VideoChannel.B, tapped.MainChannel);
+        Assert.False(tapped.MutedB);
+        Assert.Equal(new ChannelVolumes(0, 40), DualVideo.Volumes(tapped, liveA: true, liveB: true));
+    }
+
+    [Fact]
+    public void TappingASpeakerWhileBothAreHeardTogglesOnlyThatScreen()
+    {
+        var both = DualVideo.Pick(ScreenAPicked, ScreenSoundChoice.Both);
+
+        var tapped = DualVideo.TapSpeaker(both, VideoChannel.B, bothLive: true);
+
+        Assert.True(tapped.BothScreens);
+        Assert.Equal(VideoChannel.A, tapped.MainChannel);
+        Assert.Equal(new ChannelVolumes(60, 0), DualVideo.Volumes(tapped, liveA: true, liveB: true));
+    }
+
+    [Fact]
+    public void TappingTheSpeakerOfALoneScreenMutesItWithoutMovingTheSound()
+    {
+        var tapped = DualVideo.TapSpeaker(ScreenAPicked, VideoChannel.B, bothLive: false);
+
+        Assert.True(tapped.MutedB);
+        Assert.Equal(VideoChannel.A, tapped.MainChannel);
+    }
+
+    [Theory]
+    [InlineData(false, false, false, false)]
+    [InlineData(false, true, false, true)]
+    [InlineData(true, true, false, false)]
+    [InlineData(false, false, true, true)]
+    [InlineData(true, false, true, true)]
+    [InlineData(true, true, true, true)]
+    public void ScreenTabsShowWhenScreenBPlaysOrCanBeStarted(bool viewing, bool hasA, bool hasB, bool shown)
+    {
+        Assert.Equal(shown, DualVideo.Tabs(VideoChannel.A, true, viewing, hasA, hasB).Shown);
+    }
+
+    [Fact]
+    public void HiddenTabsFallBackToScreenA()
+    {
+        Assert.Equal(new ScreenTabs(false, VideoChannel.A),
+            DualVideo.Tabs(VideoChannel.B, wasShown: true, viewing: true, hasA: true, hasB: false));
+    }
+
+    [Fact]
+    public void TabsThatJustAppearedOpenOnTheScreenThatPlays()
+    {
+        Assert.Equal(VideoChannel.B,
+            DualVideo.Tabs(VideoChannel.A, wasShown: false, viewing: false, hasA: false, hasB: true).Screen);
+        Assert.Equal(VideoChannel.A,
+            DualVideo.Tabs(VideoChannel.B, wasShown: false, viewing: true, hasA: true, hasB: true).Screen);
+    }
+
+    [Fact]
+    public void TabsAlreadyShownKeepThePickedScreenEvenWhenItIsEmpty()
+    {
+        Assert.Equal(VideoChannel.B,
+            DualVideo.Tabs(VideoChannel.B, wasShown: true, viewing: false, hasA: true, hasB: false).Screen);
+        Assert.Equal(VideoChannel.A,
+            DualVideo.Tabs(VideoChannel.A, wasShown: true, viewing: false, hasA: false, hasB: true).Screen);
+    }
+
+    [Fact]
+    public void AViewerWhoseScreenAStopsMovesToTheScreenBThatStillPlays()
+    {
+        Assert.Equal(new ScreenTabs(true, VideoChannel.B),
+            DualVideo.Tabs(VideoChannel.A, wasShown: true, viewing: true, hasA: false, hasB: true));
+    }
+
+    [Theory]
+    [InlineData((byte)VideoPlaybackState.Idle, false, false, (byte)ScreenStatus.Idle)]
+    [InlineData((byte)VideoPlaybackState.Loading, false, false, (byte)ScreenStatus.Loading)]
+    [InlineData((byte)VideoPlaybackState.Playing, false, false, (byte)ScreenStatus.Playing)]
+    [InlineData((byte)VideoPlaybackState.Playing, true, false, (byte)ScreenStatus.Paused)]
+    [InlineData((byte)VideoPlaybackState.Paused, false, false, (byte)ScreenStatus.Paused)]
+    [InlineData((byte)VideoPlaybackState.Playing, false, true, (byte)ScreenStatus.Failed)]
+    [InlineData((byte)VideoPlaybackState.Failed, false, false, (byte)ScreenStatus.Failed)]
+    public void ATabNamesWhatItsScreenIsDoing(byte state, bool paused, bool exhausted, byte expected)
+    {
+        Assert.Equal((ScreenStatus)expected, DualVideo.Status((VideoPlaybackState)state, paused, exhausted));
     }
 
     [Theory]
@@ -161,6 +261,18 @@ public sealed class DualVideoTests
     public void TheWatchedScreenIsTheMainOneOnlyWhileBothShow(bool showA, bool showB, byte main, byte expected)
     {
         Assert.Equal((VideoChannel)expected, DualVideo.WatchedScreen(new ChannelView(showA, showB), (VideoChannel)main));
+    }
+
+    [Fact]
+    public void DanmakuTypedOnAScreenTabGoesToThatScreenWhileItShows()
+    {
+        var both = new ChannelView(true, true);
+
+        Assert.Equal(VideoChannel.B, DualVideo.DanmakuTarget(both, VideoChannel.A, VideoChannel.B));
+        Assert.Equal(VideoChannel.A, DualVideo.DanmakuTarget(both, VideoChannel.B, VideoChannel.A));
+        Assert.Equal(VideoChannel.B, DualVideo.DanmakuTarget(both, VideoChannel.B, null));
+        Assert.Equal(VideoChannel.A,
+            DualVideo.DanmakuTarget(new ChannelView(true, false), VideoChannel.A, VideoChannel.B));
     }
 
     [Fact]

@@ -10,6 +10,7 @@ import {
   FEATURE_DANMAKU,
   FEATURE_DUAL_VIDEO,
   FEATURE_PARTY,
+  HOST_GRACE_MS,
   HOST_RATE,
   MAX_ADMITTED,
   MAX_DANMAKU_CHARS,
@@ -134,6 +135,21 @@ interface Member {
 interface Connection {
   socket: WebSocket;
   member: Member;
+}
+
+// While the host's connection is down the room lives in storage, the only row a party ever writes; it is removed
+// once the host is back or the room ends.
+const GRACE_KEY = "hostGrace";
+
+interface HostGrace {
+  id: string;
+  room: RoomState;
+  until: number;
+}
+
+// Logs name a room by its first two letters only: the full code would let anyone reading the log join.
+function roomTag(code: string | undefined): string {
+  return code === undefined ? "-" : code.slice(0, 2);
 }
 
 const forwardedStateFields: Readonly<Record<string, "string" | "number" | "boolean">> = {
@@ -294,9 +310,12 @@ function holdsForApproval(room: RoomState, member: Member): boolean {
 }
 
 export class PartyRoom extends DurableObject<Env> {
+  // undefined until storage is read once per instance; null when no host is being waited for.
+  private grace: HostGrace | null | undefined;
+
   async fetch(request: Request): Promise<Response> {
     if (isProbe(request)) {
-      return occupantResponse(this.occupant());
+      return occupantResponse(await this.occupant());
     }
 
     const header = request.headers.get(JOIN_HEADER);
@@ -308,14 +327,19 @@ export class PartyRoom extends DurableObject<Env> {
     const now = Date.now();
     const connections = this.connections();
     const host = connections.find((connection) => connection.member.role === "host");
+    const grace = host === undefined ? await this.hostGrace() : null;
+    const holder = host?.member.id ?? grace?.id ?? null;
 
     if (ticket.role === "host") {
-      if (host !== undefined && host.member.id !== ticket.id) {
+      if (holder !== null && holder !== ticket.id) {
         return new Response("slot occupied", { status: 409 });
       }
 
       if (host !== undefined) {
         this.endRoom(null, "ended");
+      } else if (grace !== null) {
+        this.endRoom(null, "ended", grace);
+        await this.clearGrace();
       } else {
         for (const stale of connections) {
           stale.socket.close(CloseCode.ended, "ended");
@@ -341,13 +365,17 @@ export class PartyRoom extends DurableObject<Env> {
       return response;
     }
 
-    const joining = host?.member.room ?? null;
-    if (host === undefined || joining === null || !ticketMatches(ticket, joining.code, joining.nearby?.code ?? null)) {
+    const joining = host?.member.room ?? grace?.room ?? null;
+    if (holder === null || joining === null || !ticketMatches(ticket, joining.code, joining.nearby?.code ?? null)) {
       return new Response("room not found", { status: 404 });
     }
 
-    if (host.member.id === ticket.id) {
-      return new Response("already hosting", { status: 409 });
+    if (holder === ticket.id) {
+      if (ticket.nearby === true) {
+        return new Response("already hosting", { status: 409 });
+      }
+
+      return await this.resumeHost(ticket, joining, host, grace, now);
     }
 
     let count = connections.length;
@@ -360,15 +388,62 @@ export class PartyRoom extends DurableObject<Env> {
       }
     }
 
-    if (count >= MAX_MEMBERS) {
+    if (count + (host === undefined ? 1 : 0) >= MAX_MEMBERS) {
       return new Response("party full", { status: 409 });
     }
 
-    const room = joining;
-    const sequence = room.nextSequence;
-    room.nextSequence++;
-    host.socket.serializeAttachment(host.member);
+    const sequence = joining.nextSequence;
+    joining.nextSequence++;
+    if (host !== undefined) {
+      host.socket.serializeAttachment(host.member);
+    } else if (grace !== null) {
+      await this.saveGrace(grace);
+    }
+
     return this.accept(this.newMember(ticket, "viewer", sequence, now, null));
+  }
+
+  // The host's own ticket for its room code is the plugin reconnecting after a drop: it takes the room back, even
+  // from a socket the relay still believes open because the host noticed the drop first.
+  private async resumeHost(ticket: JoinTicket, room: RoomState, previous: Connection | undefined,
+    grace: HostGrace | null, now: number): Promise<Response> {
+    if (previous !== undefined) {
+      previous.member.gone = true;
+      previous.socket.serializeAttachment(previous.member);
+      previous.socket.close(CloseCode.replaced, "replaced");
+    }
+
+    if (grace !== null) {
+      await this.clearGrace();
+    }
+
+    const viewers = this.connections();
+    await this.updateAlone(room, viewers, now);
+    await this.ctx.storage.setAlarm(roomDeadline(room));
+    const member = this.newMember(ticket, "host", 0, now, room);
+    const response = this.accept(member, (socket) => {
+      send(socket, this.rosterMessage(member, room, [...viewers, { socket, member }], null));
+      for (const connection of viewers) {
+        if (connection.member.awaiting) {
+          send(socket, {
+            type: SignalType.joinRequest,
+            userId: connection.member.id,
+            hostId: member.id,
+            from: participant(connection.member, connection.member.sequence),
+          });
+        }
+      }
+    });
+
+    const back = { type: SignalType.hostBack, hostId: member.id };
+    for (const connection of viewers) {
+      if (connection.member.joined) {
+        send(connection.socket, back);
+      }
+    }
+
+    console.log(`[party] host back room=${roomTag(room.code)} members=${viewers.length} replaced=${previous !== undefined}`);
+    return response;
   }
 
   async webSocketMessage(socket: WebSocket, raw: string | ArrayBuffer): Promise<void> {
@@ -379,13 +454,13 @@ export class PartyRoom extends DurableObject<Env> {
 
     if (typeof raw !== "string") {
       socket.close(CloseCode.unsupported, "text frames only");
-      await this.depart(socket, member);
+      await this.depart(socket, member, "binary frame");
       return;
     }
 
     if (exceedsUtf8Bytes(raw, MAX_MESSAGE_BYTES)) {
       socket.close(CloseCode.tooBig, "message too big");
-      await this.depart(socket, member);
+      await this.depart(socket, member, "message too big");
       return;
     }
 
@@ -399,7 +474,7 @@ export class PartyRoom extends DurableObject<Env> {
     socket.serializeAttachment(member);
     if (verdict === "close") {
       socket.close(CloseCode.rate, "rate limited");
-      await this.depart(socket, member);
+      await this.depart(socket, member, "rate limited");
       return;
     }
 
@@ -412,11 +487,11 @@ export class PartyRoom extends DurableObject<Env> {
         await this.onState(socket, message);
         return;
       case SignalType.join:
-        this.onJoin(socket, member);
+        await this.onJoin(socket, member);
         return;
       case SignalType.leave:
         socket.close(CloseCode.ended, "left");
-        await this.depart(socket, member, true);
+        await this.depart(socket, member, "leave", true);
         return;
       case SignalType.control:
         this.onControl(member, message);
@@ -454,35 +529,73 @@ export class PartyRoom extends DurableObject<Env> {
     }
   }
 
-  async webSocketClose(socket: WebSocket): Promise<void> {
-    await this.depart(socket, memberOf(socket));
+  async webSocketClose(socket: WebSocket, code: number, reason: string): Promise<void> {
+    await this.depart(socket, memberOf(socket), `close ${code} ${reason}`);
   }
 
-  async webSocketError(socket: WebSocket): Promise<void> {
-    await this.depart(socket, memberOf(socket));
+  async webSocketError(socket: WebSocket, error: unknown): Promise<void> {
+    await this.depart(socket, memberOf(socket), `error ${String(error)}`);
   }
 
   async alarm(): Promise<void> {
     const host = this.connections().find((connection) => connection.member.role === "host");
-    if (host === undefined || host.member.room === null) {
+    if (host !== undefined && host.member.room !== null) {
+      const deadline = roomDeadline(host.member.room);
+      if (deadline <= Date.now()) {
+        this.endRoom(null, host.member.room.aloneSince === null ? "expired" : "idle");
+        return;
+      }
+
+      await this.ctx.storage.setAlarm(deadline);
+      return;
+    }
+
+    const grace = await this.hostGrace();
+    if (grace === null) {
       this.endRoom(null, "ended");
       return;
     }
 
-    const deadline = roomDeadline(host.member.room);
-    if (deadline <= Date.now()) {
-      this.endRoom(null, host.member.room.aloneSince === null ? "expired" : "idle");
+    const now = Date.now();
+    const deadline = roomDeadline(grace.room);
+    if (deadline > now && grace.until > now) {
+      await this.ctx.storage.setAlarm(Math.min(deadline, grace.until));
       return;
     }
 
-    await this.ctx.storage.setAlarm(deadline);
+    this.endRoom(null, deadline <= now ? (grace.room.aloneSince === null ? "expired" : "idle") : "host_left", grace);
+    await this.clearGrace();
   }
 
-  private occupant(): SlotOccupant {
+  private async hostGrace(): Promise<HostGrace | null> {
+    if (this.grace === undefined) {
+      this.grace = await this.ctx.storage.get<HostGrace>(GRACE_KEY) ?? null;
+    }
+
+    return this.grace;
+  }
+
+  private async saveGrace(grace: HostGrace): Promise<void> {
+    this.grace = grace;
+    await this.ctx.storage.put(GRACE_KEY, grace);
+  }
+
+  private async clearGrace(): Promise<void> {
+    this.grace = null;
+    await this.ctx.storage.delete(GRACE_KEY);
+  }
+
+  private hostAway(grace: HostGrace, now: number): Message {
+    return { type: SignalType.hostAway, hostId: grace.id, graceSeconds: Math.max(0, Math.ceil((grace.until - now) / 1000)) };
+  }
+
+  // A dropped host keeps its slot through the grace, so neither a new room nor another host can take it meanwhile.
+  private async occupant(): Promise<SlotOccupant> {
     const connections = this.connections();
     const host = connections.find((connection) => connection.member.role === "host");
     if (host === undefined) {
-      return VACANT;
+      const grace = await this.hostGrace();
+      return grace === null ? VACANT : { occupied: true, hostId: grace.id, address: grace.room.address, listing: null };
     }
 
     const room = host.member.room;
@@ -540,10 +653,11 @@ export class PartyRoom extends DurableObject<Env> {
     };
   }
 
-  private accept(member: Member): Response {
+  private accept(member: Member, greet?: (socket: WebSocket) => void): Response {
     const pair = new WebSocketPair();
     this.ctx.acceptWebSocket(pair[1]);
     pair[1].serializeAttachment(member);
+    greet?.(pair[1]);
     return new Response(null, { status: 101, webSocket: pair[0] });
   }
 
@@ -701,36 +815,48 @@ export class PartyRoom extends DurableObject<Env> {
     }
   }
 
-  private onJoin(socket: WebSocket, member: Member): void {
+  private async onJoin(socket: WebSocket, member: Member): Promise<void> {
     if (member.role !== "viewer" || member.joined) {
       return;
     }
 
     const connections = this.connections();
     const host = connections.find((connection) => connection.member.role === "host");
-    const room = host?.member.room ?? null;
-    if (host === undefined || room === null) {
+    const grace = host === undefined ? await this.hostGrace() : null;
+    const room = host?.member.room ?? grace?.room ?? null;
+    const hostId = host?.member.id ?? grace?.id ?? null;
+    if (room === null || hostId === null) {
       return;
     }
 
-    if (!member.pendingJoin && holdsForApproval(room, member) && !room.admitted.includes(member.id)) {
-      member.awaiting = true;
-      socket.serializeAttachment(member);
-      send(socket, { type: SignalType.joinPending, hostId: host.member.id });
+    const held = !member.pendingJoin && holdsForApproval(room, member) && !room.admitted.includes(member.id);
+    member.awaiting = held;
+    member.pendingJoin = !held;
+    socket.serializeAttachment(member);
+    if (held) {
+      send(socket, { type: SignalType.joinPending, hostId });
+    }
+
+    // Without a host the join waits as it stands; the returning host is handed it and admits it on its next state.
+    if (host === undefined) {
+      if (grace !== null) {
+        send(socket, this.hostAway(grace, Date.now()));
+      }
+
+      return;
+    }
+
+    if (held) {
       send(host.socket, {
         type: SignalType.joinRequest,
         userId: member.id,
-        hostId: host.member.id,
+        hostId,
         from: participant(member, member.sequence),
       });
       return;
     }
 
-    member.awaiting = false;
-    member.pendingJoin = true;
-    socket.serializeAttachment(member);
-    const updated = this.connections();
-    send(host.socket, this.rosterMessage(host.member, room, updated, null));
+    send(host.socket, this.rosterMessage(host.member, room, this.connections(), null));
   }
 
   private onApprove(socket: WebSocket, member: Member, message: Message): void {
@@ -766,7 +892,7 @@ export class PartyRoom extends DurableObject<Env> {
 
     send(target.socket, { type: SignalType.declined, reason: DECLINE_DENIED, hostId: member.id });
     target.socket.close(CloseCode.ended, "declined");
-    await this.depart(target.socket, target.member);
+    await this.depart(target.socket, target.member, "declined");
   }
 
   // Identities are self-declared, so a kick only closes the current connection; the same name may come back, and
@@ -784,7 +910,7 @@ export class PartyRoom extends DurableObject<Env> {
 
     send(target.socket, { type: SignalType.kicked, hostId: member.id, userId: target.member.id });
     target.socket.close(CloseCode.kicked, "kicked");
-    await this.depart(target.socket, target.member, true);
+    await this.depart(target.socket, target.member, "kicked", true);
   }
 
   private onReact(socket: WebSocket, member: Member, message: Message): void {
@@ -996,7 +1122,9 @@ export class PartyRoom extends DurableObject<Env> {
     await this.ctx.storage.setAlarm(roomDeadline(room));
   }
 
-  private async depart(socket: WebSocket, member: Member, forget = false): Promise<void> {
+  // cause only feeds the log. forget: the member left on purpose (or was removed), which for the host ends the room
+  // at once instead of waiting for it to reconnect.
+  private async depart(socket: WebSocket, member: Member, cause: string, forget = false): Promise<void> {
     if (member.gone) {
       return;
     }
@@ -1005,14 +1133,34 @@ export class PartyRoom extends DurableObject<Env> {
     socket.serializeAttachment(member);
 
     if (member.role === "host") {
-      this.endRoom(socket, "host_left");
+      if (forget || member.room === null) {
+        console.log(`[party] host left room=${roomTag(member.room?.code)} cause=${cause}`);
+        this.endRoom(socket, "host_left");
+        return;
+      }
+
+      await this.holdForHost(socket, member, member.room, cause);
       return;
     }
 
     const connections = this.connections(socket);
     const host = connections.find((connection) => connection.member.role === "host");
     const room = host?.member.room ?? null;
-    if (host === undefined || room === null) {
+    if (host === undefined) {
+      const grace = await this.hostGrace();
+      if (grace !== null && member.joined) {
+        const left = { type: SignalType.left, userId: member.id, hostId: grace.id };
+        for (const connection of connections) {
+          if (connection.member.joined) {
+            send(connection.socket, left);
+          }
+        }
+      }
+
+      return;
+    }
+
+    if (room === null) {
       return;
     }
 
@@ -1046,17 +1194,35 @@ export class PartyRoom extends DurableObject<Env> {
     }
   }
 
-  private endRoom(exclude: WebSocket | null, reason: string): void {
+  private async holdForHost(socket: WebSocket, member: Member, room: RoomState, cause: string): Promise<void> {
+    const now = Date.now();
+    const grace: HostGrace = { id: member.id, room, until: now + HOST_GRACE_MS };
+    await this.saveGrace(grace);
+    await this.ctx.storage.setAlarm(Math.min(grace.until, roomDeadline(room)));
+    const viewers = this.connections(socket);
+    const away = this.hostAway(grace, now);
+    for (const connection of viewers) {
+      if (connection.member.joined) {
+        send(connection.socket, away);
+      }
+    }
+
+    console.log(`[party] host away room=${roomTag(room.code)} cause=${cause} members=${viewers.length} graceSeconds=${HOST_GRACE_MS / 1000}`);
+  }
+
+  private endRoom(exclude: WebSocket | null, reason: string, grace: HostGrace | null = null): void {
     const connections = this.connections(exclude);
     const host = connections.find((connection) => connection.member.role === "host")
       ?? (exclude === null ? undefined : { socket: exclude, member: memberOf(exclude) });
+    const hostId = host?.member.id ?? grace?.id ?? null;
     for (const connection of connections) {
-      send(connection.socket, { type: SignalType.ended, hostId: host?.member.id ?? null, reason });
+      send(connection.socket, { type: SignalType.ended, hostId, reason });
       connection.member.gone = true;
       connection.socket.serializeAttachment(connection.member);
       connection.socket.close(CloseCode.ended, "ended");
     }
 
+    console.log(`[party] room ended room=${roomTag(host?.member.room?.code ?? grace?.room.code)} reason=${reason} members=${connections.length}`);
     this.ctx.waitUntil(this.ctx.storage.deleteAlarm());
   }
 }

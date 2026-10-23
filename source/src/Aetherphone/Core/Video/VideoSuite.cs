@@ -78,6 +78,15 @@ internal sealed class VideoSuite : IDisposable
         configuration.Save();
     }
 
+    internal void TapSpeaker(VideoChannel channel)
+    {
+        var tapped = DualVideo.TapSpeaker(Sound, channel, BothScreensPlaying);
+        configuration.VideoMainChannel = tapped.MainChannel;
+        configuration.VideoMuteScreenA = tapped.MutedA;
+        configuration.VideoMuteScreenB = tapped.MutedB;
+        configuration.Save();
+    }
+
     private static int Percent(float volume) => (int)(volume * 100);
 
     private void ApplyChannelVolumes()

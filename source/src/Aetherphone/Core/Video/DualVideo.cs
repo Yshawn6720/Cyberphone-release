@@ -38,7 +38,18 @@ internal enum ScreenBLink : byte
     Playlist,
 }
 
+internal enum ScreenStatus : byte
+{
+    Idle,
+    Loading,
+    Playing,
+    Paused,
+    Failed,
+}
+
 internal readonly record struct ChannelView(bool ShowA, bool ShowB);
+
+internal readonly record struct ScreenTabs(bool Shown, VideoChannel Screen);
 
 internal readonly record struct ChannelVolumes(int A, int B);
 
@@ -98,20 +109,56 @@ internal static class DualVideo
 
     internal static ChannelVolumes Volumes(in ScreenSound sound, bool liveA, bool liveB)
     {
-        if (!liveA || !liveB)
+        var volumeA = sound.MutedA ? 0 : sound.Volume;
+        var volumeB = sound.MutedB ? 0 : sound.VolumeB;
+        if (!liveA || !liveB || sound.BothScreens)
         {
-            return new ChannelVolumes(sound.Volume, sound.Volume);
-        }
-
-        if (sound.BothScreens)
-        {
-            return new ChannelVolumes(sound.MutedA ? 0 : sound.Volume, sound.MutedB ? 0 : sound.VolumeB);
+            return new ChannelVolumes(volumeA, volumeB);
         }
 
         return sound.MainChannel == VideoChannel.B
-            ? new ChannelVolumes(0, sound.Volume)
-            : new ChannelVolumes(sound.Volume, 0);
+            ? new ChannelVolumes(0, volumeB)
+            : new ChannelVolumes(volumeA, 0);
     }
+
+    internal static ScreenSound TapSpeaker(in ScreenSound sound, VideoChannel channel, bool bothLive)
+    {
+        var isB = channel == VideoChannel.B;
+        var muted = isB ? sound.MutedB : sound.MutedA;
+        var heard = !muted && (!bothLive || sound.BothScreens || sound.MainChannel == channel);
+        if (heard)
+        {
+            return isB ? sound with { MutedB = true } : sound with { MutedA = true };
+        }
+
+        var unmuted = isB ? sound with { MutedB = false } : sound with { MutedA = false };
+        return bothLive && !sound.BothScreens ? unmuted with { MainChannel = channel } : unmuted;
+    }
+
+    internal static ScreenTabs Tabs(VideoChannel picked, bool wasShown, bool viewing, bool hasA, bool hasB)
+    {
+        if (!hasB && (viewing || !hasA))
+        {
+            return new ScreenTabs(false, VideoChannel.A);
+        }
+
+        if (!wasShown || (viewing && !hasA))
+        {
+            return new ScreenTabs(true, hasA ? VideoChannel.A : VideoChannel.B);
+        }
+
+        return new ScreenTabs(true, picked);
+    }
+
+    internal static ScreenStatus Status(VideoPlaybackState state, bool paused, bool recoveryExhausted) => state switch
+    {
+        VideoPlaybackState.Loading => ScreenStatus.Loading,
+        VideoPlaybackState.Failed => ScreenStatus.Failed,
+        VideoPlaybackState.Playing or VideoPlaybackState.Paused when recoveryExhausted => ScreenStatus.Failed,
+        VideoPlaybackState.Paused => ScreenStatus.Paused,
+        VideoPlaybackState.Playing => paused ? ScreenStatus.Paused : ScreenStatus.Playing,
+        _ => ScreenStatus.Idle,
+    };
 
     internal static ScreenSoundChoice SoundChoice(in ScreenSound sound)
     {
@@ -160,6 +207,21 @@ internal static class DualVideo
         }
 
         return view.ShowB ? VideoChannel.B : VideoChannel.A;
+    }
+
+    internal static VideoChannel DanmakuTarget(ChannelView view, VideoChannel mainChannel, VideoChannel? picked)
+    {
+        if (picked == VideoChannel.B && view.ShowB)
+        {
+            return VideoChannel.B;
+        }
+
+        if (picked == VideoChannel.A && view.ShowA)
+        {
+            return VideoChannel.A;
+        }
+
+        return WatchedScreen(view, mainChannel);
     }
 
     internal static VideoChannel DanmakuScreen(string? lineScreen, ChannelView view)

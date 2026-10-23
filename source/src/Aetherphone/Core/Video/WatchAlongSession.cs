@@ -72,6 +72,7 @@ internal sealed class WatchAlongSession : IDisposable
     private readonly RelayNearbyQuery relayNearby;
     private readonly ServerClock serverClock = new();
     private readonly PlaybackSyncController sync = new();
+    private readonly PartyResyncBudget resyncBudget = new();
     private readonly ConcurrentDictionary<string, int> grants = new(StringComparer.Ordinal);
 
     private int tickCounter;
@@ -114,6 +115,7 @@ internal sealed class WatchAlongSession : IDisposable
     private CallControl? pendingRejoinDecline;
     private volatile bool pendingViewerStop;
     private StrongBox<RelayFailure>? pendingRelayFailure;
+    private long hostAwayUntilTicks;
 
     private volatile int serverFeatures;
     private volatile int remoteGuestPermissions;
@@ -182,6 +184,8 @@ internal sealed class WatchAlongSession : IDisposable
         stream.Kicked += OnKicked;
         stream.ViewerFailed += OnViewerFailed;
         stream.HostChanged += OnHostChanged;
+        stream.HostAway += OnHostAway;
+        stream.HostBack += OnHostBack;
         stream.ControlRequested += OnControlRequested;
         stream.Reacted += OnReacted;
         stream.DanmakuReceived += OnDanmakuReceived;
@@ -266,6 +270,15 @@ internal sealed class WatchAlongSession : IDisposable
     internal bool HostScreenOutOfReach { get; private set; }
 
     internal float IdleGraceSeconds => PartyIdle.RemainingSeconds(idleSinceTicks, Environment.TickCount64);
+
+    internal float HostAwaySeconds
+    {
+        get
+        {
+            var until = Interlocked.Read(ref hostAwayUntilTicks);
+            return until == 0 ? 0f : MathF.Max(0f, (until - Environment.TickCount64) / 1000f);
+        }
+    }
 
     internal PartyPolicy Policy
     {
@@ -416,6 +429,7 @@ internal sealed class WatchAlongSession : IDisposable
     {
         if (Mode == WatchAlongMode.Hosting || awaitingHostAck)
         {
+            AepLog.Info($"[party] leave trigger=join mode={Mode}");
             stream.Leave(SelfId);
             StopHostingLocal();
         }
@@ -429,7 +443,7 @@ internal sealed class WatchAlongSession : IDisposable
     {
         if (Mode == WatchAlongMode.Viewing)
         {
-            Leave();
+            Leave("reopen");
         }
 
         partyOpen = true;
@@ -508,13 +522,16 @@ internal sealed class WatchAlongSession : IDisposable
 
     internal void DismissViewerFailuresB() => ViewerFailuresB = [];
 
-    internal void Leave()
+    internal void Leave() => Leave("manual");
+
+    private void Leave(string trigger)
     {
         if (Mode == WatchAlongMode.None && !awaitingHostAck && !IsJoining && !partyOpen)
         {
             return;
         }
 
+        AepLog.Info($"[party] leave trigger={trigger} mode={Mode}");
         stream.Leave(Mode == WatchAlongMode.Viewing || IsJoining ? roomHostId : SelfId);
         LeaveLocally();
     }
@@ -575,6 +592,7 @@ internal sealed class WatchAlongSession : IDisposable
         policyAdopted = false;
         rejoining = false;
         rejoinNextTicks = 0;
+        Interlocked.Exchange(ref hostAwayUntilTicks, 0);
         grants.Clear();
         publishedGrants = null;
         grantsChanged = false;
@@ -746,7 +764,7 @@ internal sealed class WatchAlongSession : IDisposable
         Reactions.Add(kind, now);
     }
 
-    internal DanmakuRefusal SendDanmaku(string text)
+    internal DanmakuRefusal SendDanmaku(string text, VideoChannel? screen = null)
     {
         var line = PartyDanmaku.Clean(text);
         var refusal = PartyDanmaku.Refusal(line, Mode != WatchAlongMode.None, serverFeatures, RoomDanmakuEnabled);
@@ -755,7 +773,7 @@ internal sealed class WatchAlongSession : IDisposable
             return refusal;
         }
 
-        var watched = DualVideo.WatchedScreen(View, configuration.VideoMainChannel);
+        var watched = DualVideo.DanmakuTarget(View, configuration.VideoMainChannel, screen);
         var screenWire = ServerSupportsDualVideo ? DualVideo.ChannelWire(watched) : null;
         if (!stream.SendDanmaku(line, screenWire))
         {
@@ -911,7 +929,7 @@ internal sealed class WatchAlongSession : IDisposable
         {
             if (Mode == WatchAlongMode.Hosting || awaitingHostAck)
             {
-                Leave();
+                Leave("idle");
             }
 
             return false;
@@ -925,7 +943,7 @@ internal sealed class WatchAlongSession : IDisposable
 
         if (PartyIdle.Expired(idleSinceTicks, now))
         {
-            Leave();
+            Leave("idle");
             return false;
         }
 
@@ -945,6 +963,7 @@ internal sealed class WatchAlongSession : IDisposable
 
     private void ApplyRelayFailure(in RelayFailure failure)
     {
+        AepLog.Info($"[party] relay failed status={failure.Status} refusal={failure.Refusal} mode={Mode}");
         if (!InSession)
         {
             return;
@@ -963,10 +982,10 @@ internal sealed class WatchAlongSession : IDisposable
             case (int)HttpStatusCode.Unauthorized:
                 QueueAlert(L.AetherStream.RelayInviteRejectedTitle, L.AetherStream.RelayInviteRejectedBody);
                 break;
-            case (int)HttpStatusCode.NotFound:
+            case (int)HttpStatusCode.NotFound when Mode != WatchAlongMode.Hosting:
                 QueueAlert(L.AetherStream.CodeNotFoundTitle, L.AetherStream.CodeNotFoundBody);
                 break;
-            case (int)HttpStatusCode.Conflict:
+            case (int)HttpStatusCode.Conflict when Mode != WatchAlongMode.Hosting:
                 QueueAlert(L.AetherStream.PartyFullTitle, L.AetherStream.PartyFullBody);
                 break;
             default:
@@ -1177,8 +1196,9 @@ internal sealed class WatchAlongSession : IDisposable
             viewingDurationSeconds = video.Progress.Duration;
         }
 
-        if (lastStateMessage is not { } message || viewingPlaybackUrl is null
-            || video.State != VideoPlaybackState.Playing || (message.Paused ?? false)
+        if (lastStateMessage is not { } message || viewingPlaybackUrl is not { } playbackUrl
+            || !PartyViewerSync.CanSync(video.State == VideoPlaybackState.Playing, message.Paused ?? false,
+                video.IsLiveUrl(playbackUrl), video.IsRestarting, video.PositionUnavailable)
             || message.PositionSeconds is not { } position || message.StateAtUnixMs is not { } stamp)
         {
             ReleaseSync();
@@ -1200,10 +1220,33 @@ internal sealed class WatchAlongSession : IDisposable
             video.SetSpeed(decision.Speed);
         }
 
+        if (decision.Reopen)
+        {
+            ReopenToResync(playbackUrl, message, progress.Position - target, decision.SeekTarget);
+            return;
+        }
+
         if (decision.Seek)
         {
             video.Seek(decision.SeekTarget);
         }
+    }
+
+    private void ReopenToResync(string playbackUrl, CallControl message, double drift, double seekTarget)
+    {
+        if (!resyncBudget.TryTake(playbackUrl, Environment.TickCount64))
+        {
+            AepLog.Warning($"[WatchAlong] Viewer sync drifted {drift:F1}s after repeated seeks (seek lead "
+                + $"{sync.SeekLead:F1}s); {playbackUrl} was reopened under a minute ago, seeking to {seekTarget:F1}s");
+            video.Seek(seekTarget);
+            return;
+        }
+
+        var resumeAt = ProjectRemotePosition(message);
+        AepLog.Warning($"[WatchAlong] Viewer sync drifted {drift:F1}s after repeated seeks (seek lead "
+            + $"{sync.SeekLead:F1}s); reopening {playbackUrl} at {resumeAt:F1}s");
+        sync.Reset();
+        video.Play(playbackUrl, resumeAt, true);
     }
 
     private void ReleaseSync()
@@ -1225,7 +1268,8 @@ internal sealed class WatchAlongSession : IDisposable
         }
 
         var resumeAt = ProjectRemotePosition(message);
-        if (!PartyFollow.ShouldReopen(message.Url, url, viewingDurationSeconds, resumeAt))
+        if (!PartyFollow.ShouldReopen(message.Url, url, viewingDurationSeconds, resumeAt,
+                video.IsLiveUrl(playbackUrl)))
         {
             return;
         }
@@ -1526,6 +1570,7 @@ internal sealed class WatchAlongSession : IDisposable
         IsAwaitingApproval = false;
         joinRequested = false;
         rejoining = false;
+        Interlocked.Exchange(ref hostAwayUntilTicks, 0);
         roomHostId = message.HostId;
         remoteParticipants = message.Participants;
         RebuildRoster();
@@ -2387,7 +2432,33 @@ internal sealed class WatchAlongSession : IDisposable
         return items.ToArray();
     }
 
-    private void OnEnded(CallControl message) => EndRoom();
+    private void OnEnded(CallControl message)
+    {
+        AepLog.Info($"[party] ended reason={message.Reason} hostId={message.HostId} mode={Mode}");
+        EndRoom();
+    }
+
+    private void OnHostAway(CallControl message)
+    {
+        AepLog.Info($"[party] host away hostId={message.HostId} graceSeconds={message.GraceSeconds} mode={Mode}");
+        if (Mode != WatchAlongMode.Viewing || message.GraceSeconds is not > 0)
+        {
+            return;
+        }
+
+        Interlocked.Exchange(ref hostAwayUntilTicks,
+            Environment.TickCount64 + message.GraceSeconds.GetValueOrDefault() * 1000L);
+        pendingToasts.Enqueue(new PendingToast(L.AetherStream.HostAwayToast, null));
+    }
+
+    private void OnHostBack(CallControl message)
+    {
+        AepLog.Info($"[party] host back hostId={message.HostId} mode={Mode}");
+        if (Interlocked.Exchange(ref hostAwayUntilTicks, 0) != 0 && Mode == WatchAlongMode.Viewing)
+        {
+            pendingToasts.Enqueue(new PendingToast(L.AetherStream.HostBackToast, null));
+        }
+    }
 
     private void EndRoom()
     {
@@ -2404,6 +2475,7 @@ internal sealed class WatchAlongSession : IDisposable
 
     private void OnKicked(CallControl message)
     {
+        AepLog.Info($"[party] kicked hostId={message.HostId} mode={Mode}");
         if (Mode == WatchAlongMode.Viewing)
         {
             ClearViewingState();
@@ -2438,6 +2510,7 @@ internal sealed class WatchAlongSession : IDisposable
         promotionPending = false;
         policyAdopted = false;
         rejoining = false;
+        Interlocked.Exchange(ref hostAwayUntilTicks, 0);
         Interlocked.Exchange(ref pendingJoinSync, null);
         Interlocked.Exchange(ref pendingStateSync, null);
         Interlocked.Exchange(ref pendingHostChange, null);
@@ -2466,6 +2539,8 @@ internal sealed class WatchAlongSession : IDisposable
         stream.Kicked -= OnKicked;
         stream.ViewerFailed -= OnViewerFailed;
         stream.HostChanged -= OnHostChanged;
+        stream.HostAway -= OnHostAway;
+        stream.HostBack -= OnHostBack;
         stream.ControlRequested -= OnControlRequested;
         stream.Reacted -= OnReacted;
         stream.DanmakuReceived -= OnDanmakuReceived;

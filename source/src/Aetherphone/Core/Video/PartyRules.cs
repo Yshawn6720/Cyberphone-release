@@ -114,9 +114,10 @@ internal static class PartyFollow
     internal const double EndGuardSeconds = 10.0;
 
     internal static bool ShouldReopen(string? roomUrl, string viewingUrl, double viewerDurationSeconds,
-        double hostPositionSeconds) =>
+        double hostPositionSeconds, bool viewerLive) =>
         string.Equals(roomUrl, viewingUrl, StringComparison.Ordinal)
-        && (viewerDurationSeconds <= 0d || hostPositionSeconds < viewerDurationSeconds - EndGuardSeconds);
+        && (viewerLive || viewerDurationSeconds <= 0d
+            || hostPositionSeconds < viewerDurationSeconds - EndGuardSeconds);
 }
 
 internal static class PartyHostPosition
@@ -126,6 +127,32 @@ internal static class PartyHostPosition
         (restarting || positionUnavailable) && string.Equals(url, publishedUrl, StringComparison.Ordinal)
             ? expectedPosition
             : position;
+}
+
+internal static class PartyViewerSync
+{
+    internal static bool CanSync(bool playing, bool hostPaused, bool live, bool restarting, bool positionUnavailable) =>
+        playing && !hostPaused && !live && !restarting && !positionUnavailable;
+}
+
+internal sealed class PartyResyncBudget
+{
+    internal const long WindowMilliseconds = 60 * 1000;
+
+    private string? lastUrl;
+    private long lastAtTicks;
+
+    internal bool TryTake(string url, long nowTicks)
+    {
+        if (string.Equals(url, lastUrl, StringComparison.Ordinal) && nowTicks - lastAtTicks < WindowMilliseconds)
+        {
+            return false;
+        }
+
+        lastUrl = url;
+        lastAtTicks = nowTicks;
+        return true;
+    }
 }
 
 internal static class MediaInput

@@ -359,4 +359,61 @@ public sealed class PartyRelayLoopbackTests
         Assert.Equal(1, server.ConnectionCount);
         Assert.False(router.RelayConnected);
     }
+
+    [Theory]
+    [InlineData("host", 3)]
+    [InlineData("hostBeforeCode", 0)]
+    [InlineData("jamHost", 0)]
+    [InlineData("viewer", 3)]
+    [InlineData("promotedViewer", 3)]
+    [InlineData("removedHost", 0)]
+    public void APartyHostReconnectsOnlyOnceItKnowsItsRoomCode(string scenario, int expected)
+    {
+        var configuration = new Configuration { PartyRelayUrl = "http://127.0.0.1:9", PartyRelayInvite = Invite };
+        var kind = scenario == "jamHost" ? PartyRelayKind.Jam : PartyRelayKind.Party;
+        var relay = new PartyRelay(configuration, () => new PartyRelayIdentity(Name, World), kind);
+        var joinsByCode = scenario is "viewer" or "promotedViewer";
+        Assert.True(relay.Begin(joinsByCode ? "ABC234" : null));
+        if (scenario is "host" or "jamHost" or "removedHost")
+        {
+            relay.SetCode("ABC234");
+        }
+
+        if (scenario == "promotedViewer")
+        {
+            relay.SetRole(PartyRelayRole.Host);
+        }
+
+        if (scenario == "removedHost")
+        {
+            relay.StopReconnecting();
+        }
+
+        Assert.Equal(expected, relay.Endpoint.MaxReconnects());
+    }
+
+    [Fact]
+    public async Task AHostWhoseRelayDropsReconnectsWithItsRoomCode()
+    {
+        const string greeting = "{\"type\":\"stream.state\",\"code\":\"ABC234\",\"hostId\":\"" + Name + "@" + World + "\"}";
+        using var server = new LoopbackRelayServer(greeting: greeting);
+        using var router = CreateRouter(server.Url);
+        router.RelayControlReceived += message =>
+        {
+            if (message.Code is { } code)
+            {
+                router.SetRelayCode(code);
+            }
+        };
+        Assert.True(router.BeginRelay(null));
+        Assert.True(await LoopbackRelayServer.WaitUntilAsync(() => router.RelayConnected, Patience));
+
+        Assert.True(router.Send(new CallControl { Type = SignalType.StreamState, Url = "https://video.test/a" }));
+
+        Assert.True(await LoopbackRelayServer.WaitUntilAsync(() => server.Requests.Length == 2, Patience));
+        var requests = server.Requests;
+        Assert.StartsWith("GET /rt?create=1&", LoopbackRelayServer.RequestLine(requests[0]), StringComparison.Ordinal);
+        Assert.StartsWith("GET /rt?code=ABC234&", LoopbackRelayServer.RequestLine(requests[1]), StringComparison.Ordinal);
+        Assert.True(await LoopbackRelayServer.WaitUntilAsync(() => router.RelayConnected, Patience));
+    }
 }

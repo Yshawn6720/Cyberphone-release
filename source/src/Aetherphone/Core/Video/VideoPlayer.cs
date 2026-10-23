@@ -139,6 +139,8 @@ internal sealed class VideoPlayer : IDisposable
 
     internal void SetSpeed(double speed) => engine.SetSpeed(speed);
 
+    internal bool IsLiveUrl(string url) => engine.IsLiveUrl(url);
+
     internal void Stop()
     {
         engine.StopVideo();

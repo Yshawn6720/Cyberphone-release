@@ -190,7 +190,7 @@ internal sealed partial class AetherStreamApp
 
         CancelPendingJoin();
         suite.ChannelB.Play(entry, startSeconds);
-        activeTab = StreamTab.Watch;
+        ShowWatch(VideoChannel.B);
         return true;
     }
 
@@ -278,7 +278,7 @@ internal sealed partial class AetherStreamApp
         addSheet.Close();
         if (mode == QueueAddMode.PlayNow)
         {
-            activeTab = StreamTab.Watch;
+            ShowWatch(VideoChannel.A);
             return;
         }
 
@@ -305,7 +305,7 @@ internal sealed partial class AetherStreamApp
         ShellToast.Show(Loc.T(L.AetherStream.PlaylistImporting));
         if (mode == QueueAddMode.PlayNow)
         {
-            activeTab = StreamTab.Watch;
+            ShowWatch(VideoChannel.A);
         }
     }
 

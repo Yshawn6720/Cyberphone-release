@@ -74,7 +74,7 @@ public sealed class WatchPartyRulesTests
     {
         const string url = "https://youtu.be/abc";
 
-        Assert.True(PartyFollow.ShouldReopen(url, url, 1800d, 1026d));
+        Assert.True(PartyFollow.ShouldReopen(url, url, 1800d, 1026d, viewerLive: false));
     }
 
     [Fact]
@@ -82,16 +82,18 @@ public sealed class WatchPartyRulesTests
     {
         const string url = "https://youtu.be/abc";
 
-        Assert.False(PartyFollow.ShouldReopen(url, url, 600d, 599.4d));
-        Assert.False(PartyFollow.ShouldReopen(url, url, 600d, 600d - PartyFollow.EndGuardSeconds));
-        Assert.True(PartyFollow.ShouldReopen(url, url, 600d, 600d - PartyFollow.EndGuardSeconds - 0.1d));
+        Assert.False(PartyFollow.ShouldReopen(url, url, 600d, 599.4d, viewerLive: false));
+        Assert.False(PartyFollow.ShouldReopen(url, url, 600d, 600d - PartyFollow.EndGuardSeconds, viewerLive: false));
+        Assert.True(PartyFollow.ShouldReopen(url, url, 600d, 600d - PartyFollow.EndGuardSeconds - 0.1d,
+            viewerLive: false));
     }
 
     [Fact]
     public void AViewerFollowsAnotherVideoThroughTheRoomStateRatherThanReopening()
     {
-        Assert.False(PartyFollow.ShouldReopen("https://youtu.be/next", "https://youtu.be/abc", 600d, 12d));
-        Assert.False(PartyFollow.ShouldReopen(null, "https://youtu.be/abc", 600d, 12d));
+        Assert.False(PartyFollow.ShouldReopen("https://youtu.be/next", "https://youtu.be/abc", 600d, 12d,
+            viewerLive: false));
+        Assert.False(PartyFollow.ShouldReopen(null, "https://youtu.be/abc", 600d, 12d, viewerLive: false));
     }
 
     [Fact]
@@ -99,7 +101,48 @@ public sealed class WatchPartyRulesTests
     {
         const string url = "https://youtu.be/live";
 
-        Assert.True(PartyFollow.ShouldReopen(url, url, 0d, 3600d));
+        Assert.True(PartyFollow.ShouldReopen(url, url, 0d, 3600d, viewerLive: false));
+    }
+
+    [Fact]
+    public void AViewerWhoseLiveStreamEndedReopensItAtTheLiveEdgeWhateverTheHostClockReads()
+    {
+        const string url = "https://youtu.be/live";
+
+        Assert.True(PartyFollow.ShouldReopen(url, url, 3605d, 7290d, viewerLive: true));
+        Assert.True(PartyFollow.ShouldReopen(url, url, 3605d, 3600d, viewerLive: true));
+        Assert.False(PartyFollow.ShouldReopen("https://youtu.be/next", url, 3605d, 12d, viewerLive: true));
+    }
+
+    [Fact]
+    public void AViewerFollowsTheHostOnlyWhileItsOwnPlayerIsSteadilyPlayingAVideo()
+    {
+        Assert.True(PartyViewerSync.CanSync(playing: true, hostPaused: false, live: false, restarting: false,
+            positionUnavailable: false));
+        Assert.False(PartyViewerSync.CanSync(playing: true, hostPaused: false, live: false, restarting: true,
+            positionUnavailable: false));
+        Assert.False(PartyViewerSync.CanSync(playing: true, hostPaused: false, live: false, restarting: false,
+            positionUnavailable: true));
+        Assert.False(PartyViewerSync.CanSync(playing: true, hostPaused: false, live: true, restarting: false,
+            positionUnavailable: false));
+        Assert.False(PartyViewerSync.CanSync(playing: true, hostPaused: true, live: false, restarting: false,
+            positionUnavailable: false));
+        Assert.False(PartyViewerSync.CanSync(playing: false, hostPaused: false, live: false, restarting: false,
+            positionUnavailable: false));
+    }
+
+    [Fact]
+    public void AViewerReopensTheSameLinkToResyncAtMostOnceAMinute()
+    {
+        const string url = "https://youtu.be/abc";
+        var budget = new PartyResyncBudget();
+
+        Assert.True(budget.TryTake(url, 1_000));
+        Assert.False(budget.TryTake(url, 1_000 + PartyResyncBudget.WindowMilliseconds - 1));
+        Assert.True(budget.TryTake("https://youtu.be/next", 2_000));
+        Assert.True(budget.TryTake(url, 2_000 + PartyResyncBudget.WindowMilliseconds - 1));
+        Assert.False(budget.TryTake(url, 2_000 + PartyResyncBudget.WindowMilliseconds));
+        Assert.True(budget.TryTake(url, 2_000 + 2 * PartyResyncBudget.WindowMilliseconds));
     }
 
     [Fact]

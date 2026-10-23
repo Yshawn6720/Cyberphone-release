@@ -8107,6 +8107,11 @@ internal static class L
         public static readonly LocString YouAreHostToast = new("aetherstream.youAreHostToast",
             "You are the host now");
         public static readonly LocString PartyEndedToast = new("aetherstream.partyEndedToast", "The party ended");
+        public static readonly LocString HostAwayToast = new("aetherstream.hostAwayToast",
+            "The host lost connection. Waiting for them to come back");
+        public static readonly LocString HostAwayGrace = new("aetherstream.hostAwayGrace",
+            "The host lost connection. The party waits {0} for them.");
+        public static readonly LocString HostBackToast = new("aetherstream.hostBackToast", "The host is back");
         public static readonly LocString HostQueueAddHint = new("aetherstream.hostQueueAddHint",
             "Add a video and it goes straight into the party's queue.");
 
@@ -8225,6 +8230,9 @@ internal static class L
         public static readonly LocString ScreenSoundBothHint = new("aetherstream.screenSoundBothHint",
             "Each screen has its own volume. Tap a speaker to mute or unmute that screen.");
         public static readonly LocString PlayOnScreenB = new("aetherstream.playOnScreenB", "Play on Screen B");
+        public static readonly LocString ScreenPlaying = new("aetherstream.screenPlaying", "Playing");
+        public static readonly LocString ScreenPaused = new("aetherstream.screenPaused", "Paused");
+        public static readonly LocString ScreenCantPlay = new("aetherstream.screenCantPlay", "Can't play");
         public static readonly LocString WallSideBySide = new("aetherstream.wallSideBySide", "Side by Side");
         public static readonly LocString WallStacked = new("aetherstream.wallStacked", "Stacked");
         public static readonly LocString WallHint = new("aetherstream.wallHint",

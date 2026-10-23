@@ -48,17 +48,32 @@ internal sealed partial class AetherStreamApp
 
     private void DrawWatchTab(Rect body, float scale)
     {
-        var idle = CurrentEntry is null && !video.HasMedia;
+        var hasA = CurrentEntry is not null || video.HasMedia;
+        var hasB = ScreenBPresent;
+        var tabs = DualVideo.Tabs(watchScreen, screenTabsShown, watchAlong.IsViewing, hasA, hasB);
+        screenTabsShown = tabs.Shown;
+        watchScreen = tabs.Screen;
+        var onB = tabs.Screen == VideoChannel.B;
+        var idle = onB ? !hasB : !hasA;
         using (AppSurface.BeginEdgeToEdge(body))
         {
             Gap(Metrics.Space.Xs);
-            if (idle)
+            if (tabs.Shown)
+            {
+                DrawScreenTabs(scale);
+            }
+
+            if (idle && onB)
+            {
+                DrawPromptCard(VideoChannel.B, scale);
+            }
+            else if (idle)
             {
                 DrawWatchIdle(scale);
             }
             else
             {
-                DrawWatchPlayer(scale);
+                DrawWatchPlayer(watchScreen, scale);
             }
 
             Gap(idle ? Metrics.Space.Lg : FabClearance);
@@ -68,7 +83,14 @@ internal sealed partial class AetherStreamApp
                 PhoneIcons.Plus,
                 Loc.T(L.AetherStream.AddVideoTitle), "aetherstream.composer", phoneGlyph: true))
         {
-            OpenAddSheet();
+            if (onB && !watchAlong.IsViewing)
+            {
+                OpenAddSheetForScreenB();
+            }
+            else
+            {
+                OpenAddSheet();
+            }
         }
     }
 
@@ -81,26 +103,14 @@ internal sealed partial class AetherStreamApp
             watchAlong.RequestNearbyStreams();
         }
 
-        var screenBOnly = suite.PlayerB.HasMedia || watchAlong.RoomHasChannelB;
-        if (!screenBOnly)
+        if (!suite.PlayerB.HasMedia && !watchAlong.RoomHasChannelB)
         {
             DrawPartyStandby(scale);
         }
 
+        DrawViewerFailuresB(scale);
         DrawLocalMediaPrompt(scale);
-        DrawPromptCard(scale);
-        if (screenBOnly)
-        {
-            DrawSound(scale);
-        }
-
-        DrawScreenBSection(scale);
-        if (screenBOnly)
-        {
-            DrawReactionBar(scale);
-            DrawDanmakuComposer(scale);
-        }
-
+        DrawPromptCard(VideoChannel.A, scale);
         DrawCopiedLinkChip(scale);
         DrawImportProgress(scale);
         DrawUpNextCard(scale);
@@ -141,11 +151,12 @@ internal sealed partial class AetherStreamApp
         Gap(Metrics.Space.Md);
     }
 
-    private void DrawPromptCard(float scale)
+    private void DrawPromptCard(VideoChannel channel, float scale)
     {
         var viewing = watchAlong.IsViewing;
-        var title = Loc.T(viewing ? L.AetherStream.PromptSuggestTitle : L.AetherStream.PromptTitle);
-        var hint = Loc.T(viewing ? L.AetherStream.PromptSuggestHint : L.AetherStream.PromptHint);
+        var screenB = channel == VideoChannel.B;
+        var title = Loc.T(PromptTitle(screenB, viewing));
+        var hint = Loc.T(PromptHint(screenB, viewing));
         var pad = Metrics.Space.Xl * scale;
         var innerWidth = ScrollLayout.StableContentWidth() - PadX * 2f * scale - pad * 2f;
         var titleHeight = Typography.LineHeight(TextStyles.Title2);
@@ -181,17 +192,48 @@ internal sealed partial class AetherStreamApp
         if (DrawLinkField(fieldRow, "##aetherstreamIdleLink", "aetherstream.idle.paste", scale)
             && MediaInput.Normalize(linkInput).Length > 0)
         {
-            SubmitInput(linkInput, QueueAddMode.PlayNow);
+            SubmitPrompt(screenB);
         }
 
         if (!viewing && TextLink(new Vector2(card.Center.X, top + fieldHeight + linkHeight * 0.5f),
                 Loc.T(L.AetherStream.BrowseLocalFile), Ink.AccentLink))
         {
             addMode = QueueAddMode.PlayNow;
-            PickLocalFile(false);
+            PickLocalFile(screenB);
         }
 
         EndBlock();
+    }
+
+    private static LocString PromptTitle(bool screenB, bool viewing)
+    {
+        if (screenB)
+        {
+            return L.AetherStream.PlayOnScreenB;
+        }
+
+        return viewing ? L.AetherStream.PromptSuggestTitle : L.AetherStream.PromptTitle;
+    }
+
+    private static LocString PromptHint(bool screenB, bool viewing)
+    {
+        if (screenB)
+        {
+            return L.AetherStream.ScreenBOneVideo;
+        }
+
+        return viewing ? L.AetherStream.PromptSuggestHint : L.AetherStream.PromptHint;
+    }
+
+    private void SubmitPrompt(bool screenB)
+    {
+        if (screenB)
+        {
+            SubmitToScreenB(linkInput);
+            return;
+        }
+
+        SubmitInput(linkInput, QueueAddMode.PlayNow);
     }
 
     private void DrawCopiedLinkChip(float scale)
@@ -371,7 +413,7 @@ internal sealed partial class AetherStreamApp
 
         CancelPendingJoin();
         queue.PlayNow(entry, record.PositionSeconds);
-        activeTab = StreamTab.Watch;
+        ShowWatch(VideoChannel.A);
     }
 
     private void DrawNearbyParties(float scale)
@@ -514,16 +556,26 @@ internal sealed partial class AetherStreamApp
         }
     }
 
-    private void DrawWatchPlayer(float scale)
+    private void DrawWatchPlayer(VideoChannel channel, float scale)
     {
-        DrawHero(scale);
-        DrawPlaybackNotices(scale);
-        DrawLocalMediaPrompt(scale);
-        DrawNowPlayingTitle(scale);
-        DrawProgress(scale);
+        var screenB = channel == VideoChannel.B;
+        DrawHero(channel, scale);
+        if (screenB)
+        {
+            DrawScreenBNotices(scale);
+        }
+        else
+        {
+            DrawPlaybackNotices(scale);
+            DrawViewerFailuresB(scale);
+            DrawLocalMediaPrompt(scale);
+        }
+
+        DrawNowPlayingTitle(channel, scale);
+        DrawProgress(channel, scale);
         if (CanDrive)
         {
-            DrawTransport(scale);
+            DrawTransport(channel, scale);
         }
 
         if (watchAlong.IsViewing)
@@ -531,25 +583,28 @@ internal sealed partial class AetherStreamApp
             DrawFollowing(scale);
         }
 
-        DrawSound(scale);
-        DrawScreenBSection(scale);
+        DrawSound(channel, scale);
         DrawReactionBar(scale);
         DrawDanmakuComposer(scale);
-        DrawImportProgress(scale);
-        DrawUpNextCard(scale);
+        if (!screenB)
+        {
+            DrawImportProgress(scale);
+            DrawUpNextCard(scale);
+        }
     }
 
-    private void DrawHero(float scale)
+    private void DrawHero(VideoChannel channel, float scale)
     {
         var width = ScrollLayout.StableContentWidth() - PadX * 2f * scale;
         var hero = BeginBlock(width * HeroAspect);
         var rounding = Metrics.Radius.Card * scale;
         var drawList = ImGui.GetWindowDrawList();
-        var current = CurrentEntry;
+        var player = PlayerFor(channel);
+        var current = EntryFor(channel);
 
         Squircle.Fill(drawList, hero.Min, hero.Max, rounding, ImGui.GetColorU32(new Vector4(0f, 0f, 0f, 1f)));
-        var liveHandle = screen.Engine.ScreenViewHandle;
-        if (liveHandle != nint.Zero && video.HasMedia && video.FrameVersion > 0)
+        var liveHandle = screen.EngineFor(channel).ScreenViewHandle;
+        if (liveHandle != nint.Zero && player.HasMedia && player.FrameVersion > 0)
         {
             drawList.AddImageRounded(new ImTextureID(liveHandle), hero.Min, hero.Max, Vector2.Zero, Vector2.One,
                 0xFFFFFFFFu, rounding, ImDrawFlags.RoundCornersAll);
@@ -569,20 +624,22 @@ internal sealed partial class AetherStreamApp
         VideoStageOverlay.DrawReactions(drawList, hero, watchAlong.Reactions, scale);
         if (configuration.VideoDanmaku)
         {
-            VideoStageOverlay.DrawDanmaku(drawList, hero, watchAlong.Danmaku, configuration.VideoDanmakuLanes, scale);
+            VideoStageOverlay.DrawDanmaku(drawList, hero, watchAlong.DanmakuFor(channel),
+                configuration.VideoDanmakuLanes, scale);
         }
 
         drawList.PopClipRect();
-        DrawHeroOverlay(drawList, hero, scale);
+        DrawHeroOverlay(drawList, hero, channel, scale);
         EndBlock();
     }
 
-    private void DrawHeroOverlay(ImDrawListPtr drawList, Rect hero, float scale)
+    private void DrawHeroOverlay(ImDrawListPtr drawList, Rect hero, VideoChannel channel, float scale)
     {
         var delta = ImGui.GetIO().DeltaTime;
         var rounding = Metrics.Radius.Card * scale;
-        var loading = video.State == VideoPlaybackState.Loading;
-        var presentable = video.HasMedia && !loading;
+        var player = PlayerFor(channel);
+        var loading = player.State == VideoPlaybackState.Loading;
+        var presentable = channel == VideoChannel.A && player.HasMedia && !loading;
         var hovered = presentable && UiInteract.Hover(hero.Min, hero.Max);
         var eased = Math.Clamp(heroActionsFade.Step(hovered ? 1f : 0f, Motion.HoverLift, delta), 0f, 1f);
         if (eased > 0.01f)
@@ -644,10 +701,10 @@ internal sealed partial class AetherStreamApp
         }
     }
 
-    private void DrawNowPlayingTitle(float scale)
+    private void DrawNowPlayingTitle(VideoChannel channel, float scale)
     {
         Gap(Metrics.Space.Md);
-        var current = CurrentEntry;
+        var current = EntryFor(channel);
         var titleHeight = Typography.LineHeight(TextStyles.Title3);
         var sourceHeight = Typography.LineHeight(TextStyles.Footnote);
         var row = BeginBlock(titleHeight + sourceHeight + 2f * scale);
@@ -655,7 +712,8 @@ internal sealed partial class AetherStreamApp
         var moreRadius = RoundButton.SmallRadius * scale;
         var moreCenter = new Vector2(row.Max.X - moreRadius, row.Center.Y);
         var textWidth = moreCenter.X - moreRadius - Metrics.Space.Md * scale - row.Min.X;
-        Marquee.DrawLeftAuto(drawList, "aetherstream.nowPlaying.title",
+        Marquee.DrawLeftAuto(drawList,
+            channel == VideoChannel.B ? "aetherstream.nowPlaying.titleB" : "aetherstream.nowPlaying.title",
             current?.Title ?? Loc.T(L.AetherStream.NothingPlaying), row.Min.X, row.Min.Y, textWidth,
             TextStyles.Title3, Ink.TitleInk);
         var source = current?.Subtitle ?? string.Empty;
@@ -668,16 +726,17 @@ internal sealed partial class AetherStreamApp
         if (StreamRoundButton(drawList, "aetherstream.player.more", moreCenter, moreRadius,
                 FontAwesomeIcon.EllipsisH, ButtonStyle.Gray, Loc.T(L.AetherStream.MoreOptions)))
         {
-            OpenPlayerActions();
+            OpenPlayerActions(channel);
         }
 
         EndBlock();
     }
 
-    private void OpenPlayerActions()
+    private void OpenPlayerActions(VideoChannel channel)
     {
+        playerActionsScreen = channel;
         BeginActions(SheetPurpose.Player, string.Empty);
-        if (video.HasMedia)
+        if (channel == VideoChannel.A && video.HasMedia)
         {
             AddAction(PlayerActionFullscreen, Loc.T(L.AetherStream.Fullscreen));
             AddAction(PlayerActionWindow, Loc.T(L.AetherStream.OpenScreenWindow));
@@ -707,12 +766,24 @@ internal sealed partial class AetherStreamApp
                 OpenTracksSheet();
                 return;
             case PlayerActionScreen:
+                editedScreen = playerActionsScreen;
                 router.Push(new StreamRoute(StreamScreen.Screen));
                 return;
             case PlayerActionStop:
-                queue.StopPlayback();
+                StopScreen(playerActionsScreen);
                 return;
         }
+    }
+
+    private void StopScreen(VideoChannel channel)
+    {
+        if (channel == VideoChannel.B)
+        {
+            suite.ChannelB.Stop();
+            return;
+        }
+
+        queue.StopPlayback();
     }
 
     private void EnterFullscreen()
@@ -721,22 +792,23 @@ internal sealed partial class AetherStreamApp
         screenWindow.OpenFullscreen();
     }
 
-    private void DrawProgress(float scale)
+    private void DrawProgress(VideoChannel channel, float scale)
     {
         Gap(Metrics.Space.Sm);
         var labelHeight = Typography.LineHeight(TextStyles.Caption1);
         var block = BeginBlock(24f * scale + labelHeight + 2f * scale);
         var drawList = ImGui.GetWindowDrawList();
-        var progress = video.Progress;
+        var progress = PlayerFor(channel).Progress;
         var duration = progress.Duration;
         var sliderRow = new Rect(block.Min, new Vector2(block.Max.X, block.Min.Y + 24f * scale));
         var shown = progress.Position;
         if (CanDrive && duration > 0f)
         {
-            var result = Slider.Draw("aetherstream.progress", sliderRow, progress.Fraction, accentedTheme, 0f, 0f);
+            var result = Slider.Draw(channel == VideoChannel.B ? "aetherstream.progressB" : "aetherstream.progress",
+                sliderRow, progress.Fraction, accentedTheme, 0f, 0f);
             if (result.Released)
             {
-                SeekTo(result.Value * duration);
+                SeekTo(channel, result.Value * duration);
             }
 
             if (result.Dragging || result.Released)
@@ -762,19 +834,25 @@ internal sealed partial class AetherStreamApp
         EndBlock();
     }
 
-    private void SeekTo(float seconds)
+    private void SeekTo(VideoChannel channel, float seconds)
     {
         if (watchAlong.IsViewing)
         {
-            watchAlong.ControlSeek(seconds);
+            watchAlong.ControlSeek(seconds, channel);
             return;
         }
 
-        video.Seek(MathF.Max(0f, seconds));
+        PlayerFor(channel).Seek(MathF.Max(0f, seconds));
     }
 
-    private void TogglePlayback()
+    private void TogglePlayback(VideoChannel channel)
     {
+        if (channel == VideoChannel.B)
+        {
+            ToggleScreenBPlayback();
+            return;
+        }
+
         var paused = video.Progress.Paused;
         if (watchAlong.IsViewing)
         {
@@ -809,33 +887,34 @@ internal sealed partial class AetherStreamApp
         queue.Advance();
     }
 
-    private void DrawTransport(float scale)
+    private void DrawTransport(VideoChannel channel, float scale)
     {
         var row = BeginBlock(64f * scale);
         var drawList = ImGui.GetWindowDrawList();
-        var progress = video.Progress;
+        var player = PlayerFor(channel);
+        var progress = player.Progress;
         var center = row.Center;
         var sideOffset = 84f * scale;
         var seekRadius = RoundButton.RegularRadius * scale;
         if (StreamRoundButton(drawList, "aetherstream.seek.back", new Vector2(center.X - sideOffset, center.Y),
                 seekRadius, FontAwesomeIcon.UndoAlt, ButtonStyle.Plain, Loc.T(L.AetherStream.SeekBack)))
         {
-            SeekTo(progress.Position - SeekStepSeconds);
+            SeekTo(channel, progress.Position - SeekStepSeconds);
         }
 
-        var playing = video.HasMedia && !progress.Paused;
+        var playing = player.HasMedia && !progress.Paused;
         var playRadius = 28f * scale;
         drawList.AddCircleFilled(center, playRadius, ImGui.GetColorU32(ui.Accent), 48);
         if (TransportButton.Draw(center, playRadius, playing ? TransportAction.Pause : TransportAction.Play,
                 ui.Accent, WhiteInk, 1f, true))
         {
-            TogglePlayback();
+            TogglePlayback(channel);
         }
 
         if (StreamRoundButton(drawList, "aetherstream.seek.forward", new Vector2(center.X + sideOffset, center.Y),
                 seekRadius, FontAwesomeIcon.RedoAlt, ButtonStyle.Plain, Loc.T(L.AetherStream.SeekForward)))
         {
-            SeekTo(progress.Position + SeekStepSeconds);
+            SeekTo(channel, progress.Position + SeekStepSeconds);
         }
 
         EndBlock();
@@ -859,25 +938,6 @@ internal sealed partial class AetherStreamApp
         if (SmallButton(resync, resyncLabel, false))
         {
             watchAlong.ResyncNow();
-        }
-
-        EndBlock();
-    }
-
-    private void DrawVolume(float scale)
-    {
-        Gap(Metrics.Space.Xs);
-        var row = BeginBlock(26f * scale);
-        var result = VolumeSlider.Draw("aetherstream.volume", row, configuration.VideoVolume, accentedTheme);
-        if (result.Dragging && Math.Abs(result.Value - configuration.VideoVolume) > 0.001f)
-        {
-            configuration.VideoVolume = result.Value;
-        }
-
-        if (result.Released)
-        {
-            configuration.VideoVolume = result.Value;
-            configuration.Save();
         }
 
         EndBlock();

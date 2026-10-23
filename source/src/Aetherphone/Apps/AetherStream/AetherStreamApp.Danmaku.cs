@@ -31,7 +31,8 @@ internal sealed partial class AetherStreamApp
         {
             var send = LiveChatTranscript.DrawComposerField(ui, bar, bar.Min.X, "##aetherstreamDanmakuComposer", label,
                 danmakuEditor, PartyDanmaku.MaxTextLength, watchAlong.CanSendDanmaku, danmakuCounter, scale);
-            if (send && watchAlong.SendDanmaku(danmakuEditor.Text) == DanmakuRefusal.None)
+            if (send && watchAlong.SendDanmaku(danmakuEditor.Text, screenTabsShown ? watchScreen : null)
+                == DanmakuRefusal.None)
             {
                 danmakuEditor.Adopt(string.Empty);
                 UiFeedback.Play(UiSound.MessageSent);

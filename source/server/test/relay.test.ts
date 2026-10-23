@@ -14,6 +14,7 @@ import {
   CloseCode,
   DANMAKU_RATE,
   DROP_LIMIT,
+  HOST_GRACE_MS,
   HOST_RATE,
   MAX_DANMAKU_CHARS,
   MAX_MEMBERS,
@@ -87,7 +88,12 @@ async function upgradeOutcome(query: string, overrides: Partial<Env>, address = 
   return await new Peer(response.webSocket).refusal() ?? "open";
 }
 
+// reset() leaves a party room's storage rows in place, so a host grace stored by one test would hold its slot in the next.
 afterEach(async () => {
+  for (const id of await listDurableObjectIds(env.ROOMS)) {
+    await runInDurableObject(env.ROOMS.get(id), (_instance, state) => state.storage.deleteAll());
+  }
+
   await abortAllDurableObjects();
   await reset();
 });
@@ -249,15 +255,6 @@ describe("watch party", () => {
     expect(again.code[0]).toBe(code[0]);
   });
 
-  it("ends the room when the host's socket drops", async () => {
-    const { host, code } = await openRoom();
-    const viewer = await joinRoom(host, code, "Guest");
-
-    host.socket.close(1001, "gone");
-
-    expect((await viewer.next("stream.ended")).reason).toBe("host_left");
-  });
-
   it("lets a host whose old socket never closed reopen by ending that room, even with every slot full", async () => {
     const stale = await openRoom("Host");
     const viewer = await joinRoom(stale.host, stale.code, "Guest");
@@ -339,6 +336,205 @@ describe("watch party", () => {
 
     expect(state).toMatchObject({ url: "https://video.test/c", code, hostId: "Host@伊弗利特" });
     expect(await viewer.closed()).toBe(CloseCode.rate);
+  });
+});
+
+describe("host grace", () => {
+  const hostId = "Host@伊弗利特";
+
+  async function dropHost(host: Peer, viewer: Peer): Promise<Message> {
+    host.socket.close(1001, "gone");
+    return await viewer.next("stream.hostAway");
+  }
+
+  async function expireGrace(code: string): Promise<void> {
+    const stub = slotStub(code);
+    await runInDurableObject(stub, async (_instance, state) => {
+      const grace = await state.storage.get<{ until: number }>("hostGrace");
+      if (grace === undefined) {
+        throw new Error("no grace stored");
+      }
+
+      await state.storage.put("hostGrace", { ...grace, until: 0 });
+    });
+    await evictDurableObject(stub);
+    expect(await runDurableObjectAlarm(stub)).toBe(true);
+  }
+
+  async function storage(code: string): Promise<{ rows: number; alarm: number | null }> {
+    return await runInDurableObject(slotStub(code), async (_instance, state) => ({
+      rows: (await state.storage.list()).size,
+      alarm: await state.storage.getAlarm(),
+    }));
+  }
+
+  it("keeps the room when the host's socket drops and tells the viewers the host is away", async () => {
+    const { host, code } = await openRoom();
+    const viewer = await joinRoom(host, code, "Guest");
+
+    const away = await dropHost(host, viewer);
+
+    expect(away).toEqual({ type: "stream.hostAway", hostId, graceSeconds: HOST_GRACE_MS / 1000 });
+    expect(viewer.inbox.some((message) => message.type === "stream.ended")).toBe(false);
+    expect(viewer.closeCode).toBeNull();
+    expect((await storage(code)).rows).toBe(1);
+  });
+
+  it("hands the same room, members and playback back to the host when it reconnects within the grace", async () => {
+    const { host, code } = await openRoom();
+    const viewer = await joinRoom(host, code, "Guest");
+    await dropHost(host, viewer);
+
+    const back = await connect(`code=${code}&${identity("Host")}`);
+    const roster = await back.next("stream.roster");
+    const told = await viewer.next("stream.hostBack");
+    back.send({ type: "stream.state", url: "https://video.test/a", positionSeconds: 40, paused: false });
+    const echo = await back.next("stream.state");
+    const state = await viewer.next("stream.state");
+    const after = await storage(code);
+
+    expect(roster).toMatchObject({ hostId, code });
+    expect(roster.participants).toEqual([
+      expect.objectContaining({ userId: hostId, slot: 0 }),
+      expect.objectContaining({ userId: "Guest@伊弗利特", slot: 1 }),
+    ]);
+    expect(told).toEqual({ type: "stream.hostBack", hostId });
+    expect(echo).toMatchObject({ code, hostId });
+    expect(state).toMatchObject({ code, hostId, url: "https://video.test/a", positionSeconds: 40 });
+    expect(after.rows).toBe(0);
+    expect(after.alarm).not.toBeNull();
+    expect(viewer.inbox.some((message) => message.type === "stream.ended")).toBe(false);
+  });
+
+  it("lets the host take its room back from a socket the relay still holds open", async () => {
+    const { host, code } = await openRoom();
+    const viewer = await joinRoom(host, code, "Guest");
+
+    const back = await connect(`code=${code}&${identity("Host")}`);
+    const roster = await back.next("stream.roster");
+
+    expect(await host.closed()).toBe(CloseCode.replaced);
+    expect(roster.hostId).toBe(hostId);
+    expect(await viewer.next("stream.hostBack")).toEqual({ type: "stream.hostBack", hostId });
+    expect(viewer.inbox.some((message) => message.type === "stream.ended" || message.type === "stream.hostAway")).toBe(false);
+  });
+
+  it("ends the room with host_left once the grace runs out, leaving no storage row or alarm", async () => {
+    const { host, code } = await openRoom();
+    const viewer = await joinRoom(host, code, "Guest");
+    await dropHost(host, viewer);
+
+    await expireGrace(code);
+
+    expect(await viewer.next("stream.ended")).toEqual({ type: "stream.ended", hostId, reason: "host_left" });
+    expect(await viewer.closed()).toBe(CloseCode.ended);
+    expect(await storage(code)).toEqual({ rows: 0, alarm: null });
+    expect((await self.fetch(realtimeRequest(`code=${code}&${identity("Host")}`))).status).toBe(404);
+  });
+
+  it("still ends the room at once when the host leaves on purpose", async () => {
+    const { host, code } = await openRoom();
+    const viewer = await joinRoom(host, code, "Guest");
+
+    host.send({ type: "stream.leave" });
+
+    expect((await viewer.next("stream.ended")).reason).toBe("host_left");
+    expect(viewer.inbox.some((message) => message.type === "stream.hostAway")).toBe(false);
+    expect(await storage(code)).toEqual({ rows: 0, alarm: null });
+  });
+
+  it("holds the slot for the dropped host, refusing another character's room until the grace ends", async () => {
+    const { host, code } = await openRoom("Host");
+    const viewer = await joinRoom(host, code, "Guest");
+    await openRoom("B");
+    await openRoom("C");
+    await dropHost(host, viewer);
+
+    const { message } = await refusedWith(await self.fetch(realtimeRequest(`create=1&${identity("D")}`)));
+
+    expect(message.reason).toBe("rooms_full");
+  });
+
+  it("ends the waiting room when the host opens a new party instead, as a plugin without reconnects does", async () => {
+    const stale = await openRoom("Host");
+    const viewer = await joinRoom(stale.host, stale.code, "Guest");
+    await dropHost(stale.host, viewer);
+
+    const again = await openRoom("Host");
+
+    expect(await viewer.next("stream.ended")).toEqual({ type: "stream.ended", hostId, reason: "ended" });
+    expect(again.code).not.toBe(stale.code);
+    expect((await storage(again.code)).rows).toBe(0);
+  });
+
+  it("lets a viewer who also dropped reconnect during the grace and joins them once the host is back", async () => {
+    const { host, code } = await openRoom();
+    const viewer = await joinRoom(host, code, "Guest");
+    await dropHost(host, viewer);
+    viewer.socket.close(1001, "gone");
+
+    const returning = await connect(`code=${code}&${identity("Guest")}`);
+    returning.send({ type: "stream.join", hostId, features: 1 });
+    const away = await returning.next("stream.hostAway");
+    const back = await connect(`code=${code}&${identity("Host")}`);
+    await back.next("stream.roster");
+    back.send({ type: "stream.state", url: "https://video.test/a", positionSeconds: 9, paused: false });
+    const joined = await returning.next("stream.joined");
+
+    expect(away.hostId).toBe(hostId);
+    expect(away.graceSeconds).toBeGreaterThan(0);
+    expect(joined).toMatchObject({ code, hostId, positionSeconds: 9 });
+  });
+
+  it("hands the returning host a join request that arrived while it was away", async () => {
+    const { host, code } = await openRoom("Host", true);
+    const { guest } = await askToJoin(host, code, "Guest");
+    await approve(host, guest, "Guest@伊弗利特");
+    await dropHost(host, guest);
+
+    const newcomer = await connect(`code=${code}&${identity("Newcomer")}`);
+    newcomer.send({ type: "stream.join", code, features: 1 });
+    await newcomer.next("stream.joinPending");
+    const back = await connect(`code=${code}&${identity("Host")}`);
+    const request = await back.next("stream.joinRequest");
+
+    expect(request).toMatchObject({ userId: "Newcomer@伊弗利特", hostId });
+  });
+
+  it("keeps the away host's seat, refusing the viewer that would leave the room no place for it", async () => {
+    const { host, code } = await openRoom();
+    const viewer = await joinRoom(host, code, "Guest1");
+    for (let index = 2; index < MAX_MEMBERS - 1; index++) {
+      await joinRoom(host, code, `Guest${index}`);
+    }
+    await dropHost(host, viewer);
+    const late = await connect(`code=${code}&${identity("Late")}`);
+    late.send({ type: "stream.join", hostId, features: 1 });
+    await late.next("stream.hostAway");
+
+    const refused = await self.fetch(realtimeRequest(`code=${code}&${identity("Later")}`));
+    const back = await connect(`code=${code}&${identity("Host")}`);
+    await back.next("stream.roster");
+    back.send({ type: "stream.state", url: "https://video.test/a", positionSeconds: 9, paused: false });
+    const echo = await back.next("stream.state");
+
+    expect(refused.status).toBe(409);
+    expect(await late.next("stream.joined")).toMatchObject({ code, hostId });
+    expect(echo.participants).toHaveLength(MAX_MEMBERS);
+  });
+
+  it("hands the room back after the relay was evicted from memory during the grace", async () => {
+    const { host, code } = await openRoom();
+    const viewer = await joinRoom(host, code, "Guest");
+    await dropHost(host, viewer);
+    await evictDurableObject(slotStub(code));
+
+    const back = await connect(`code=${code}&${identity("Host")}`);
+    const roster = await back.next("stream.roster");
+
+    expect(roster).toMatchObject({ hostId, code });
+    expect(await viewer.next("stream.hostBack")).toEqual({ type: "stream.hostBack", hostId });
+    expect((await storage(code)).rows).toBe(0);
   });
 });
 

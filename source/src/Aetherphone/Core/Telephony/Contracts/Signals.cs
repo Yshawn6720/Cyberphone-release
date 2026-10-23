@@ -115,6 +115,8 @@ internal static class SignalType
 
     public const string StreamTransfer = "stream.transfer";
     public const string StreamHostChanged = "stream.hostChanged";
+    public const string StreamHostAway = "stream.hostAway";
+    public const string StreamHostBack = "stream.hostBack";
     public const string StreamControl = "stream.control";
     public const string StreamControlRequest = "stream.controlRequest";
     public const string StreamReact = "stream.react";
@@ -471,6 +473,9 @@ internal sealed record CallControl
 
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public int? MaxRooms { get; init; }
+
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public int? GraceSeconds { get; init; }
 }
 
 internal sealed record CasinoPayload

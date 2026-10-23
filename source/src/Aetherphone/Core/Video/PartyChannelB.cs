@@ -13,6 +13,7 @@ internal sealed class PartyChannelB : IDisposable
     private readonly ServerClock serverClock;
     private readonly PlaybackSyncController sync = new();
     private readonly PartyAutoReplay autoReplay = new();
+    private readonly PartyResyncBudget resyncBudget = new();
 
     private string? viewingUrl;
     private string? reportedFailureUrl;
@@ -135,7 +136,9 @@ internal sealed class PartyChannelB : IDisposable
             viewingDurationSeconds = player.Progress.Duration;
         }
 
-        if (lastState is not { } message || player.State != VideoPlaybackState.Playing || (message.PausedB ?? false)
+        if (lastState is not { } message
+            || !PartyViewerSync.CanSync(player.State == VideoPlaybackState.Playing, message.PausedB ?? false,
+                player.IsLiveUrl(url), player.IsRestarting, player.PositionUnavailable)
             || message.PositionSecondsB is not { } position || message.StateAtUnixMs is not { } stamp)
         {
             Release();
@@ -150,17 +153,40 @@ internal sealed class PartyChannelB : IDisposable
         }
 
         var progress = player.Progress;
-        var decision = sync.Step(progress.Position, Math.Max(0d, position + age), progress.Duration,
-            progress.Seeking, deltaSeconds);
+        var target = Math.Max(0d, position + age);
+        var decision = sync.Step(progress.Position, target, progress.Duration, progress.Seeking, deltaSeconds);
         if (decision.SpeedChanged)
         {
             player.SetSpeed(decision.Speed);
+        }
+
+        if (decision.Reopen)
+        {
+            ReopenToResync(url, message, progress.Position - target, decision.SeekTarget);
+            return;
         }
 
         if (decision.Seek)
         {
             player.Seek(decision.SeekTarget);
         }
+    }
+
+    private void ReopenToResync(string url, CallControl message, double drift, double seekTarget)
+    {
+        if (!resyncBudget.TryTake(url, Environment.TickCount64))
+        {
+            AepLog.Warning($"[WatchAlong] Screen B sync drifted {drift:F1}s after repeated seeks (seek lead "
+                + $"{sync.SeekLead:F1}s); {url} was reopened under a minute ago, seeking to {seekTarget:F1}s");
+            playback.Player.Seek(seekTarget);
+            return;
+        }
+
+        var resumeAt = ProjectPosition(message);
+        AepLog.Warning($"[WatchAlong] Screen B sync drifted {drift:F1}s after repeated seeks (seek lead "
+            + $"{sync.SeekLead:F1}s); reopening {url} at {resumeAt:F1}s");
+        sync.Reset();
+        playback.Follow(url, resumeAt, true);
     }
 
     private void ReopenIfEndedEarly(string url)
@@ -171,7 +197,8 @@ internal sealed class PartyChannelB : IDisposable
         }
 
         var resumeAt = ProjectPosition(message);
-        if (!PartyFollow.ShouldReopen(message.UrlB, url, viewingDurationSeconds, resumeAt))
+        if (!PartyFollow.ShouldReopen(message.UrlB, url, viewingDurationSeconds, resumeAt,
+                playback.Player.IsLiveUrl(url)))
         {
             return;
         }

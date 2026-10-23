@@ -177,4 +177,128 @@ public sealed class WatchAlongSyncTests
         Assert.Equal(1d, controller.AppliedSpeed);
         Assert.False(controller.Release());
     }
+
+    [Fact]
+    public void AJoinerWhoseSeeksTakeLongerThanTheToleranceStillCatchesUp()
+    {
+        var result = SimulateJoin(seekSeconds: 4d, seekLands: true);
+
+        Assert.Equal(2, result.Seeks);
+        Assert.Equal(0, result.Reopens);
+        Assert.InRange(Math.Abs(result.FinalDrift), 0d, PlaybackSyncController.HardSeekToleranceSeconds);
+    }
+
+    [Fact]
+    public void AJoinerWhosePlayerReportsTheSeekATickLateStillCatchesUp()
+    {
+        var result = SimulateJoin(seekSeconds: 4d, seekLands: true, seekStartLagTicks: 1);
+
+        Assert.Equal(2, result.Seeks);
+        Assert.Equal(0, result.Reopens);
+        Assert.InRange(Math.Abs(result.FinalDrift), 0d, PlaybackSyncController.HardSeekToleranceSeconds);
+    }
+
+    [Fact]
+    public void AJoinerWhoseSeeksGoNowhereReopensTheLinkInsteadOfSeekingForever()
+    {
+        var result = SimulateJoin(seekSeconds: 0d, seekLands: false);
+
+        Assert.Equal(2, result.Seeks);
+        Assert.Equal(1, result.Reopens);
+        Assert.InRange(Math.Abs(result.FinalDrift), 0d, PlaybackSyncController.HardSeekToleranceSeconds);
+    }
+
+    [Fact]
+    public void AViewerFollowsAHostSkippingAheadSeveralTimesWithoutReopening()
+    {
+        var result = SimulateJoin(seekSeconds: 0.2d, seekLands: true, hostSkips: 3, hostSkipEverySeconds: 1.8d);
+
+        Assert.Equal(0, result.Reopens);
+        Assert.InRange(Math.Abs(result.FinalDrift), 0d, PlaybackSyncController.HardSeekToleranceSeconds);
+    }
+
+    [Fact]
+    public void TheFirstHardSeekAfterCatchingUpAimsAtTheHostItself()
+    {
+        var controller = new PlaybackSyncController();
+        controller.Step(localPosition: 600.0, targetPosition: 607.5, durationSeconds: 7200, false, Tick);
+        controller.Step(localPosition: 600.0, targetPosition: 609.5, durationSeconds: 7200, true, 2f);
+        controller.Step(localPosition: 607.5, targetPosition: 609.5, durationSeconds: 7200, false, Tick);
+        controller.Step(localPosition: 609.5, targetPosition: 609.5, durationSeconds: 7200, false, Tick);
+        Assert.InRange(controller.SeekLead, 1.9d, 2.1d);
+
+        var decision = controller.Step(localPosition: 609.5, targetPosition: 619.5, durationSeconds: 7200, false, Tick);
+
+        Assert.True(decision.Seek);
+        Assert.Equal(619.5, decision.SeekTarget);
+    }
+
+    private static (int Seeks, int Reopens, double FinalDrift) SimulateJoin(double seekSeconds, bool seekLands,
+        int seekStartLagTicks = 0, int hostSkips = 0, double hostSkipEverySeconds = 0d)
+    {
+        const double hostStart = 607.5;
+        const double hostSkipSeconds = 10d;
+        var controller = new PlaybackSyncController();
+        var local = 600d;
+        var hostOffset = 0d;
+        var skipsDone = 0;
+        var elapsed = 0d;
+        var lagLeft = 0;
+        var seekingLeft = 0d;
+        var landing = 0d;
+        var seeks = 0;
+        var reopens = 0;
+        for (var tick = 0; tick < 120 * 60; tick++)
+        {
+            elapsed += Tick;
+            if (skipsDone < hostSkips && elapsed >= 5d + skipsDone * hostSkipEverySeconds)
+            {
+                skipsDone++;
+                hostOffset += hostSkipSeconds;
+            }
+
+            var host = hostStart + elapsed + hostOffset;
+            var seeking = false;
+            if (lagLeft > 0)
+            {
+                lagLeft--;
+                local += Tick;
+            }
+            else if (seekingLeft > 0d)
+            {
+                seekingLeft -= Tick;
+                seeking = seekingLeft > 0d;
+                if (!seeking)
+                {
+                    local = landing;
+                }
+            }
+            else
+            {
+                local += Tick;
+            }
+
+            var decision = controller.Step(local, host, durationSeconds: 7200, seeking, Tick);
+            if (decision.Reopen)
+            {
+                reopens++;
+                controller.Reset();
+                local = host;
+                continue;
+            }
+
+            if (decision.Seek)
+            {
+                seeks++;
+                if (seekLands)
+                {
+                    lagLeft = seekStartLagTicks;
+                    seekingLeft = seekSeconds;
+                    landing = decision.SeekTarget;
+                }
+            }
+        }
+
+        return (seeks, reopens, local - (hostStart + elapsed + hostOffset));
+    }
 }

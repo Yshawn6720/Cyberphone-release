@@ -24,11 +24,13 @@ internal sealed class PartyRelay
     private const string RealtimePath = "/rt";
     private const int MaxIdentityLength = 32;
     private const int ViewerReconnects = 3;
+    private const int HostReconnects = 3;
     private const long IdentityRefreshMilliseconds = 1000;
 
     private readonly Configuration configuration;
     private readonly Func<PartyRelayIdentity?> identitySource;
     private readonly string kindQuery;
+    private readonly bool hostCanResume;
     private readonly object gate = new();
 
     private string? checkedUrl;
@@ -63,6 +65,7 @@ internal sealed class PartyRelay
             PartyRelayKind.Call => "?kind=call&",
             _ => "?",
         };
+        hostCanResume = kind == PartyRelayKind.Party;
         Endpoint = new RealtimeEndpoint(ResolveUri, Configure, MaxReconnects, refused);
     }
 
@@ -306,9 +309,17 @@ internal sealed class PartyRelay
     {
         lock (gate)
         {
-            return !sessionRemoved && sessionRole == PartyRelayRole.Viewer && sessionCode is not null
-                ? ViewerReconnects
-                : 0;
+            if (sessionRemoved || sessionCode is null)
+            {
+                return 0;
+            }
+
+            if (sessionRole == PartyRelayRole.Viewer)
+            {
+                return ViewerReconnects;
+            }
+
+            return hostCanResume ? HostReconnects : 0;
         }
     }
 }

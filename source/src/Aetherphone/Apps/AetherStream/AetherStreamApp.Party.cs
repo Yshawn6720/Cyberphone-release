@@ -351,7 +351,10 @@ internal sealed partial class AetherStreamApp
     {
         var code = watchAlong.RoomCode;
         var showCode = watchAlong.ServerSupportsParty && (hosting || code.Length > 0);
-        var grace = hosting && !watchAlong.IsPartyOpen ? watchAlong.IdleGraceSeconds : 0f;
+        var grace = hosting
+            ? watchAlong.IsPartyOpen ? 0f : watchAlong.IdleGraceSeconds
+            : watchAlong.HostAwaySeconds;
+        var graceFormat = hosting ? L.AetherStream.StandbyHostGrace : L.AetherStream.HostAwayGrace;
         var pad = Metrics.Space.Lg * scale;
         var titleHeight = Typography.LineHeight(TextStyles.Title3);
         var subtitleHeight = Typography.LineHeight(TextStyles.Subheadline);
@@ -388,7 +391,7 @@ internal sealed partial class AetherStreamApp
         {
             Typography.Draw(drawList, new Vector2(left, top + Metrics.Space.Sm * scale),
                 Typography.FitText(
-                    partyGraceText.Clock(Loc.T(L.AetherStream.StandbyHostGrace), (int)MathF.Ceiling(grace)), width,
+                    partyGraceText.Clock(Loc.T(graceFormat), (int)MathF.Ceiling(grace)), width,
                     TextStyles.Footnote), Ink.AccentLink, TextStyles.Footnote);
         }
 

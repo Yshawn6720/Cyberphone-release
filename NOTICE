@@ -222,6 +222,44 @@ Modifications (AGPL-3.0 section 5(a)), first made 2026-10-21:
               Side by Side and Stacked under Big Screen join A and B edge to
               edge in front of the camera as one flat wall, A on the left or
               top.
+- 2026-10-23  The Watch page gets Screen A and Screen B tabs at the top, each
+              captioned with what that screen is doing and lit while it is
+              heard. The picked tab runs one player layout for that screen:
+              progress and seek, time, play and pause, 10 second skips,
+              volume and mute, Screen Placement and Stop; an empty B tab
+              starts a video on B. This replaces the Screen B card and the
+              Play on Screen B button. Each screen now keeps its own volume
+              and mute whichever screen is heard, tapping the speaker of a
+              silent screen moves the sound to it, and danmaku typed on a
+              tab goes to that tab's screen.
+- 2026-10-23  A MogCast live stream starts at its live edge instead of about
+              an hour behind: a play from the top sends mpv no start
+              position, and a live link drops any start position it was
+              opened with (a resume, a viewer joining, a restart), which used
+              to land past the end and show no picture. In a watch party, a
+              viewer of a live stream no longer follows the host's position
+              (each member's live clock differs), only the link, pause and
+              screen, and reopens the stream at the live edge when it ends
+              while the host still shows it.
+- 2026-10-23  A watch party viewer whose seeks take longer than the sync
+              tolerance catches up instead of seeking forever: a follow-up
+              seek aims ahead by the time the last one took, and when two
+              seeks in a row have not closed the gap the viewer reopens the
+              link at the host's position instead of a third, at most once a
+              minute. A viewer no longer seeks while its own player restarts
+              a link or has no position.
+- 2026-10-23  A MogCast link whose seek or buffering has not finished after
+              30 seconds restarts at that position, under the same restart
+              budget as other stalls, instead of waiting without end or log.
+- 2026-10-23  A watch party outlives its host's dropped connection by 60
+              seconds instead of ending at once: the relay keeps the room,
+              tells viewers the host is reconnecting with a countdown, and
+              hands the room back (code, members, pending join requests)
+              when the host's plugin reconnects with its room code, which it
+              now tries up to 3 times. Leaving on purpose still ends the room
+              at once. The plugin logs why a relay connection closed and how
+              long it lasted, and the relay logs when a host drops, returns
+              or a room ends, with the reason.
 
 Corresponding source: the Git repository above, at the commit whose version
 matches the build. Upstream's original README is kept in

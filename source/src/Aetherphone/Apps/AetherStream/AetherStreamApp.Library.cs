@@ -313,7 +313,7 @@ internal sealed partial class AetherStreamApp
             case RowActionPlay:
                 CancelPendingJoin();
                 queue.PlayNow(entry);
-                activeTab = StreamTab.Watch;
+                ShowWatch(VideoChannel.A);
                 return;
             case RowActionPlayNext:
                 queue.Insert(entry, QueueAddMode.PlayNext);
@@ -643,7 +643,7 @@ internal sealed partial class AetherStreamApp
                 {
                     CancelPendingJoin();
                     queue.PlayNow(AetherStreamQueue.FromRecord(tapped));
-                    activeTab = StreamTab.Watch;
+                    ShowWatch(VideoChannel.A);
                     router.Pop();
                 }
             }
@@ -679,7 +679,7 @@ internal sealed partial class AetherStreamApp
         {
             CancelPendingJoin();
             queue.InsertRecords(playlist.Entries, QueueAddMode.PlayNow);
-            activeTab = StreamTab.Watch;
+            ShowWatch(VideoChannel.A);
             router.Pop();
         }
 

@@ -58,6 +58,8 @@ internal sealed class StreamSignalRouter : IDisposable
     public event Action<CallControl>? ViewerFailed;
 
     public event Action<CallControl>? HostChanged;
+    public event Action<CallControl>? HostAway;
+    public event Action<CallControl>? HostBack;
     public event Action<CallControl>? ControlRequested;
     public event Action<CallControl>? Reacted;
     public event Action<CallControl>? DanmakuReceived;
@@ -253,6 +255,12 @@ internal sealed class StreamSignalRouter : IDisposable
                 return;
             case SignalType.StreamHostChanged:
                 HostChanged?.Invoke(message);
+                return;
+            case SignalType.StreamHostAway:
+                HostAway?.Invoke(message);
+                return;
+            case SignalType.StreamHostBack:
+                HostBack?.Invoke(message);
                 return;
             case SignalType.StreamControlRequest:
                 ControlRequested?.Invoke(message);
