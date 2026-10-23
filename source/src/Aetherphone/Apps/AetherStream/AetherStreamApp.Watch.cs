@@ -164,7 +164,7 @@ internal sealed partial class AetherStreamApp
         var tile = PromptTile * scale;
         var fieldHeight = FieldRowHeight * scale;
         var linkHeight = viewing ? 0f : Typography.LineHeight(TextStyles.SubheadlineEmphasized) + 22f * scale;
-        var submitHeight = screenB ? (Metrics.Space.Md + ButtonHeight) * scale : 0f;
+        var submitHeight = (Metrics.Space.Md + ButtonHeight) * scale;
         var height = pad + tile + Metrics.Space.Lg * scale + titleHeight + Metrics.Space.Xs * scale + hintHeight
             + Metrics.Space.Xl * scale + fieldHeight + submitHeight + linkHeight + pad;
 
@@ -193,13 +193,13 @@ internal sealed partial class AetherStreamApp
         var submitted = DrawLinkField(fieldRow, "##aetherstreamIdleLink", "aetherstream.idle.paste", scale);
         var canSubmit = MediaInput.Normalize(linkInput).Length > 0;
         top += fieldHeight;
-        if (screenB)
-        {
-            var play = new Rect(new Vector2(card.Min.X + pad, top + Metrics.Space.Md * scale),
-                new Vector2(card.Max.X - pad, top + submitHeight));
-            submitted |= PrimaryButton(play, Loc.T(L.AetherStream.PlayAction), canSubmit);
-            top += submitHeight;
-        }
+        var play = new Rect(new Vector2(card.Min.X + pad, top + Metrics.Space.Md * scale),
+            new Vector2(card.Max.X - pad, top + submitHeight));
+        var playLabel = viewing
+            ? Loc.T(watchAlong.CanAddDirectly ? L.AetherStream.AddToQueue : L.AetherStream.SuggestAction)
+            : Loc.T(L.AetherStream.PlayAction);
+        submitted |= PrimaryButton(play, playLabel, canSubmit);
+        top += submitHeight;
 
         if (submitted && canSubmit)
         {

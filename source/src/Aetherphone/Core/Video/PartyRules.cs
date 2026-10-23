@@ -109,6 +109,35 @@ internal static class PartyIdle
         idleSinceTicks != 0 && nowTicks - idleSinceTicks >= GraceMilliseconds;
 }
 
+internal enum PartySilenceAction : byte
+{
+    None,
+    Reconnect,
+    Leave,
+}
+
+internal static class PartySilence
+{
+    internal const long LimitMilliseconds = 90_000;
+
+    internal static PartySilenceAction Check(long lastHeardTicks, long nowTicks, long hostAwayUntilTicks,
+        long reconnectedAtTicks)
+    {
+        if (lastHeardTicks == 0)
+        {
+            return PartySilenceAction.None;
+        }
+
+        var since = Math.Max(Math.Max(lastHeardTicks, reconnectedAtTicks), hostAwayUntilTicks);
+        if (nowTicks - since < LimitMilliseconds)
+        {
+            return PartySilenceAction.None;
+        }
+
+        return reconnectedAtTicks > lastHeardTicks ? PartySilenceAction.Leave : PartySilenceAction.Reconnect;
+    }
+}
+
 internal static class PartyFollow
 {
     internal const double EndGuardSeconds = 10.0;

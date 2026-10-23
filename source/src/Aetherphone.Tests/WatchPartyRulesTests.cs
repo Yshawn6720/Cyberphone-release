@@ -70,6 +70,50 @@ public sealed class WatchPartyRulesTests
     }
 
     [Fact]
+    public void AViewerWaitsOutTwoMissedHostHeartbeatsBeforeReconnecting()
+    {
+        Assert.Equal(90_000L, PartySilence.LimitMilliseconds);
+        Assert.Equal(PartySilenceAction.None, PartySilence.Check(10_000, 99_999, 0, 0));
+        Assert.Equal(PartySilenceAction.Reconnect, PartySilence.Check(10_000, 100_000, 0, 0));
+    }
+
+    [Fact]
+    public void AViewerStillHearingNothingAfterReconnectingLeavesTheRoom()
+    {
+        Assert.Equal(PartySilenceAction.None, PartySilence.Check(10_000, 100_000, 0, 100_000));
+        Assert.Equal(PartySilenceAction.None, PartySilence.Check(10_000, 189_999, 0, 100_000));
+        Assert.Equal(PartySilenceAction.Leave, PartySilence.Check(10_000, 190_000, 0, 100_000));
+    }
+
+    [Fact]
+    public void AStateHeardAfterReconnectingRestartsTheSilenceClock()
+    {
+        Assert.Equal(PartySilenceAction.None, PartySilence.Check(150_000, 239_999, 0, 100_000));
+        Assert.Equal(PartySilenceAction.Reconnect, PartySilence.Check(150_000, 240_000, 0, 100_000));
+    }
+
+    [Fact]
+    public void AViewerStaysPutWhileTheHostIsAwayAndGivesTheRoomItsFullWindowAfterwards()
+    {
+        Assert.Equal(PartySilenceAction.None, PartySilence.Check(10_000, 140_000, 140_001, 0));
+        Assert.Equal(PartySilenceAction.None, PartySilence.Check(10_000, 230_000, 140_001, 0));
+        Assert.Equal(PartySilenceAction.Reconnect, PartySilence.Check(10_000, 230_001, 140_001, 0));
+    }
+
+    [Fact]
+    public void AStateHeardAfterTheHostCountdownRestartsTheSilenceClock()
+    {
+        Assert.Equal(PartySilenceAction.None, PartySilence.Check(150_000, 239_999, 140_001, 0));
+        Assert.Equal(PartySilenceAction.Reconnect, PartySilence.Check(150_000, 240_000, 140_001, 0));
+    }
+
+    [Fact]
+    public void AViewerThatNeverHeardTheRoomIsNotJudgedSilent()
+    {
+        Assert.Equal(PartySilenceAction.None, PartySilence.Check(0, 500_000, 0, 0));
+    }
+
+    [Fact]
     public void AViewerWhoseStreamEndedMidVideoReopensItWhileTheHostPlaysOn()
     {
         const string url = "https://youtu.be/abc";

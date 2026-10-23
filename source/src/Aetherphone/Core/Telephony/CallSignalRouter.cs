@@ -107,6 +107,17 @@ internal sealed class CallSignalRouter : IDisposable
         relayConnection.Stop();
     }
 
+    public void ReconnectRelay()
+    {
+        if (!relay.Active)
+        {
+            return;
+        }
+
+        relayConnection.Stop();
+        relayConnection.Start();
+    }
+
     public void SetRelayRole(PartyRelayRole role) => relay.SetRole(role);
 
     public void SetRelayCode(string code) => relay.SetCode(code);

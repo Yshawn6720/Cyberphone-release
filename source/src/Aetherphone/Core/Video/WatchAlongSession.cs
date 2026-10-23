@@ -116,6 +116,8 @@ internal sealed class WatchAlongSession : IDisposable
     private volatile bool pendingViewerStop;
     private StrongBox<RelayFailure>? pendingRelayFailure;
     private long hostAwayUntilTicks;
+    private long stateHeardAtTicks;
+    private long silenceReconnectAtTicks;
 
     private volatile int serverFeatures;
     private volatile int remoteGuestPermissions;
@@ -593,6 +595,8 @@ internal sealed class WatchAlongSession : IDisposable
         rejoining = false;
         rejoinNextTicks = 0;
         Interlocked.Exchange(ref hostAwayUntilTicks, 0);
+        Interlocked.Exchange(ref stateHeardAtTicks, 0);
+        silenceReconnectAtTicks = 0;
         grants.Clear();
         publishedGrants = null;
         grantsChanged = false;
@@ -891,6 +895,11 @@ internal sealed class WatchAlongSession : IDisposable
 
         if (Mode == WatchAlongMode.Viewing)
         {
+            if (stream.Connected && LeftSilentRoom())
+            {
+                return;
+            }
+
             StepViewerSync(deltaSeconds);
             return;
         }
@@ -1035,6 +1044,7 @@ internal sealed class WatchAlongSession : IDisposable
         if (Mode == WatchAlongMode.Viewing)
         {
             rejoinAttempts = 0;
+            silenceReconnectAtTicks = Environment.TickCount64;
             SendRejoin();
             return;
         }
@@ -1065,6 +1075,34 @@ internal sealed class WatchAlongSession : IDisposable
         rejoining = true;
         rejoinAttempts++;
         stream.Join(hostId);
+    }
+
+    private bool LeftSilentRoom()
+    {
+        var now = Environment.TickCount64;
+        var action = PartySilence.Check(Interlocked.Read(ref stateHeardAtTicks), now,
+            Interlocked.Read(ref hostAwayUntilTicks), silenceReconnectAtTicks);
+        if (action == PartySilenceAction.Reconnect)
+        {
+            AepLog.Info($"[party] host silent hostId={roomHostId}; reconnecting");
+            stream.ReconnectRelay();
+            return false;
+        }
+
+        if (action != PartySilenceAction.Leave)
+        {
+            return false;
+        }
+
+        Leave("silent");
+        QueueAlert(L.AetherStream.StreamUnavailableTitle, L.AetherStream.StreamUnavailableBody);
+        return true;
+    }
+
+    private void RememberState(CallControl message)
+    {
+        lastStateMessage = message;
+        Interlocked.Exchange(ref stateHeardAtTicks, Environment.TickCount64);
     }
 
     private void ApplyRejoinDecline(CallControl message)
@@ -1575,7 +1613,7 @@ internal sealed class WatchAlongSession : IDisposable
         remoteParticipants = message.Participants;
         RebuildRoster();
         HostQueue = ToHostQueue(message.UpcomingQueue);
-        lastStateMessage = message;
+        RememberState(message);
         Interlocked.Exchange(ref pendingJoinSync, message);
     }
 
@@ -1935,7 +1973,7 @@ internal sealed class WatchAlongSession : IDisposable
         AbsorbServerClock(message);
         AbsorbRoom(message);
         RebuildRoster();
-        lastStateMessage = message;
+        RememberState(message);
         Interlocked.Exchange(ref pendingStateSync, message);
     }
 
@@ -2011,7 +2049,7 @@ internal sealed class WatchAlongSession : IDisposable
         }
 
         HostQueue = ToHostQueue(message.UpcomingQueue);
-        lastStateMessage = message;
+        RememberState(message);
         if (HostName() is { Length: > 0 } hostName)
         {
             pendingToasts.Enqueue(new PendingToast(L.AetherStream.HostChangedToast, hostName));
@@ -2122,7 +2160,7 @@ internal sealed class WatchAlongSession : IDisposable
         ViewingEntry = playingUrl is not null ? playing : null;
         viewingPlaybackUrl = playingUrl;
         viewingUrl = playingUrl is not null && message.Url is { Length: > 0 } url ? url : null;
-        lastStateMessage = message;
+        RememberState(message);
         channelB.HandOver(message);
         HostQueue = ToHostQueue(message.UpcomingQueue);
         if (HostName() is { Length: > 0 } hostName)
@@ -2454,6 +2492,11 @@ internal sealed class WatchAlongSession : IDisposable
     private void OnHostBack(CallControl message)
     {
         AepLog.Info($"[party] host back hostId={message.HostId} mode={Mode}");
+        if (Mode == WatchAlongMode.Viewing)
+        {
+            Interlocked.Exchange(ref stateHeardAtTicks, Environment.TickCount64);
+        }
+
         if (Interlocked.Exchange(ref hostAwayUntilTicks, 0) != 0 && Mode == WatchAlongMode.Viewing)
         {
             pendingToasts.Enqueue(new PendingToast(L.AetherStream.HostBackToast, null));

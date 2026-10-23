@@ -75,6 +75,8 @@ internal sealed class StreamSignalRouter : IDisposable
 
     public void EndRelay() => calls.EndRelay();
 
+    public void ReconnectRelay() => calls.ReconnectRelay();
+
     public void SetRelayRole(PartyRelayRole role) => calls.SetRelayRole(role);
 
     public void SetRelayCode(string code) => calls.SetRelayCode(code);

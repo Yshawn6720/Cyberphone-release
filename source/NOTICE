@@ -262,6 +262,12 @@ Modifications (AGPL-3.0 section 5(a)), first made 2026-10-21:
               or a room ends, with the reason.
 - 2026-10-23  A watch party host's plugin tries up to 6 reconnects instead of
               3, so its retries span the relay's 60 second grace.
+- 2026-10-23  A watch party viewer that hears no room state from the host for
+              90 seconds (the host sends one at least every 30, and the host's
+              reconnect countdown does not count) reconnects to the relay and
+              rejoins once; if 90 more seconds pass in silence it leaves the
+              party and says the party is unavailable, instead of keeping a
+              member list the host no longer has it in.
 
 Corresponding source: the Git repository above, at the commit whose version
 matches the build. Upstream's original README is kept in
