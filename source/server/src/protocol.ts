@@ -13,7 +13,9 @@ export const HOST_GRACE_MS = 60 * 1000;
 export const FEATURE_PARTY = 1;
 export const FEATURE_DANMAKU = 2;
 export const FEATURE_DUAL_VIDEO = 4;
-export const PERMISSION_GRANT_MASK = 1 | 2;
+export const FEATURE_SWITCH_VIDEO = 8;
+export const PERMISSION_SWITCH = 8;
+export const PERMISSION_GRANT_MASK = 1 | 2 | PERMISSION_SWITCH;
 export const PERMISSION_CAN_HOST = 4;
 export const MAX_SHARED_QUEUE = 64;
 
@@ -114,7 +116,8 @@ export const SignalType = {
   hostBack: "stream.hostBack",
 } as const;
 
-export const CONTROL_ACTIONS: Readonly<Record<string, true>> = { play: true, pause: true, seek: true, next: true };
+export const CONTROL_ACTIONS: Readonly<Record<string, true>> = { play: true, pause: true, seek: true, next: true, load: true };
+export const CONTROL_LOAD = "load";
 export const DECLINE_DENIED = "denied";
 export const REACTION_KINDS = 6;
 export const MAX_ADMITTED = 8;

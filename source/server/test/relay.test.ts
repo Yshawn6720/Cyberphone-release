@@ -20,6 +20,7 @@ import {
   MAX_MEMBERS,
   MAX_MESSAGE_BYTES,
   MAX_PENDING_SUGGESTIONS,
+  MAX_SUGGESTION_URL,
   REACTION_RATE,
   RATE_RETRY_AFTER_SECONDS,
   RefusalClose,
@@ -151,7 +152,7 @@ describe("watch party", () => {
     const echo = await host.next("stream.state");
 
     expect(echo.code).toMatch(/^[A-Z0-9]{6}$/);
-    expect(echo.features).toBe(7);
+    expect(echo.features).toBe(15);
     expect(echo.hostId).toBe("Host@伊弗利特");
     expect(typeof echo.stateAtUnixMs).toBe("number");
     expect(echo.participants).toEqual([expect.objectContaining({ userId: "Host@伊弗利特", slot: 0 })]);
@@ -173,7 +174,7 @@ describe("watch party", () => {
       expect.objectContaining({ userId: "Host@伊弗利特", slot: 0 }),
       expect.objectContaining({ userId: "Guest@伊弗利特", slot: 1, displayName: "Guest" }),
     ]);
-    expect(joined).toMatchObject({ hostId: "Host@伊弗利特", code, features: 7, url: "https://video.test/a", positionSeconds: 9, guestPermissions: 2 });
+    expect(joined).toMatchObject({ hostId: "Host@伊弗利特", code, features: 15, url: "https://video.test/a", positionSeconds: 9, guestPermissions: 2 });
     expect(typeof joined.stateAtUnixMs).toBe("number");
     expect(echo.members).toEqual([{ userId: "Guest@伊弗利特", flags: 4 }]);
     expect(state).toMatchObject({ url: "https://video.test/b", paused: true, hostId: "Host@伊弗利特" });
@@ -1096,7 +1097,7 @@ describe("two video channels", () => {
     host.send({ type: "stream.state", url: "https://video.test/a", positionSeconds: 5, paused: false, playMode: "b", ...channelB });
     const joined = await late.next("stream.joined");
 
-    expect(state).toMatchObject({ ...channelB, playMode: "both", features: 7 });
+    expect(state).toMatchObject({ ...channelB, playMode: "both", features: 15 });
     expect(joined).toMatchObject({ ...channelB, playMode: "b", url: "https://video.test/a" });
   });
 
@@ -1154,6 +1155,139 @@ describe("two video channels", () => {
     expect(named).toMatchObject({ url: "https://video.test/b", channel: "b", userId: "Guest@伊弗利特" });
     expect(unknown).toMatchObject({ url: "https://video.test/a" });
     expect(unknown).not.toHaveProperty("channel");
+  });
+});
+
+describe("switching videos", () => {
+  const guestId = "Guest@伊弗利特";
+  const clip = "https://video.test/clip";
+
+  async function hostState(host: Peer, viewer: Peer, fields: Message): Promise<void> {
+    host.send({ type: "stream.state", url: "https://video.test/a", positionSeconds: 2, paused: false, ...fields });
+    await host.next("stream.state");
+    await viewer.next("stream.state");
+  }
+
+  // A dropped load leaves nothing behind it, so a pause sent after it shows whether the host heard the load.
+  async function nextControl(host: Peer, viewer: Peer, load: Message): Promise<Message> {
+    viewer.send({ type: "stream.control", action: "load", ...load });
+    viewer.send({ type: "stream.control", action: "pause" });
+    const first = await host.next("stream.controlRequest");
+    if (first.action === "load") {
+      await host.next("stream.controlRequest");
+    }
+
+    return first;
+  }
+
+  it("drops a load from a member without the switch permission and forwards it with the link once granted", async () => {
+    const { host, code } = await openRoom();
+    const viewer = await joinRoom(host, code, "Guest");
+
+    const refused = await nextControl(host, viewer, { url: clip, channel: "b" });
+    await hostState(host, viewer, { guestPermissions: 2, members: [{ userId: guestId, flags: 1 | 2 }] });
+    const withoutSwitch = await nextControl(host, viewer, { url: clip, channel: "b" });
+    await hostState(host, viewer, { guestPermissions: 0, members: [{ userId: guestId, flags: 8 }] });
+    const granted = await nextControl(host, viewer, { url: clip, channel: "b" });
+    const onA = await nextControl(host, viewer, { url: clip });
+
+    expect(refused.action).toBe("pause");
+    expect(withoutSwitch.action).toBe("pause");
+    expect(granted).toMatchObject({ action: "load", url: clip, channel: "b", userId: guestId });
+    expect(granted.from).toMatchObject({ userId: guestId });
+    expect(onA).toMatchObject({ action: "load", url: clip });
+    expect(onA).not.toHaveProperty("channel");
+  });
+
+  it("lets everyone switch while the room allows it, keeps that through a state without the field, and stops once it is off", async () => {
+    const { host, code } = await openRoom();
+    const viewer = await joinRoom(host, code, "Guest");
+
+    await hostState(host, viewer, { guestPermissions: 8 });
+    const roomWide = await nextControl(host, viewer, { url: clip });
+    await hostState(host, viewer, {});
+    const keptWithoutField = await nextControl(host, viewer, { url: clip });
+    await hostState(host, viewer, { guestPermissions: 2 });
+    const revoked = await nextControl(host, viewer, { url: clip });
+
+    expect(roomWide.action).toBe("load");
+    expect(keptWithoutField.action).toBe("load");
+    expect(revoked.action).toBe("pause");
+  });
+
+  it("stops a member the moment the host takes their own grant back", async () => {
+    const { host, code } = await openRoom();
+    const viewer = await joinRoom(host, code, "Guest");
+
+    await hostState(host, viewer, { members: [{ userId: guestId, flags: 8 }] });
+    const personal = await nextControl(host, viewer, { url: clip });
+    await hostState(host, viewer, { members: [] });
+    const revoked = await nextControl(host, viewer, { url: clip });
+
+    expect(personal.action).toBe("load");
+    expect(revoked.action).toBe("pause");
+  });
+
+  it("drops a load whose link is missing, not a web link or too long", async () => {
+    const { host, code } = await openRoom();
+    const viewer = await joinRoom(host, code, "Guest");
+    await hostState(host, viewer, { guestPermissions: 8 });
+
+    for (const url of [undefined, 7, "file:///C:/movie.mp4", "javascript:alert(1)", `https://video.test/${"x".repeat(MAX_SUGGESTION_URL)}`]) {
+      viewer.send({ type: "stream.control", action: "load", url });
+    }
+    viewer.send({ type: "stream.control", action: "pause" });
+    const first = await host.next("stream.controlRequest");
+
+    expect(first.action).toBe("pause");
+  });
+
+  it("never treats the hosting bit or unknown bits as the switch permission", async () => {
+    const { host, code } = await openRoom();
+    const viewer = await joinRoom(host, code, "Guest");
+
+    await hostState(host, viewer, { guestPermissions: 4 | 16, members: [{ userId: guestId, flags: 4 | 16 }] });
+    const refused = await nextControl(host, viewer, { url: clip });
+
+    expect(refused.action).toBe("pause");
+  });
+
+  it("keeps every grant through a host drop and hands them back on resume", async () => {
+    const { host, code } = await openRoom();
+    const viewer = await joinRoom(host, code, "Guest");
+    await hostState(host, viewer, { guestPermissions: 1, members: [{ userId: guestId, flags: 8 }] });
+    host.socket.close(1001, "gone");
+    await viewer.next("stream.hostAway");
+
+    const back = await connect(`code=${code}&${identity("Host")}`);
+    const roster = await back.next("stream.roster");
+    await viewer.next("stream.hostBack");
+    const resumed = await nextControl(back, viewer, { url: clip });
+
+    expect(roster.members).toEqual([{ userId: guestId, flags: 8 | 4 }]);
+    expect(resumed).toMatchObject({ action: "load", url: clip, userId: guestId });
+  });
+
+  it("carries the members' grants and the room-wide permissions over to the new host", async () => {
+    const { host, code } = await openRoom();
+    const heir = await joinRoom(host, code, "Heir");
+    const viewer = await joinRoom(host, code, "Guest");
+    await hostState(host, viewer, { guestPermissions: 1, members: [{ userId: guestId, flags: 8 }, { userId: "Heir@伊弗利特", flags: 2 }] });
+
+    host.send({ type: "stream.transfer", userId: "Heir@伊弗利特" });
+    await host.next("stream.roster");
+    host.send({ type: "stream.state", url: "https://video.test/a", positionSeconds: 3, paused: false, guestPermissions: 1, members: [{ userId: guestId, flags: 8 }, { userId: "Heir@伊弗利特", flags: 2 }] });
+    const changed = await viewer.next("stream.hostChanged");
+    const toHeir = await heir.next("stream.hostChanged");
+    const switched = await nextControl(heir, viewer, { url: clip });
+
+    expect(changed.guestPermissions).toBe(1);
+    expect(toHeir.members).toEqual(expect.arrayContaining([
+      { userId: guestId, flags: 8 | 4 },
+      { userId: "Host@伊弗利特", flags: 4 },
+    ]));
+    expect(toHeir.members).toHaveLength(2);
+    expect(switched).toMatchObject({ action: "load", url: clip, userId: guestId });
   });
 });
 

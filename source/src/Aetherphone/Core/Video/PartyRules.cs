@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using Aetherphone.Core.Telephony.Contracts;
 
 namespace Aetherphone.Core.Video;
@@ -57,16 +58,101 @@ internal static class PartyPermissions
     }
 
     internal static bool Allows(int held, int permission) => (held & permission) != 0;
+
+    internal static int Required(string action) =>
+        action == StreamControlAction.Load ? StreamPermission.SwitchVideo : StreamPermission.ControlPlayback;
+
+    internal static int Published(int permissions, int serverFeatures) =>
+        (serverFeatures & StreamFeature.SwitchVideo) != 0 ? permissions : permissions & ~StreamPermission.SwitchVideo;
+}
+
+internal static class PartySwitch
+{
+    internal static string? Link(string input)
+    {
+        if (input.Length == 0 || MediaInput.LooksLikeLocalPath(input) || !VideoEngine.ValidateURL(input, out var url)
+            || url is null)
+        {
+            return null;
+        }
+
+        var link = url.OriginalString;
+        return VideoUrlResolver.IsPlaylistUrl(link) && !VideoUrlResolver.NamesOneVideo(link) ? null : link;
+    }
+}
+
+internal sealed class PartyGrants
+{
+    private readonly ConcurrentDictionary<string, int> flags = new(StringComparer.Ordinal);
+
+    internal bool IsEmpty => flags.IsEmpty;
+
+    internal int For(string userId) => flags.GetValueOrDefault(userId);
+
+    internal void Set(string userId, int permission, bool granted)
+    {
+        var held = For(userId);
+        var updated = (granted ? held | permission : held & ~permission) & StreamPermission.GrantMask;
+        if (updated == 0)
+        {
+            flags.TryRemove(userId, out _);
+            return;
+        }
+
+        flags[userId] = updated;
+    }
+
+    internal bool Forget(string userId) => flags.TryRemove(userId, out _);
+
+    internal void Clear() => flags.Clear();
+
+    internal void Inherit(StreamMember[]? members, string? selfId)
+    {
+        flags.Clear();
+        if (members is null)
+        {
+            return;
+        }
+
+        for (var index = 0; index < members.Length; index++)
+        {
+            var member = members[index];
+            var granted = member.Flags & StreamPermission.GrantMask;
+            if (granted != 0 && !string.Equals(member.UserId, selfId, StringComparison.Ordinal))
+            {
+                flags[member.UserId] = granted;
+            }
+        }
+    }
+
+    internal StreamMember[]? Snapshot()
+    {
+        if (flags.IsEmpty)
+        {
+            return null;
+        }
+
+        var members = new List<StreamMember>(flags.Count);
+        foreach (var pair in flags)
+        {
+            members.Add(new StreamMember(pair.Key, pair.Value));
+        }
+
+        return members.ToArray();
+    }
 }
 
 internal readonly record struct PartyPolicy(bool ApprovalRequired, bool Discoverable, bool CodeEnabled,
     int GuestPermissions, bool DanmakuEnabled)
 {
-    internal const int GuestMask = StreamPermission.AddToQueue | StreamPermission.ControlPlayback;
+    internal const int GuestMask = StreamPermission.AddToQueue | StreamPermission.ControlPlayback
+        | StreamPermission.SwitchVideo;
 
     internal bool GuestsCanAdd => PartyPermissions.Allows(GuestPermissions, StreamPermission.AddToQueue);
 
     internal bool GuestsCanControl => PartyPermissions.Allows(GuestPermissions, StreamPermission.ControlPlayback);
+
+    internal bool GuestsCanSwitch => PartyPermissions.Allows(GuestPermissions, StreamPermission.SwitchVideo);
 
     internal PartyPolicy WithGuestPermission(int permission, bool allowed) =>
         this with { GuestPermissions = allowed ? GuestPermissions | permission : GuestPermissions & ~permission };
@@ -76,7 +162,8 @@ internal readonly record struct PartyPolicy(bool ApprovalRequired, bool Discover
         configuration.VideoStreamDiscoverable,
         configuration.VideoPartyCodeEnabled,
         (configuration.VideoPartyGuestsCanAdd ? StreamPermission.AddToQueue : 0)
-        | (configuration.VideoPartyGuestsCanControl ? StreamPermission.ControlPlayback : 0),
+        | (configuration.VideoPartyGuestsCanControl ? StreamPermission.ControlPlayback : 0)
+        | (configuration.VideoPartyGuestsCanSwitch ? StreamPermission.SwitchVideo : 0),
         configuration.VideoPartyDanmakuEnabled);
 
     internal void Store(Configuration configuration)
@@ -86,6 +173,7 @@ internal readonly record struct PartyPolicy(bool ApprovalRequired, bool Discover
         configuration.VideoPartyCodeEnabled = CodeEnabled;
         configuration.VideoPartyGuestsCanAdd = GuestsCanAdd;
         configuration.VideoPartyGuestsCanControl = GuestsCanControl;
+        configuration.VideoPartyGuestsCanSwitch = GuestsCanSwitch;
         configuration.VideoPartyDanmakuEnabled = DanmakuEnabled;
         configuration.Save();
     }

@@ -268,6 +268,13 @@ Modifications (AGPL-3.0 section 5(a)), first made 2026-10-21:
               rejoins once; if 90 more seconds pass in silence it leaves the
               party and says the party is unavailable, instead of keeping a
               member list the host no longer has it in.
+- 2026-10-24  A watch party host can let every guest, or chosen members, switch
+              the video on screen A or screen B directly (a new switch
+              permission, separate from adding to the queue and controlling
+              playback); the relay and the host both check it and the link.
+              Handing the host role over keeps the room's guest permissions,
+              each member's own permissions and the nearby listing setting; a
+              member who leaves and rejoins still loses their own permissions.
 
 Corresponding source: the Git repository above, at the commit whose version
 matches the build. Upstream's original README is kept in

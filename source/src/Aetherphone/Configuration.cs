@@ -314,6 +314,7 @@ internal sealed class Configuration : IPluginConfiguration, IHomeConfiguration, 
     public Core.Video.VideoPlayMode VideoPartyPlayMode { get; set; } = Core.Video.VideoPlayMode.Both;
     public bool VideoPartyGuestsCanAdd { get; set; }
     public bool VideoPartyGuestsCanControl { get; set; }
+    public bool VideoPartyGuestsCanSwitch { get; set; }
     public bool VideoPartyCodeEnabled { get; set; }
     public bool VideoPartyDanmakuEnabled { get; set; } = true;
     public string PartyRelayUrl { get; set; } = string.Empty;

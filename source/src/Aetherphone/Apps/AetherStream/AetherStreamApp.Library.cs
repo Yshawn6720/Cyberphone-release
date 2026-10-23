@@ -418,10 +418,48 @@ internal sealed partial class AetherStreamApp
         }
 
         SectionLabel(Loc.T(L.AetherStream.UpNextHostQueue));
+        var switching = watchAlong.CanSwitchVideo;
+        HostQueueItem? tapped = null;
         for (var index = 0; index < items.Count; index++)
         {
-            var cell = BeginMediaRow(drawList, items[index].Url, null, items[index].Title, string.Empty, 0f, false);
+            var item = items[index];
+            var switchable = switching && item.Url.Length > 0 && !LocalMediaToken.IsToken(item.Url);
+            var cell = BeginMediaRow(drawList, item.Url, null, item.Title, string.Empty, 0f, switchable);
             EndMediaRow(drawList, cell);
+            if (switchable && cell.Tapped)
+            {
+                tapped = item;
+            }
+        }
+
+        if (tapped is { } picked)
+        {
+            OpenHostQueueActions(picked);
+        }
+    }
+
+    private void OpenHostQueueActions(HostQueueItem item)
+    {
+        actionLink = item.Url;
+        actionEntry = null;
+        actionHistory = null;
+        BeginActions(SheetPurpose.HostQueueRow, item.Title);
+        AddAction(RowActionPlay, Loc.T(L.AetherStream.PlayNow));
+        if (watchAlong.ServerSupportsDualVideo)
+        {
+            AddAction(RowActionPlayOnScreenB, Loc.T(L.AetherStream.PlayOnScreenB));
+        }
+
+        actions.Open();
+    }
+
+    private void HandleHostQueueRowAction(int code)
+    {
+        var link = actionLink;
+        actionLink = string.Empty;
+        if (code == RowActionPlay || code == RowActionPlayOnScreenB)
+        {
+            SwitchPartyVideo(link, code == RowActionPlayOnScreenB ? VideoChannel.B : VideoChannel.A);
         }
     }
 
@@ -479,6 +517,15 @@ internal sealed partial class AetherStreamApp
         {
             if (!MediaInput.LooksLikeLocalPath(record.Url))
             {
+                if (watchAlong.CanSwitchVideo)
+                {
+                    AddAction(RowActionPlay, Loc.T(L.AetherStream.PlayNow));
+                    if (watchAlong.ServerSupportsDualVideo)
+                    {
+                        AddAction(RowActionPlayOnScreenB, Loc.T(L.AetherStream.PlayOnScreenB));
+                    }
+                }
+
                 AddAction(RowActionSuggest, Loc.T(watchAlong.CanAddDirectly
                     ? L.AetherStream.AddToQueue
                     : L.AetherStream.SuggestAction));
@@ -506,6 +553,12 @@ internal sealed partial class AetherStreamApp
         }
 
         actionHistory = null;
+        if (watchAlong.IsViewing && (code == RowActionPlay || code == RowActionPlayOnScreenB))
+        {
+            SwitchPartyVideo(record.Url, code == RowActionPlayOnScreenB ? VideoChannel.B : VideoChannel.A);
+            return;
+        }
+
         switch (code)
         {
             case RowActionPlay:

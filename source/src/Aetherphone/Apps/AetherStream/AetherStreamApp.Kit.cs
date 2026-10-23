@@ -54,6 +54,7 @@ internal sealed partial class AetherStreamApp
         QueueRow,
         HistoryRow,
         PlaylistLink,
+        HostQueueRow,
     }
 
     private struct TextCache
@@ -353,6 +354,9 @@ internal sealed partial class AetherStreamApp
                 return;
             case SheetPurpose.PlaylistLink:
                 HandlePlaylistLinkAction(code);
+                return;
+            case SheetPurpose.HostQueueRow:
+                HandleHostQueueRowAction(code);
                 return;
         }
     }

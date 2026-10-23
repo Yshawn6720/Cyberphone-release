@@ -187,6 +187,44 @@ describe("nearby parties", () => {
     expect(request.userId).toBe("Late@伊弗利特");
   });
 
+  it("tells the new host whether the room is listed, so the region setting survives a host change", async () => {
+    const { host } = await openDiscoverableParty();
+    const first = await knockFromList("First");
+    await host.next("stream.roster");
+    host.send({ type: "stream.state", url: URL_A, positionSeconds: 2, paused: false });
+    await first.next("stream.joined");
+
+    host.send({ type: "stream.transfer", userId: "First@伊弗利特" });
+    await host.next("stream.roster");
+    host.send({ type: "stream.state", url: URL_A, positionSeconds: 3, paused: false });
+    const changed = await first.next("stream.hostChanged");
+    first.send({ type: "stream.state", url: URL_A, positionSeconds: 4, paused: false, discoverable: true, nearbyOptIn: true, nearbyFollowsApproval: true, territoryId: TERRITORY, worldId: WORLD });
+    await first.next("stream.state");
+    const after = await nearby("party");
+
+    expect(changed.discoverable).toBe(true);
+    expect(after.nearbyStreams).toEqual([expect.objectContaining({ name: "First" })]);
+  });
+
+  it("tells the new host an unlisted room is unlisted, even when its old host sent discoverable without the opt-in", async () => {
+    const legacy = await connect(`create=1&${identity("Legacy")}`);
+    legacy.send({ type: "stream.state", url: URL_A, positionSeconds: 1, paused: false, discoverable: true, territoryId: TERRITORY, worldId: WORLD });
+    const echo = await legacy.next("stream.state");
+    const code = echo.code as string;
+    const guest = await connect(`code=${code}&${identity("Guest")}`);
+    guest.send({ type: "stream.join", code, features: 1 });
+    await legacy.next("stream.roster");
+    legacy.send({ type: "stream.state", url: URL_A, positionSeconds: 2, paused: false, discoverable: true });
+    await guest.next("stream.joined");
+
+    legacy.send({ type: "stream.transfer", userId: "Guest@伊弗利特" });
+    await legacy.next("stream.roster");
+    legacy.send({ type: "stream.state", url: URL_A, positionSeconds: 3, paused: false, discoverable: true });
+    const changed = await guest.next("stream.hostChanged");
+
+    expect(changed.discoverable).toBe(false);
+  });
+
   it("refuses a nearby code once discovery is off and never accepts the room code as a nearby code", async () => {
     const { host, code } = await openDiscoverableParty();
     const entry = ((await nearby("party")).nearbyStreams as Message[])[0];

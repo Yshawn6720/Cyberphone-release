@@ -180,11 +180,12 @@ internal sealed class StreamSignalRouter : IDisposable
         calls.Send(new CallControl { Type = SignalType.StreamTransfer, UserId = userId });
     }
 
-    public void Control(string action, double? positionSeconds = null, string? channel = null)
+    public void Control(string action, double? positionSeconds = null, string? channel = null, string? url = null)
     {
         calls.Send(new CallControl
         {
             Type = SignalType.StreamControl, Action = action, PositionSeconds = positionSeconds, Channel = channel,
+            Url = url,
         });
     }
 

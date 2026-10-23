@@ -339,6 +339,8 @@ internal sealed class PartyChannelB : IDisposable
         }
     }
 
+    internal void Load(string url) => playback.Play(url);
+
     internal void AdoptAsHost(CallControl message, bool supported)
     {
         var inheritedUrl = supported && message.UrlB is { Length: > 0 } url && VideoEngine.ValidateURL(url, out _)

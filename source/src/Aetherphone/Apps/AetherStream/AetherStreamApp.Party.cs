@@ -26,6 +26,7 @@ internal sealed partial class AetherStreamApp
     private const int MemberActionToggleControl = 2;
     private const int MemberActionRemove = 3;
     private const int MemberActionToggleDanmaku = 4;
+    private const int MemberActionToggleSwitch = 5;
 
     private string codeInput = string.Empty;
     private string joinQuery = string.Empty;
@@ -536,6 +537,11 @@ internal sealed partial class AetherStreamApp
 
         var held = watchAlong.RoomGuestPermissions
             | (hosting ? watchAlong.GrantsFor(member.UserId) : member.Flags);
+        if (watchAlong.ServerSupportsSwitchVideo && PartyPermissions.Allows(held, StreamPermission.SwitchVideo))
+        {
+            return Loc.T(L.AetherStream.AllowSwitch);
+        }
+
         if (PartyPermissions.Allows(held, StreamPermission.ControlPlayback))
         {
             return Loc.T(L.AetherStream.AllowControl);
@@ -568,6 +574,12 @@ internal sealed partial class AetherStreamApp
         {
             AddAction(MemberActionToggleControl, Loc.T(L.AetherStream.AllowControl),
                 selected: PartyPermissions.Allows(grants, StreamPermission.ControlPlayback), checkable: true);
+        }
+
+        if (manageable && watchAlong.ServerSupportsSwitchVideo && !policy.GuestsCanSwitch)
+        {
+            AddAction(MemberActionToggleSwitch, Loc.T(L.AetherStream.AllowSwitch),
+                selected: PartyPermissions.Allows(grants, StreamPermission.SwitchVideo), checkable: true);
         }
 
         if (watchAlong.CanHideDanmakuFrom(member))
@@ -630,6 +642,10 @@ internal sealed partial class AetherStreamApp
                 watchAlong.SetGrant(member.UserId, StreamPermission.ControlPlayback,
                     !PartyPermissions.Allows(grants, StreamPermission.ControlPlayback));
                 return;
+            case MemberActionToggleSwitch:
+                watchAlong.SetGrant(member.UserId, StreamPermission.SwitchVideo,
+                    !PartyPermissions.Allows(grants, StreamPermission.SwitchVideo));
+                return;
             case MemberActionRemove:
                 watchAlong.KickParticipant(member.UserId);
                 return;
@@ -658,9 +674,10 @@ internal sealed partial class AetherStreamApp
         {
             var policy = watchAlong.Policy;
             var partyRows = !watchAlong.ServerLacksParty;
+            var switchRow = !watchAlong.ServerLacksSwitchVideo;
             var aethernet = HiddenApps.AethernetEnabled;
             SettingsSection.Header(Loc.T(L.AetherStream.PartySettingsGuests), accentedTheme);
-            var guests = GroupCard.Begin(accentedTheme, partyRows ? 2 : 1);
+            var guests = GroupCard.Begin(accentedTheme, 1 + (partyRows ? 1 : 0) + (switchRow ? 1 : 0));
             var canAdd = SettingsRow.Bool(guests.NextRow(), Loc.T(L.AetherStream.GuestsCanAdd),
                 policy.GuestsCanAdd, accentedTheme, hint: Loc.T(L.AetherStream.GuestsCanAddHint));
             var canControl = policy.GuestsCanControl;
@@ -668,6 +685,13 @@ internal sealed partial class AetherStreamApp
             {
                 canControl = SettingsRow.Bool(guests.NextRow(), Loc.T(L.AetherStream.GuestsCanControl), canControl,
                     accentedTheme, hint: Loc.T(L.AetherStream.GuestsCanControlHint));
+            }
+
+            var canSwitch = policy.GuestsCanSwitch;
+            if (switchRow)
+            {
+                canSwitch = SettingsRow.Bool(guests.NextRow(), Loc.T(L.AetherStream.GuestsCanSwitch), canSwitch,
+                    accentedTheme, hint: Loc.T(L.AetherStream.GuestsCanSwitchHint));
             }
 
             guests.End();
@@ -707,7 +731,8 @@ internal sealed partial class AetherStreamApp
             }
 
             var updated = new PartyPolicy(approval, discoverable, codeEnabled,
-                (canAdd ? StreamPermission.AddToQueue : 0) | (canControl ? StreamPermission.ControlPlayback : 0),
+                (canAdd ? StreamPermission.AddToQueue : 0) | (canControl ? StreamPermission.ControlPlayback : 0)
+                | (canSwitch ? StreamPermission.SwitchVideo : 0),
                 danmakuAllowed);
             if (updated != policy)
             {

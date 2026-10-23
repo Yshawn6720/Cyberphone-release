@@ -8031,6 +8031,10 @@ internal static class L
             "Pick the next one");
         public static readonly LocString PromptSuggestHint = new("aetherstream.promptSuggestHint",
             "Paste a link and it goes to the host of your party.");
+        public static readonly LocString PromptSwitchHint = new("aetherstream.promptSwitchHint",
+            "Paste a link to play it for the whole party.");
+        public static readonly LocString SwitchOneVideo = new("aetherstream.switchOneVideo",
+            "Switching plays one video at a time. Paste a link to a single video, or add the playlist to the queue.");
         public static readonly LocString CopiedLinkPlay = new("aetherstream.copiedLinkPlay",
             "Play the link you copied");
         public static readonly LocString CopiedLinkSuggest = new("aetherstream.copiedLinkSuggest",
@@ -8087,6 +8091,10 @@ internal static class L
             "Everyone can control playback");
         public static readonly LocString GuestsCanControlHint = new("aetherstream.guestsCanControlHint",
             "Lets every guest play, pause, seek and skip for the whole party.");
+        public static readonly LocString GuestsCanSwitch = new("aetherstream.guestsCanSwitch",
+            "Everyone can switch videos");
+        public static readonly LocString GuestsCanSwitchHint = new("aetherstream.guestsCanSwitchHint",
+            "Lets every guest put a new video on Screen A or Screen B for the whole party.");
         public static readonly LocString InviteCode = new("aetherstream.inviteCode", "Invite code");
         public static readonly LocString InviteCodeHint = new("aetherstream.inviteCodeHint",
             "Anyone with the code can join, from any world or data center.");
@@ -8102,6 +8110,7 @@ internal static class L
             "Hand the party to {0}? They take over the queue and playback, and you stay to watch.");
         public static readonly LocString AllowAdd = new("aetherstream.allowAdd", "Can add videos");
         public static readonly LocString AllowControl = new("aetherstream.allowControl", "Can control playback");
+        public static readonly LocString AllowSwitch = new("aetherstream.allowSwitch", "Can switch videos");
         public static readonly LocString HostChangedToast = new("aetherstream.hostChangedToast",
             "{0} is the host now");
         public static readonly LocString YouAreHostToast = new("aetherstream.youAreHostToast",

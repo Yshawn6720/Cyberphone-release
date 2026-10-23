@@ -13,15 +13,20 @@ internal sealed partial class AetherStreamApp
 {
     private const float AddSheetHeight = 0.5f;
     private const float AddSheetViewerHeight = 0.34f;
+    private const float AddSheetSwitcherHeight = 0.42f;
     private const float FieldRowHeight = 44f;
     private const float ClipboardPollSeconds = 1f;
     private const int MaxLinkLength = 2000;
     private const int PlaylistActionOne = 0;
     private const int PlaylistActionAll = 1;
     private const int AddTargetScreenB = 3;
+    private const int SwitchTargetScreenA = 0;
+    private const int SwitchTargetScreenB = 1;
+    private const int SwitchTargetQueue = 2;
 
     private readonly SheetSurface addSheet = new("aetherstream.add");
     private readonly string[] addModeLabels = new string[4];
+    private readonly string[] switchModeLabels = new string[3];
     private readonly Action<Rect> drawAddContent;
 
     private string linkInput = string.Empty;
@@ -52,22 +57,41 @@ internal sealed partial class AetherStreamApp
     private void DrawAddSheet(Rect area, float scale)
     {
         var viewing = watchAlong.IsViewing;
-        var title = viewing
+        var switching = viewing && watchAlong.CanSwitchVideo;
+        var title = viewing && !switching
             ? Loc.T(watchAlong.CanAddDirectly ? L.AetherStream.AddToPartyTitle : L.AetherStream.SuggestTitle)
             : Loc.T(L.AetherStream.AddVideoTitle);
-        addSheet.Draw(area, SheetSkin.From(ui.Palette, Ink), title, viewing ? AddSheetViewerHeight : AddSheetHeight,
-            drawAddContent);
+        var height = !viewing ? AddSheetHeight : switching ? AddSheetSwitcherHeight : AddSheetViewerHeight;
+        addSheet.Draw(area, SheetSkin.From(ui.Palette, Ink), title, height, drawAddContent);
     }
 
     private void DrawAddContent(Rect content)
     {
         var scale = UiScale.Current;
         var viewing = watchAlong.IsViewing;
+        var switching = viewing && watchAlong.CanSwitchVideo;
         var top = content.Min.Y;
         var submitted = DrawLinkField(new Rect(new Vector2(content.Min.X, top),
             new Vector2(content.Max.X, top + FieldRowHeight * scale)), "##aetherstreamAddLink",
             "aetherstream.add.paste", scale);
         top += FieldRowHeight * scale + Metrics.Space.Md * scale;
+
+        if (switching)
+        {
+            switchModeLabels[SwitchTargetScreenA] = Loc.T(L.AetherStream.PlayNow);
+            switchModeLabels[SwitchTargetScreenB] = Loc.T(L.AetherStream.ScreenB);
+            switchModeLabels[SwitchTargetQueue] = Loc.T(watchAlong.CanAddDirectly
+                ? L.AetherStream.AddToQueue
+                : L.AetherStream.SuggestAction);
+            var strip = new Rect(new Vector2(content.Min.X, top), new Vector2(content.Max.X, top + 36f * scale));
+            var current = addTargetsScreenB ? SwitchTargetScreenB
+                : addMode == QueueAddMode.PlayNow ? SwitchTargetScreenA
+                : SwitchTargetQueue;
+            var picked = SegmentStrip.Draw("aetherstream.switchMode", strip, switchModeLabels, current, ui.Palette);
+            addTargetsScreenB = picked == SwitchTargetScreenB;
+            addMode = picked == SwitchTargetScreenA ? QueueAddMode.PlayNow : QueueAddMode.AddToQueue;
+            top += 36f * scale + Metrics.Space.Md * scale;
+        }
 
         if (!viewing)
         {
@@ -89,14 +113,13 @@ internal sealed partial class AetherStreamApp
 
         var canSubmit = MediaInput.Normalize(linkInput).Length > 0;
         var primary = new Rect(new Vector2(content.Min.X, top), new Vector2(content.Max.X, top + ButtonHeight * scale));
-        var primaryLabel = viewing
+        var switchesVideo = (!viewing || switching) && (addTargetsScreenB || addMode == QueueAddMode.PlayNow);
+        var primaryLabel = viewing && !switchesVideo
             ? Loc.T(watchAlong.CanAddDirectly ? L.AetherStream.AddToQueue : L.AetherStream.SuggestAction)
-            : Loc.T(addTargetsScreenB || addMode == QueueAddMode.PlayNow
-                ? L.AetherStream.PlayAction
-                : L.AetherStream.QueueSuggestionAdd);
+            : Loc.T(switchesVideo ? L.AetherStream.PlayAction : L.AetherStream.QueueSuggestionAdd);
         if (PrimaryButton(primary, primaryLabel, canSubmit) || (submitted && canSubmit))
         {
-            if (!viewing && addTargetsScreenB)
+            if ((!viewing || switching) && addTargetsScreenB)
             {
                 SubmitToScreenB(linkInput);
                 return;
@@ -174,6 +197,12 @@ internal sealed partial class AetherStreamApp
     {
         if (watchAlong.IsViewing)
         {
+            if (watchAlong.CanSwitchVideo)
+            {
+                SwitchPartyVideo(raw, VideoChannel.B);
+                return;
+            }
+
             SubmitInput(raw, QueueAddMode.AddToQueue);
             return;
         }
@@ -219,10 +248,54 @@ internal sealed partial class AetherStreamApp
         return true;
     }
 
+    private void SwitchPartyVideo(string raw, VideoChannel channel)
+    {
+        var input = MediaInput.Normalize(raw);
+        if (input.Length == 0)
+        {
+            return;
+        }
+
+        if (MediaInput.LooksLikeLocalPath(input))
+        {
+            ShellToast.Show(Loc.T(L.AetherStream.SuggestLinksOnly));
+            return;
+        }
+
+        if (!VideoEngine.ValidateURL(input, out _))
+        {
+            ShellToast.Show(Loc.T(L.AetherStream.NotALink));
+            return;
+        }
+
+        if (PartySwitch.Link(input) is not { } link)
+        {
+            ShellToast.Show(Loc.T(channel == VideoChannel.B
+                ? L.AetherStream.ScreenBOneVideo
+                : L.AetherStream.SwitchOneVideo));
+            return;
+        }
+
+        if (!watchAlong.SendLoad(link, channel))
+        {
+            return;
+        }
+
+        linkInput = string.Empty;
+        addSheet.Close();
+        ShowWatch(channel);
+    }
+
     private void SubmitInput(string raw) => SubmitInput(raw, addMode);
 
     private void SubmitInput(string raw, QueueAddMode mode)
     {
+        if (watchAlong.IsViewing && mode == QueueAddMode.PlayNow && watchAlong.CanSwitchVideo)
+        {
+            SwitchPartyVideo(raw, VideoChannel.A);
+            return;
+        }
+
         var input = MediaInput.Normalize(raw);
         if (input.Length == 0)
         {

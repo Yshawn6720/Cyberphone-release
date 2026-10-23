@@ -57,6 +57,102 @@ public sealed class WatchPartyRulesTests
     }
 
     [Fact]
+    public void SwitchingAVideoNeedsTheSwitchPermissionWhilePlaybackStillNeedsControl()
+    {
+        var controller = StreamPermission.ControlPlayback;
+        var switcher = StreamPermission.SwitchVideo;
+
+        Assert.False(PartyPermissions.Allows(controller, PartyPermissions.Required(StreamControlAction.Load)));
+        Assert.True(PartyPermissions.Allows(controller, PartyPermissions.Required(StreamControlAction.Pause)));
+        Assert.True(PartyPermissions.Allows(switcher, PartyPermissions.Required(StreamControlAction.Load)));
+        Assert.False(PartyPermissions.Allows(switcher, PartyPermissions.Required(StreamControlAction.Seek)));
+        Assert.False(PartyPermissions.Allows(StreamPermission.CanHost, PartyPermissions.Required(StreamControlAction.Load)));
+    }
+
+    [Fact]
+    public void AHostOnlyPublishesTheSwitchPermissionToARelayThatCanCarryIt()
+    {
+        const int everything = StreamPermission.AddToQueue | StreamPermission.SwitchVideo;
+        const int olderRelay = StreamFeature.Party | StreamFeature.Danmaku | StreamFeature.DualVideo;
+
+        Assert.Equal(StreamPermission.AddToQueue, PartyPermissions.Published(everything, olderRelay));
+        Assert.Equal(StreamPermission.AddToQueue, PartyPermissions.Published(everything, 0));
+        Assert.Equal(everything, PartyPermissions.Published(everything, olderRelay | StreamFeature.SwitchVideo));
+    }
+
+    [Theory]
+    [InlineData("https://www.youtube.com/watch?v=dQw4w9WgXcQ", "https://www.youtube.com/watch?v=dQw4w9WgXcQ")]
+    [InlineData("youtube.com/watch?v=dQw4w9WgXcQ", "https://youtube.com/watch?v=dQw4w9WgXcQ")]
+    [InlineData("https://www.youtube.com/watch?v=dQw4w9WgXcQ&list=PLFgquLnL59alCl_2TQvOiD5Vgm1hCaGSI",
+        "https://www.youtube.com/watch?v=dQw4w9WgXcQ&list=PLFgquLnL59alCl_2TQvOiD5Vgm1hCaGSI")]
+    [InlineData("https://www.youtube.com/playlist?list=PLFgquLnL59alCl_2TQvOiD5Vgm1hCaGSI", null)]
+    [InlineData(@"C:\Videos\movie.mp4", null)]
+    [InlineData("hello", null)]
+    [InlineData("", null)]
+    public void ASwitchCarriesOneWebVideoAndNeverAPlaylistOrAFile(string input, string? expected)
+    {
+        Assert.Equal(expected, PartySwitch.Link(input));
+    }
+
+    [Fact]
+    public void ANewHostKeepsEveryMembersGrantExceptItsOwn()
+    {
+        var grants = new PartyGrants();
+        grants.Set("stale", StreamPermission.AddToQueue, true);
+
+        grants.Inherit(
+        [
+            new StreamMember("heir", StreamPermission.SwitchVideo | StreamPermission.CanHost),
+            new StreamMember("switcher", StreamPermission.SwitchVideo | StreamPermission.CanHost),
+            new StreamMember("adder", StreamPermission.AddToQueue | StreamPermission.CanHost),
+            new StreamMember("plain", StreamPermission.CanHost),
+        ], "heir");
+
+        Assert.Equal(StreamPermission.SwitchVideo, grants.For("switcher"));
+        Assert.Equal(StreamPermission.AddToQueue, grants.For("adder"));
+        Assert.Equal(0, grants.For("heir"));
+        Assert.Equal(0, grants.For("plain"));
+        Assert.Equal(0, grants.For("stale"));
+        Assert.Equal(2, grants.Snapshot()?.Length);
+
+        grants.Inherit(null, "heir");
+        Assert.True(grants.IsEmpty);
+    }
+
+    [Fact]
+    public void AMemberWhoLeavesLosesTheirGrantSoComingBackStartsWithNone()
+    {
+        var grants = new PartyGrants();
+        grants.Set("guest", StreamPermission.SwitchVideo, true);
+        grants.Set("other", StreamPermission.SwitchVideo, true);
+
+        Assert.True(grants.Forget("guest"));
+
+        Assert.Equal(0, grants.For("guest"));
+        var remaining = grants.Snapshot();
+        Assert.NotNull(remaining);
+        Assert.Equal([new StreamMember("other", StreamPermission.SwitchVideo)], remaining);
+        Assert.False(grants.Forget("guest"));
+    }
+
+    [Fact]
+    public void AGrantHoldsOnlyWhatAHostCanGiveAndVanishesOnceEmpty()
+    {
+        var grants = new PartyGrants();
+
+        grants.Set("guest", StreamPermission.SwitchVideo | StreamPermission.CanHost, true);
+        Assert.Equal(StreamPermission.SwitchVideo, grants.For("guest"));
+
+        grants.Set("guest", StreamPermission.ControlPlayback, true);
+        grants.Set("guest", StreamPermission.SwitchVideo, false);
+        Assert.Equal(StreamPermission.ControlPlayback, grants.For("guest"));
+
+        grants.Set("guest", StreamPermission.ControlPlayback, false);
+        Assert.True(grants.IsEmpty);
+        Assert.Null(grants.Snapshot());
+    }
+
+    [Fact]
     public void AnIdlePartyStaysOpenForFiveMinutes()
     {
         Assert.Equal(0f, PartyIdle.RemainingSeconds(0, 50_000));
@@ -504,6 +600,7 @@ public sealed class WatchPartyRulesTests
             VideoPartyCodeEnabled = true,
             VideoPartyGuestsCanAdd = true,
             VideoPartyGuestsCanControl = false,
+            VideoPartyGuestsCanSwitch = true,
             VideoPartyDanmakuEnabled = false,
         };
 
@@ -514,6 +611,8 @@ public sealed class WatchPartyRulesTests
         Assert.True(policy.CodeEnabled);
         Assert.True(policy.GuestsCanAdd);
         Assert.False(policy.GuestsCanControl);
+        Assert.True(policy.GuestsCanSwitch);
+        Assert.False(PartyPolicy.From(new Configuration()).GuestsCanSwitch);
         Assert.False(policy.DanmakuEnabled);
         Assert.True(PartyPolicy.From(new Configuration()).DanmakuEnabled);
 
@@ -522,6 +621,7 @@ public sealed class WatchPartyRulesTests
         Assert.True(widened.GuestsCanAdd);
         Assert.False(widened.WithGuestPermission(StreamPermission.AddToQueue, false).GuestsCanAdd);
         Assert.Equal(0, PartyPolicy.GuestMask & StreamPermission.CanHost);
+        Assert.Equal(StreamPermission.GrantMask, PartyPolicy.GuestMask);
     }
 
     [Fact]

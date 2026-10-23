@@ -4,12 +4,14 @@ import type { JamTrack } from "./jam";
 import {
   ALONE_TIMEOUT_MS,
   CONTROL_ACTIONS,
+  CONTROL_LOAD,
   CloseCode,
   DANMAKU_RATE,
   DECLINE_DENIED,
   FEATURE_DANMAKU,
   FEATURE_DUAL_VIDEO,
   FEATURE_PARTY,
+  FEATURE_SWITCH_VIDEO,
   HOST_GRACE_MS,
   HOST_RATE,
   MAX_ADMITTED,
@@ -22,6 +24,7 @@ import {
   MAX_SUGGESTION_URL,
   PERMISSION_CAN_HOST,
   PERMISSION_GRANT_MASK,
+  PERMISSION_SWITCH,
   REACTION_KINDS,
   REACTION_RATE,
   ROOM_LIFETIME_MS,
@@ -49,7 +52,8 @@ export interface JoinTicket {
 }
 
 // What a discoverable room shows in a nearby list: the code here is its nearby code, never the room code, and the
-// only name is the host's character name, which the host agreed to show by turning discovery on.
+// only name is the current host's character name. Discovery is a room setting: a host turns it on, and a host who
+// takes the room over keeps it on (their settings page shows it) until they turn it off.
 export interface RoomListing {
   code: string;
   territoryId: number;
@@ -105,6 +109,7 @@ interface RoomState {
   createdAt: number;
   aloneSince: number | null;
   grants: Grant[];
+  guestPermissions: number;
   pendingTransfer: string | null;
   nextSequence: number;
   approvalRequired: boolean;
@@ -183,7 +188,7 @@ const forwardedStateFields: Readonly<Record<string, "string" | "number" | "boole
   screenCurveB: "number",
 };
 
-const RELAY_FEATURES = FEATURE_PARTY | FEATURE_DANMAKU | FEATURE_DUAL_VIDEO;
+const RELAY_FEATURES = FEATURE_PARTY | FEATURE_DANMAKU | FEATURE_DUAL_VIDEO | FEATURE_SWITCH_VIDEO;
 
 // "a" and "b" name the two video channels; the host's play mode adds "both".
 function isChannel(value: unknown): value is "a" | "b" {
@@ -352,6 +357,7 @@ export class PartyRoom extends DurableObject<Env> {
         createdAt: now,
         aloneSince: now,
         grants: [],
+        guestPermissions: 0,
         pendingTransfer: null,
         nextSequence: 1,
         approvalRequired: false,
@@ -745,6 +751,10 @@ export class PartyRoom extends DurableObject<Env> {
     }
 
     room.grants = readGrants(message.members);
+    if (typeof message.guestPermissions === "number") {
+      room.guestPermissions = message.guestPermissions & PERMISSION_GRANT_MASK;
+    }
+
     if (typeof message.approvalRequired === "boolean") {
       room.approvalRequired = message.approvalRequired;
     }
@@ -1006,7 +1016,8 @@ export class PartyRoom extends DurableObject<Env> {
     }
 
     const host = this.connections().find((connection) => connection.member.role === "host");
-    if (host === undefined) {
+    const room = host?.member.room ?? null;
+    if (host === undefined || room === null) {
       return;
     }
 
@@ -1017,6 +1028,16 @@ export class PartyRoom extends DurableObject<Env> {
       positionSeconds: typeof message.positionSeconds === "number" ? message.positionSeconds : null,
       from: participant(member, member.sequence),
     };
+    if (message.action === CONTROL_LOAD) {
+      const url = suggestionUrl(message.url);
+      const grant = room.grants.find((entry) => entry.userId === member.id);
+      if (url === null || ((room.guestPermissions | (grant?.flags ?? 0)) & PERMISSION_SWITCH) === 0) {
+        return;
+      }
+
+      request.url = url;
+    }
+
     if (isChannel(message.channel)) {
       request.channel = message.channel;
     }
@@ -1081,7 +1102,6 @@ export class PartyRoom extends DurableObject<Env> {
     previous.member.room = null;
     previous.member.sequence = room.nextSequence;
     room.nextSequence++;
-    room.grants = [];
     room.nearbyFollowsApproval = false;
     admit(room, previous.member.id);
     next.member.role = "host";
@@ -1092,7 +1112,13 @@ export class PartyRoom extends DurableObject<Env> {
     next.socket.serializeAttachment(next.member);
 
     const state = this.snapshot(next.member, room, message, connections);
-    const changed = { ...state, type: SignalType.hostChanged, hostId: next.member.id, userId: previous.member.id };
+    const changed = {
+      ...state,
+      type: SignalType.hostChanged,
+      hostId: next.member.id,
+      userId: previous.member.id,
+      discoverable: room.nearby !== null,
+    };
     for (const connection of connections) {
       if (connection.member.joined) {
         send(connection.socket, changed);

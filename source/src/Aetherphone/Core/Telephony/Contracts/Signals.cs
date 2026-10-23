@@ -193,7 +193,8 @@ internal static class StreamPermission
     public const int AddToQueue = 1;
     public const int ControlPlayback = 2;
     public const int CanHost = 4;
-    public const int GrantMask = AddToQueue | ControlPlayback;
+    public const int SwitchVideo = 8;
+    public const int GrantMask = AddToQueue | ControlPlayback | SwitchVideo;
 }
 
 internal static class StreamFeature
@@ -201,6 +202,7 @@ internal static class StreamFeature
     public const int Party = 1;
     public const int Danmaku = 2;
     public const int DualVideo = 4;
+    public const int SwitchVideo = 8;
 }
 
 internal static class StreamControlAction
@@ -209,6 +211,7 @@ internal static class StreamControlAction
     public const string Pause = "pause";
     public const string Seek = "seek";
     public const string Next = "next";
+    public const string Load = "load";
 }
 
 internal static class StreamDeclineReason

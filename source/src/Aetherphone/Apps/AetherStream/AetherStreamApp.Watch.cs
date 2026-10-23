@@ -83,7 +83,7 @@ internal sealed partial class AetherStreamApp
                 PhoneIcons.Plus,
                 Loc.T(L.AetherStream.AddVideoTitle), "aetherstream.composer", phoneGlyph: true))
         {
-            if (onB && !watchAlong.IsViewing)
+            if (onB && (!watchAlong.IsViewing || watchAlong.CanSwitchVideo))
             {
                 OpenAddSheetForScreenB();
             }
@@ -154,9 +154,10 @@ internal sealed partial class AetherStreamApp
     private void DrawPromptCard(VideoChannel channel, float scale)
     {
         var viewing = watchAlong.IsViewing;
+        var suggests = viewing && !watchAlong.CanSwitchVideo;
         var screenB = channel == VideoChannel.B;
-        var title = Loc.T(PromptTitle(screenB, viewing));
-        var hint = Loc.T(PromptHint(screenB, viewing));
+        var title = Loc.T(PromptTitle(screenB, suggests));
+        var hint = Loc.T(PromptHint(screenB, viewing, suggests));
         var pad = Metrics.Space.Xl * scale;
         var innerWidth = ScrollLayout.StableContentWidth() - PadX * 2f * scale - pad * 2f;
         var titleHeight = Typography.LineHeight(TextStyles.Title2);
@@ -195,7 +196,7 @@ internal sealed partial class AetherStreamApp
         top += fieldHeight;
         var play = new Rect(new Vector2(card.Min.X + pad, top + Metrics.Space.Md * scale),
             new Vector2(card.Max.X - pad, top + submitHeight));
-        var playLabel = viewing
+        var playLabel = suggests
             ? Loc.T(watchAlong.CanAddDirectly ? L.AetherStream.AddToQueue : L.AetherStream.SuggestAction)
             : Loc.T(L.AetherStream.PlayAction);
         submitted |= PrimaryButton(play, playLabel, canSubmit);
@@ -216,24 +217,29 @@ internal sealed partial class AetherStreamApp
         EndBlock();
     }
 
-    private static LocString PromptTitle(bool screenB, bool viewing)
+    private static LocString PromptTitle(bool screenB, bool suggests)
     {
         if (screenB)
         {
             return L.AetherStream.PlayOnScreenB;
         }
 
-        return viewing ? L.AetherStream.PromptSuggestTitle : L.AetherStream.PromptTitle;
+        return suggests ? L.AetherStream.PromptSuggestTitle : L.AetherStream.PromptTitle;
     }
 
-    private static LocString PromptHint(bool screenB, bool viewing)
+    private static LocString PromptHint(bool screenB, bool viewing, bool suggests)
     {
         if (screenB)
         {
             return L.AetherStream.ScreenBOneVideo;
         }
 
-        return viewing ? L.AetherStream.PromptSuggestHint : L.AetherStream.PromptHint;
+        if (suggests)
+        {
+            return L.AetherStream.PromptSuggestHint;
+        }
+
+        return viewing ? L.AetherStream.PromptSwitchHint : L.AetherStream.PromptHint;
     }
 
     private void SubmitPrompt(bool screenB)
@@ -265,7 +271,8 @@ internal sealed partial class AetherStreamApp
         var titleHeight = Typography.LineHeight(TextStyles.SubheadlineEmphasized);
         var hostHeight = Typography.LineHeight(TextStyles.Footnote);
         var textTop = row.Center.Y - (titleHeight + hostHeight) * 0.5f;
-        var copiedLabel = Loc.T(watchAlong.IsViewing
+        var suggests = watchAlong.IsViewing && !watchAlong.CanSwitchVideo;
+        var copiedLabel = Loc.T(suggests
             ? L.AetherStream.CopiedLinkSuggest
             : L.AetherStream.CopiedLinkPlay);
         Typography.Draw(drawList, new Vector2(textLeft, textTop),
@@ -277,7 +284,7 @@ internal sealed partial class AetherStreamApp
         var overPlay = UiInteract.Hover(playCenter - new Vector2(playRadius, playRadius),
             playCenter + new Vector2(playRadius, playRadius));
         var pressed = StreamRoundButton(drawList, "aetherstream.copied.play", playCenter, playRadius,
-            watchAlong.IsViewing ? FontAwesomeIcon.PaperPlane : FontAwesomeIcon.Play, ButtonStyle.Prominent);
+            suggests ? FontAwesomeIcon.PaperPlane : FontAwesomeIcon.Play, ButtonStyle.Prominent);
         var hovered = !overPlay && UiInteract.Hover(row.Min, row.Max);
         if (hovered)
         {
