@@ -21,7 +21,7 @@ Cyberphone 是 FFXIV 台服用的 Dalamud 插件（遊戲內手機），改自 X
 
 ## 原始碼
 
-[`source/`](source) 是 Cyberphone 的公開原始碼，授權 **AGPL-3.0-or-later**（[`source/LICENSE.md`](source/LICENSE.md)），修改聲明見 [`source/NOTICE`](source/NOTICE)，第三方元件見 [`source/THIRD-PARTY-NOTICES.md`](source/THIRD-PARTY-NOTICES.md)。目前對應原始碼 repo 的 commit `c7e0e405bad8f76097a2eb672093cde67bb0947c`。
+[`source/`](source) 是 Cyberphone 的公開原始碼，授權 **AGPL-3.0-or-later**（[`source/LICENSE.md`](source/LICENSE.md)），修改聲明見 [`source/NOTICE`](source/NOTICE)，第三方元件見 [`source/THIRD-PARTY-NOTICES.md`](source/THIRD-PARTY-NOTICES.md)。目前對應原始碼 repo 的 commit `c83d6ff64aba30b36d7af1b1a42ec55eddf8bd4e`。
 
 內容包含建置插件需要的程式碼與專案檔（`src/`）、自架看片派對伺服器（`server/`，架設方式見 [`source/docs/self-hosting-relay.md`](source/docs/self-hosting-relay.md)）、素材產生工具（`tools/`）與授權檔；建置方式見 [`source/README.md`](source/README.md)。
 
