@@ -361,11 +361,11 @@ public sealed class PartyRelayLoopbackTests
     }
 
     [Theory]
-    [InlineData("host", 3)]
+    [InlineData("host", 6)]
     [InlineData("hostBeforeCode", 0)]
     [InlineData("jamHost", 0)]
     [InlineData("viewer", 3)]
-    [InlineData("promotedViewer", 3)]
+    [InlineData("promotedViewer", 6)]
     [InlineData("removedHost", 0)]
     public void APartyHostReconnectsOnlyOnceItKnowsItsRoomCode(string scenario, int expected)
     {

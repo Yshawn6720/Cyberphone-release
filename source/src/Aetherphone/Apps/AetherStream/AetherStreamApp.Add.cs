@@ -25,6 +25,7 @@ internal sealed partial class AetherStreamApp
     private readonly Action<Rect> drawAddContent;
 
     private string linkInput = string.Empty;
+    private string focusLinkFieldId = string.Empty;
     private string copiedLink = string.Empty;
     private string copiedLinkHost = string.Empty;
     private string dismissedCopiedLink = string.Empty;
@@ -133,6 +134,12 @@ internal sealed partial class AetherStreamApp
         var pasteRadius = RoundButton.RegularRadius * scale;
         var field = new Rect(row.Min, new Vector2(row.Max.X - pasteRadius * 2f - Metrics.Space.Sm * scale, row.Max.Y));
         var hint = watchAlong.IsViewing ? Loc.T(L.AetherStream.SuggestHint) : Loc.T(L.AetherStream.UrlHint);
+        if (string.Equals(focusLinkFieldId, imguiId, StringComparison.Ordinal))
+        {
+            focusLinkFieldId = string.Empty;
+            ImGui.SetKeyboardFocusHere();
+        }
+
         var submitted = SubmitField.Draw(field, imguiId, hint, ref linkInput, accentedTheme, MaxLinkLength,
             FontAwesomeIcon.Link);
         var pasteCenter = new Vector2(row.Max.X - pasteRadius, row.Center.Y);
@@ -143,6 +150,7 @@ internal sealed partial class AetherStreamApp
             if (!string.IsNullOrWhiteSpace(clipboard))
             {
                 linkInput = MediaInput.Normalize(clipboard);
+                focusLinkFieldId = imguiId;
             }
         }
 

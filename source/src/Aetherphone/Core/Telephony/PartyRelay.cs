@@ -24,7 +24,7 @@ internal sealed class PartyRelay
     private const string RealtimePath = "/rt";
     private const int MaxIdentityLength = 32;
     private const int ViewerReconnects = 3;
-    private const int HostReconnects = 3;
+    private const int HostReconnects = 6;
     private const long IdentityRefreshMilliseconds = 1000;
 
     private readonly Configuration configuration;

@@ -164,8 +164,9 @@ internal sealed partial class AetherStreamApp
         var tile = PromptTile * scale;
         var fieldHeight = FieldRowHeight * scale;
         var linkHeight = viewing ? 0f : Typography.LineHeight(TextStyles.SubheadlineEmphasized) + 22f * scale;
+        var submitHeight = screenB ? (Metrics.Space.Md + ButtonHeight) * scale : 0f;
         var height = pad + tile + Metrics.Space.Lg * scale + titleHeight + Metrics.Space.Xs * scale + hintHeight
-            + Metrics.Space.Xl * scale + fieldHeight + linkHeight + pad;
+            + Metrics.Space.Xl * scale + fieldHeight + submitHeight + linkHeight + pad;
 
         var card = BeginBlock(height);
         var drawList = ImGui.GetWindowDrawList();
@@ -189,13 +190,23 @@ internal sealed partial class AetherStreamApp
 
         var fieldRow = new Rect(new Vector2(card.Min.X + pad, top), new Vector2(card.Max.X - pad, top + fieldHeight));
         UiAnchors.Report("aetherstream.composer", fieldRow);
-        if (DrawLinkField(fieldRow, "##aetherstreamIdleLink", "aetherstream.idle.paste", scale)
-            && MediaInput.Normalize(linkInput).Length > 0)
+        var submitted = DrawLinkField(fieldRow, "##aetherstreamIdleLink", "aetherstream.idle.paste", scale);
+        var canSubmit = MediaInput.Normalize(linkInput).Length > 0;
+        top += fieldHeight;
+        if (screenB)
+        {
+            var play = new Rect(new Vector2(card.Min.X + pad, top + Metrics.Space.Md * scale),
+                new Vector2(card.Max.X - pad, top + submitHeight));
+            submitted |= PrimaryButton(play, Loc.T(L.AetherStream.PlayAction), canSubmit);
+            top += submitHeight;
+        }
+
+        if (submitted && canSubmit)
         {
             SubmitPrompt(screenB);
         }
 
-        if (!viewing && TextLink(new Vector2(card.Center.X, top + fieldHeight + linkHeight * 0.5f),
+        if (!viewing && TextLink(new Vector2(card.Center.X, top + linkHeight * 0.5f),
                 Loc.T(L.AetherStream.BrowseLocalFile), Ink.AccentLink))
         {
             addMode = QueueAddMode.PlayNow;

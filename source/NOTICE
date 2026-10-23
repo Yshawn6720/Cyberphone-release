@@ -260,6 +260,8 @@ Modifications (AGPL-3.0 section 5(a)), first made 2026-10-21:
               at once. The plugin logs why a relay connection closed and how
               long it lasted, and the relay logs when a host drops, returns
               or a room ends, with the reason.
+- 2026-10-23  A watch party host's plugin tries up to 6 reconnects instead of
+              3, so its retries span the relay's 60 second grace.
 
 Corresponding source: the Git repository above, at the commit whose version
 matches the build. Upstream's original README is kept in

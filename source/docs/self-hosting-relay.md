@@ -17,7 +17,7 @@ Cyberphone 不連官方 Aethernet。MogCast 的看片派對、Music 的 Jam（�
   - 兩路影片：主持人的 `stream.state` 除了 A 路的 `url`、`positionSeconds`、`paused`、`screenX`～`screenCurve`，還可帶 B 路的 `urlB`、`positionSecondsB`、`pausedB`、`screenXB`、`screenYB`、`screenZB`、`screenYawB`、`screenPitchB`、`screenRollB`、`screenScaleB`、`screenCurveB`，以及主持人的預設播放方式 `playMode`（只收 `a`、`b`、`both`）。伺服器照白名單逐欄轉發，型別不對或 `playMode` 不認得的欄位直接丟掉，`stream.joined` 與 `stream.hostChanged` 也一起帶上；伺服器不保存這些內容。觀眾的 `stream.control` 與 `stream.playbackFailed` 可帶 `channel`（只收 `a` 或 `b`），伺服器原樣附在給主持人的 `stream.controlRequest`、`stream.viewerFailed` 上，其他值不轉，沒帶時主持人當作 A 路。`features` 的位元 4 表示支援兩路影片（現在送 `7`）；插件要同時看到位元 1 與位元 4 才開放 B 路，舊伺服器沒有這個位元時 B 路停用。
   - 移出成員：只有主持人能移出，伺服器通知對方後關閉連線（close code 4003），插件不會自動重連回同一房。身分未驗證，移出不是封鎖：同名同服可以再用房號加入；審核開啟時要重新被核准。
   - 播放失敗回報：觀眾播不了主持人的影片時，插件送 `stream.playbackFailed`（`url` 最長 2048 字元、`reason`，兩路影片時帶 `channel`），伺服器只轉給主持人，成為 `stream.viewerFailed`（`hostId`、`userId`、`url`、`reason` 截到 200 字、`from`，有效的 `channel` 一併附上），房內其他人收不到。
-  - 主持人斷線：主持人的連線不是因為送出 `stream.leave` 而關閉時（網路斷線、遊戲當掉、超過額度被斷線），伺服器把房間保留 60 秒，房內已加入的觀眾收到 `stream.hostAway`（`hostId`、`graceSeconds`），插件顯示主持人重連中與倒數，影片照常播放。主持人的插件已經拿到房號時，會用原房號（`?code=<房號>`，同一個角色）自動重連，最多 3 次；伺服器認出是原主持人就接回同一房（房號、成員、審核與彈幕設定不變），把目前的成員名單與寬限期間送來的加入請求交給主持人，觀眾收到 `stream.hostBack`（`hostId`），播放位置由主持人重連後的 `stream.state` 接續。60 秒內沒接回才結束房間（`stream.ended`，`reason: host_left`）；主持人按離開仍立即結束。寬限期間觀眾照樣可以離開或用房號、附近代碼加入（主持人的座位照樣保留，人數上限不變），加入的人等主持人回來、下一次 `stream.state` 才進房；房間暫時不出現在附近列表；同一個角色改開新房會直接結束等待中的舊房。舊插件不認得 `stream.hostAway`／`stream.hostBack` 會略過，只是看不到提示；舊伺服器沒有寬限，主持人重連會被拒，插件顯示聚會不可用，跟以前一樣主持人斷線即結束。
+  - 主持人斷線：主持人的連線不是因為送出 `stream.leave` 而關閉時（網路斷線、遊戲當掉、超過額度被斷線），伺服器把房間保留 60 秒，房內已加入的觀眾收到 `stream.hostAway`（`hostId`、`graceSeconds`），插件顯示主持人重連中與倒數，影片照常播放。主持人的插件已經拿到房號時，會用原房號（`?code=<房號>`，同一個角色）自動重連，最多 6 次（重試間隔加起來約 23 到 72 秒，涵蓋 60 秒寬限）；伺服器認出是原主持人就接回同一房（房號、成員、審核與彈幕設定不變），把目前的成員名單與寬限期間送來的加入請求交給主持人，觀眾收到 `stream.hostBack`（`hostId`），播放位置由主持人重連後的 `stream.state` 接續。60 秒內沒接回才結束房間（`stream.ended`，`reason: host_left`）；主持人按離開仍立即結束。寬限期間觀眾照樣可以離開或用房號、附近代碼加入（主持人的座位照樣保留，人數上限不變），加入的人等主持人回來、下一次 `stream.state` 才進房；房間暫時不出現在附近列表；同一個角色改開新房會直接結束等待中的舊房。舊插件不認得 `stream.hostAway`／`stream.hostBack` 會略過，只是看不到提示；舊伺服器沒有寬限，主持人重連會被拒，插件顯示聚會不可用，跟以前一樣主持人斷線即結束。
   - 附近派對：見下方「附近的派對與 Jam」。
 - **Jam**：建立、用 Jam 邀請或 6 碼代碼加入、主持人播放同步、共用佇列（加歌、移除、排序、播到下一首）、來賓播放控制、換主持人、審核加入、來賓權限、表情反應、移出成員、附近的 Jam。Jam 裡按「分享」會複製 `<網址>#<邀請碼>#<代碼>`，朋友貼到 Jam 頁的「貼上」即可加入，伺服器設定與看片派對共用。聊天與邀請好友還沒做；主持人離開即結束 Jam，不會自動交棒。
   - Jam 設定：主持人送 `jam.settings`（`guestPermissions`、`approvalRequired`、`title`、`discoverable`，都可省略），伺服器存進 Jam 的 storage，並把含這些欄位的 `jam.roster` 發給房內每個人。新 Jam 的預設是來賓可加歌也可控制播放（`guestPermissions` 3：1 加歌、2 控制播放與排序）、不必審核、不公開到附近。伺服器照權限擋下來賓的加歌、播放控制與排序；移除只能移自己加的歌，主持人不受限。
@@ -86,7 +86,7 @@ compose 有四個服務：`gateway`（nginx，網路別名 `relay`，Tunnel 連�
 
 換邀請碼：改 `relay.env` 後再執行一次 `docker compose up -d`（`restart` 不會重讀 `relay.env`）。
 
-限制：邀請碼錯、房號不存在、房間人數已滿這類在 WebSocket 握手就被拒的情況，cloudflared 一律回 502，不會轉交伺服器的 401／404／409。插件因此只能顯示一般連線錯誤，觀眾端與重連中的看片派對主持人會先重試 3 次才放棄；部署在 Workers 上沒有這個問題。房型上限已滿、限速與通話關閉不受影響：伺服器會先完成握手再送出拒絕原因（見「認證與連線」）。通話房滿員與房號不符是連上之後由伺服器用 `call.declined` 回覆，也不受這個限制。
+限制：邀請碼錯、房號不存在、房間人數已滿這類在 WebSocket 握手就被拒的情況，cloudflared 一律回 502，不會轉交伺服器的 401／404／409。插件因此只能顯示一般連線錯誤，觀眾端會先重試 3 次、重連中的看片派對主持人會先重試 6 次才放棄；部署在 Workers 上沒有這個問題。房型上限已滿、限速與通話關閉不受影響：伺服器會先完成握手再送出拒絕原因（見「認證與連線」）。通話房滿員與房號不符是連上之後由伺服器用 `call.declined` 回覆，也不受這個限制。
 
 ### 語音通話
 
