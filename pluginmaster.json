@@ -36,16 +36,16 @@
     "Author": "YS6720",
     "Name": "藏寶圖隊伍 (API13)",
     "InternalName": "TreasureParty",
-    "AssemblyVersion": "0.3.1.5",
+    "AssemblyVersion": "0.3.1.6",
     "DalamudApiLevel": 13,
     "ApplicableVersion": "any",
     "Tags": ["treasure", "map", "party"],
     "Description": "本機解讀藏寶圖、發送旗標，與網站首頁使用同一個六碼房間共享路線。原生暫時標記會重設其他插件同層標記。",
     "Punchline": "在插件內整理與共享藏寶圖點位",
     "IconUrl": "https://github.com/Yshawn6720/Cyberphone-release/releases/download/treasureparty-v0.3.1.5/TreasureParty-icon.png",
-    "DownloadLinkInstall": "https://github.com/Yshawn6720/Cyberphone-release/releases/download/treasureparty-v0.3.1.5/TreasureParty-0.3.1.5.zip",
-    "DownloadLinkUpdate": "https://github.com/Yshawn6720/Cyberphone-release/releases/download/treasureparty-v0.3.1.5/TreasureParty-0.3.1.5.zip",
-    "DownloadLinkTesting": "https://github.com/Yshawn6720/Cyberphone-release/releases/download/treasureparty-v0.3.1.5/TreasureParty-0.3.1.5.zip",
+    "DownloadLinkInstall": "https://github.com/Yshawn6720/Cyberphone-release/releases/download/treasureparty-v0.3.1.6/TreasureParty-0.3.1.6.zip",
+    "DownloadLinkUpdate": "https://github.com/Yshawn6720/Cyberphone-release/releases/download/treasureparty-v0.3.1.6/TreasureParty-0.3.1.6.zip",
+    "DownloadLinkTesting": "https://github.com/Yshawn6720/Cyberphone-release/releases/download/treasureparty-v0.3.1.6/TreasureParty-0.3.1.6.zip",
     "IsHide": false
   }
 ]
